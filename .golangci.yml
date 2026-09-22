@@ -1,0 +1,31 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose     # HTTP response bodies must be closed
+    - errorlint     # correct error wrapping and comparison
+    - gocritic      # broad correctness and style checks
+    - misspell
+    - noctx         # every outbound call carries a context
+    - revive
+    - unconvert
+    - wastedassign
+  settings:
+    revive:
+      rules:
+        - name: exported          # exported identifiers are documented
+        - name: error-strings     # error strings are lowercase, unpunctuated
+        - name: context-as-argument
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/thannoz/pit
