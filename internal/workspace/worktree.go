@@ -141,3 +141,25 @@ func sameDir(a, b string) bool {
 	}
 	return ra == rb
 }
+
+// Remove tears down everything pit created for pull request pr: the
+// worktree, git's record of it, the fetched ref and, once it is empty,
+// the directory the repository's sandboxes lived in.
+//
+// It is safe to call when none of that exists. Cleanup runs on paths
+// where setup failed half way, so it has to cope with any subset of the
+// work having happened.
+func Remove(ctx context.Context, r Runner, repo Repo, stateDir string, pr int) error {
+	if err := RemoveWorktree(ctx, r, repo, repo.Identity.WorktreeDir(stateDir, pr)); err != nil {
+		return err
+	}
+	if err := DeleteRef(ctx, r, repo, pr); err != nil {
+		return err
+	}
+
+	// An empty repository directory is litter. A non-empty one holds
+	// another pull request, so leave it alone -- which os.Remove does
+	// for us by refusing.
+	_ = os.Remove(repo.Identity.RepoDir(stateDir))
+	return nil
+}
