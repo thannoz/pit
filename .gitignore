@@ -12,6 +12,9 @@ CONTRIBUTING.md
 # Build artifacts
 /bin/
 /dist/
+# Throwaway programs used to drive the library by hand before a command
+# exists for it. They belong to a session, not to the repository.
+/tmpcheck/
 # Anchored: a bare "pit" would also match the cmd/pit/ directory.
 /pit
 
