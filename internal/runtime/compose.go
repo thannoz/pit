@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"strconv"
 	"strings"
@@ -117,4 +118,50 @@ func (c Compose) Logs(ctx context.Context, s Sandbox, service string, tail int) 
 		return nil, errs.Wrap(err, "cannot read the logs of %s", service)
 	}
 	return out, nil
+}
+
+// composePS mirrors the shape of `docker compose ps --format json`,
+// which emits one JSON object per line rather than an array.
+type composePS struct {
+	Name     string `json:"Name"`
+	Service  string `json:"Service"`
+	State    string `json:"State"`
+	Health   string `json:"Health"`
+	ExitCode int    `json:"ExitCode"`
+}
+
+// Status reports what each of the sandbox's services is doing. A
+// sandbox whose services have quietly exited looks identical to one
+// that was never started, and telling them apart is what lets pit
+// reconcile its records with reality.
+func (c Compose) Status(ctx context.Context, s Sandbox) ([]Status, error) {
+	out, err := c.Runner.Output(ctx, c.command(s, "ps", "--all", "--format", "json"))
+	if err != nil {
+		return nil, errs.Wrap(err, "cannot read the state of %s", s.Project)
+	}
+
+	var statuses []Status
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var p composePS
+		if err := json.Unmarshal([]byte(line), &p); err != nil {
+			return nil, errs.Wrap(err, "cannot read what docker compose reported").
+				WithHint("check that `docker compose version` is 2.0 or newer")
+		}
+		// Listed field by field rather than converted: composePS
+		// mirrors Docker's JSON and Status is pit's own. They happen
+		// to overlap today, and treating that as a guarantee would
+		// break the moment either side gains a field.
+		statuses = append(statuses, Status{
+			Service:   p.Service,
+			Container: p.Name,
+			State:     p.State,
+			Health:    p.Health,
+			ExitCode:  p.ExitCode,
+		})
+	}
+	return statuses, nil
 }
