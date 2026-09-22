@@ -107,9 +107,7 @@ func (e Exec) run(ctx context.Context, c Command, stdout, stderr io.Writer) erro
 	cmd.Stdin = c.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	if len(c.Env) > 0 {
-		cmd.Env = append(os.Environ(), c.Env...)
-	}
+	cmd.Env = environment(c.Env)
 
 	// Children of children have to die too: `docker compose up` and
 	// `git fetch` both spawn helpers, and killing only the direct child
@@ -132,6 +130,25 @@ func (e Exec) run(ctx context.Context, c Command, stdout, stderr io.Writer) erro
 		terminate(cmd)
 	}
 	return err
+}
+
+// stableLocale forces programs into the C locale. git, docker and gh all
+// translate their messages, so the same failure reads differently on a
+// German laptop and in CI -- and anything pit parses out of their output
+// would work on one machine and not the other.
+//
+// LANGUAGE is listed because gettext gives it precedence over LC_ALL;
+// setting the other two without clearing it leaves the messages
+// translated.
+var stableLocale = []string{"LC_ALL=C", "LANG=C", "LANGUAGE="}
+
+// environment builds the environment a child process sees: the parent's,
+// then the stable locale, then whatever the caller asked for. Later
+// entries win, so a caller can still override the locale deliberately.
+func environment(extra []string) []string {
+	env := os.Environ()
+	env = append(env, stableLocale...)
+	return append(env, extra...)
 }
 
 // decorate turns a process failure into an error that says which command
