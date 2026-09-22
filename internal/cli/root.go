@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/thannoz/pit/internal/errs"
 )
 
 // globalOptions holds the flags every command shares.
@@ -47,6 +49,11 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 
+	// cobra reports an unknown command without saying what to do next.
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		return errs.Hinted(err, "run %q to see the available flags", c.CommandPath()+" --help")
+	})
+
 	f := cmd.PersistentFlags()
 	f.BoolVarP(&opts.verbose, "verbose", "v", false, "print diagnostic logging to stderr")
 	f.StringVar(&opts.configPath, "config", "", "path to .pit.yaml (default: found from the working directory)")
@@ -57,15 +64,19 @@ func newRootCmd() *cobra.Command {
 	return cmd
 }
 
-// configureLogging sends diagnostics to stderr when verbose is set and
-// discards them otherwise. User facing output never goes through slog;
-// that separation is the point (see T-003).
+// configureLogging points the default logger at stderr when verbose is
+// set. User facing output never goes through slog; that separation is
+// what keeps stdout parsable.
 func configureLogging(verbose bool) {
-	var h slog.Handler
-	if verbose {
-		h = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
-	} else {
-		h = slog.NewTextHandler(io.Discard, nil)
+	slog.SetDefault(slog.New(newLogHandler(os.Stderr, verbose)))
+}
+
+// newLogHandler builds the diagnostic handler. Without verbose it
+// discards everything: diagnostics are opt-in, and a tool that chatters
+// on stderr by default is a tool people redirect to /dev/null.
+func newLogHandler(w io.Writer, verbose bool) slog.Handler {
+	if !verbose {
+		return slog.NewTextHandler(io.Discard, nil)
 	}
-	slog.SetDefault(slog.New(h))
+	return slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})
 }

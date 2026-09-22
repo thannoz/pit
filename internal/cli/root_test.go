@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/thannoz/pit/internal/errs"
 )
 
 // run executes the root command with args and captures its output.
@@ -87,5 +89,41 @@ func TestErrorsDoNotPrintUsage(t *testing.T) {
 	}
 	if strings.Contains(out+errOut, "Usage:") {
 		t.Errorf("usage was printed for a runtime error:\nstdout %q\nstderr %q", out, errOut)
+	}
+}
+
+func TestUnknownCommandCarriesAHint(t *testing.T) {
+	err := Run([]string{"definitely-not-a-command"})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if got := errs.Hint(err); got == "" {
+		t.Errorf("Hint() is empty for %v, want a next step", err)
+	}
+}
+
+func TestUnknownFlagCarriesAHint(t *testing.T) {
+	err := Run([]string{"version", "--definitely-not-a-flag"})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if got := errs.Hint(err); got == "" {
+		t.Errorf("Hint() is empty for %v, want a next step", err)
+	}
+}
+
+// TestCobraStillSaysUnknownCommand pins an assumption we cannot express
+// in the type system: Run() recognises an unknown command by cobra's
+// wording, because cobra exposes no typed error for it. If cobra ever
+// rephrases the message, this fails and points at the place to fix
+// rather than letting the hint quietly disappear.
+func TestCobraStillSaysUnknownCommand(t *testing.T) {
+	_, _, err := run(t, "definitely-not-a-command")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.HasPrefix(err.Error(), unknownCommandPrefix) {
+		t.Errorf("cobra now says %q; it no longer starts with %q, so the "+
+			"detection in Run() needs updating", err, unknownCommandPrefix)
 	}
 }
