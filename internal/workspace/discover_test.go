@@ -164,3 +164,25 @@ func git(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
+
+func mkdir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", dir, err)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+}
+
+// configureIdentity gives the repository an author, because a machine
+// running the tests may have no global git identity.
+func configureIdentity(t *testing.T, dir string) {
+	t.Helper()
+	git(t, dir, "config", "user.email", "pit@example.test")
+	git(t, dir, "config", "user.name", "pit tests")
+}
