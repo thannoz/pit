@@ -59,7 +59,10 @@ func newRootCmd() *cobra.Command {
 	f.StringVar(&opts.configPath, "config", "", "path to .pit.yaml (default: found from the working directory)")
 	f.BoolVar(&opts.jsonOutput, "json", false, "print machine readable output")
 
-	cmd.AddCommand(newVersionCmd(opts))
+	cmd.AddCommand(
+		newInitCmd(opts),
+		newVersionCmd(opts),
+	)
 
 	return cmd
 }

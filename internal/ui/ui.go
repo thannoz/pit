@@ -11,6 +11,8 @@ import (
 	"io"
 	"os"
 
+	"golang.org/x/term"
+
 	"github.com/thannoz/pit/internal/errs"
 )
 
@@ -107,16 +109,15 @@ func colorEnabled(w io.Writer) bool {
 	return isTerminal(w)
 }
 
-// isTerminal reports whether w is a character device, which is the
-// cheapest reliable check without pulling in a dependency.
+// isTerminal reports whether w is attached to a terminal.
+//
+// The obvious check -- is it a character device -- is wrong: /dev/null
+// is one too, and so is any device file. Only asking the kernel for
+// terminal attributes distinguishes a person from a void.
 func isTerminal(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	if !ok {
 		return false
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(f.Fd()))
 }
