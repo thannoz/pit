@@ -102,3 +102,19 @@ func (c Compose) command(s Sandbox, args ...string) proc.Command {
 	}
 	return proc.Command{Name: "docker", Args: append(full, args...), Dir: s.Dir}
 }
+
+// Logs returns the tail of a service's output. It is what a failure
+// report needs: the reason a container never became ready is almost
+// always in its own last few lines.
+func (c Compose) Logs(ctx context.Context, s Sandbox, service string, tail int) ([]byte, error) {
+	args := []string{"logs", "--no-color", "--tail", strconv.Itoa(tail)}
+	if service != "" {
+		args = append(args, service)
+	}
+
+	out, err := c.Runner.Output(ctx, c.command(s, args...))
+	if err != nil {
+		return nil, errs.Wrap(err, "cannot read the logs of %s", service)
+	}
+	return out, nil
+}
