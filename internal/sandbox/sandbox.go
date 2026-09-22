@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/hooks"
 	"github.com/thannoz/pit/internal/runtime"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/workspace"
@@ -30,6 +31,8 @@ type Manager struct {
 	Runtime runtime.Runtime
 	// Git runs git.
 	Git workspace.Runner
+	// Proc runs the repository's configured hooks.
+	Proc hooks.Runner
 	// StateDir is where worktrees and generated files live.
 	StateDir string
 }
@@ -191,4 +194,23 @@ func RuntimeSandbox(box state.Sandbox) runtime.Sandbox {
 		Dir:     box.Worktree,
 		Files:   box.ComposeFiles,
 	}
+}
+
+// Gone reports whether the record describes something that no longer
+// exists. After a reboot the containers are gone but the record, the
+// worktree and the generated files are all still there, so a listing
+// that trusted the record alone would be lying.
+func (e Entry) Gone() bool {
+	return e.Unreachable == nil && len(e.Services) == 0
+}
+
+// Stale returns the recorded sandboxes whose containers are gone.
+func Stale(entries []Entry) []Entry {
+	var out []Entry
+	for _, e := range entries {
+		if e.Gone() {
+			out = append(out, e)
+		}
+	}
+	return out
 }

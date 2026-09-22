@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +32,7 @@ hands you a URL, so the review is something you can operate.`
 
 func newRootCmd() *cobra.Command {
 	opts := &globalOptions{}
+	up := &upOptions{}
 
 	cmd := &cobra.Command{
 		Use:   "pit",
@@ -43,9 +45,22 @@ func newRootCmd() *cobra.Command {
 		PersistentPreRun: func(_ *cobra.Command, _ []string) {
 			configureLogging(opts.verbose)
 		},
-		// Without a subcommand, show help rather than failing.
-		RunE: func(c *cobra.Command, _ []string) error {
-			return c.Help()
+		// `pit 482` is the command people reach for, so the root
+		// takes a pull request number directly. Anything else, or
+		// nothing, shows the help.
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return c.Help()
+			}
+			// Since the root takes an argument of its own, cobra no
+			// longer reports an unknown subcommand -- it hands it
+			// here. A mistyped command must not be answered with
+			// "that is not a pull request number".
+			if _, err := strconv.Atoi(args[0]); err != nil {
+				return unknownCommand(c, args[0])
+			}
+			return runUp(c, up, args[0])
 		},
 	}
 
@@ -53,6 +68,13 @@ func newRootCmd() *cobra.Command {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		return errs.Hinted(err, "run %q to see the available flags", c.CommandPath()+" --help")
 	})
+
+	// cobra only fills this in during its own Execute path, which the
+	// root's RunE runs ahead of; without it SuggestionsFor never
+	// matches anything.
+	cmd.SuggestionsMinimumDistance = 2
+
+	cmd.Flags().BoolVar(&up.open, "open", false, "open the sandbox in a browser once it is ready")
 
 	f := cmd.PersistentFlags()
 	f.BoolVarP(&opts.verbose, "verbose", "v", false, "print diagnostic logging to stderr")
@@ -67,6 +89,18 @@ func newRootCmd() *cobra.Command {
 	)
 
 	return cmd
+}
+
+// unknownCommand explains a mistyped command, with cobra's own
+// suggestions when it has any.
+func unknownCommand(c *cobra.Command, arg string) error {
+	err := errs.New("%s %q for %q", unknownCommandPrefix, arg, c.CommandPath())
+
+	if near := c.SuggestionsFor(arg); len(near) > 0 {
+		return err.WithHint("did you mean %q?", near[0])
+	}
+	return err.WithHint("run %q to see the available commands, or pass a pull request number",
+		c.CommandPath()+" --help")
 }
 
 // configureLogging points the default logger at stderr when verbose is

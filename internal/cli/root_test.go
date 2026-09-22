@@ -9,6 +9,10 @@ import (
 )
 
 // run executes the root command with args and captures its output.
+//
+// It goes through the same post-processing as the real binary. An
+// earlier version called Execute directly, and a test passed while the
+// binary behaved differently -- the wrapper was masking a hint.
 func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 
@@ -17,8 +21,9 @@ func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
 	cmd.SetArgs(args)
+	cmd.SetContext(t.Context())
 
-	err = cmd.Execute()
+	err = postProcess(cmd.Execute())
 	return out.String(), errOut.String(), err
 }
 
@@ -112,18 +117,35 @@ func TestUnknownFlagCarriesAHint(t *testing.T) {
 	}
 }
 
-// TestCobraStillSaysUnknownCommand pins an assumption we cannot express
-// in the type system: Run() recognises an unknown command by cobra's
-// wording, because cobra exposes no typed error for it. If cobra ever
-// rephrases the message, this fails and points at the place to fix
-// rather than letting the hint quietly disappear.
-func TestCobraStillSaysUnknownCommand(t *testing.T) {
+// TestUnknownCommandStillReadsAsOne guards a regression this project
+// already had once: when the root command learned to take a pull
+// request number, a mistyped command started being answered with
+// "that is not a pull request number". The pin used to be on cobra's
+// wording; now it is on ours, because the root produces the message.
+func TestUnknownCommandStillReadsAsOne(t *testing.T) {
 	_, _, err := run(t, "definitely-not-a-command")
 	if err == nil {
 		t.Fatal("want an error")
 	}
 	if !strings.HasPrefix(err.Error(), unknownCommandPrefix) {
-		t.Errorf("cobra now says %q; it no longer starts with %q, so the "+
-			"detection in Run() needs updating", err, unknownCommandPrefix)
+		t.Errorf("a mistyped command is reported as %q, want it to start with %q", err, unknownCommandPrefix)
+	}
+}
+
+func TestMistypedCommandGetsASuggestion(t *testing.T) {
+	_, _, err := run(t, "lst")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if got := errs.Hint(err); !strings.Contains(got, "ls") {
+		t.Errorf("hint = %q, want it to suggest ls", got)
+	}
+}
+
+func TestAPullRequestNumberIsNotACommand(t *testing.T) {
+	// The root takes a number, so this must not be treated as a typo.
+	_, _, err := run(t, "482")
+	if err != nil && strings.HasPrefix(err.Error(), unknownCommandPrefix) {
+		t.Errorf("a pull request number was reported as an unknown command: %v", err)
 	}
 }

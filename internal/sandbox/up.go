@@ -1,0 +1,239 @@
+package sandbox
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/thannoz/pit/internal/config"
+	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/forge"
+	"github.com/thannoz/pit/internal/hooks"
+	"github.com/thannoz/pit/internal/ports"
+	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/state"
+	"github.com/thannoz/pit/internal/workspace"
+)
+
+// cleanupBudget is how long the undo of a failed setup may take. It is
+// generous because stopping containers is slow, and bounded because a
+// cleanup that hangs is worse than one that gives up.
+const cleanupBudget = 60 * time.Second
+
+// Reporter is told what Up is doing, so the command can render it. The
+// lifecycle knows the steps; how they look on screen is not its
+// business.
+type Reporter interface {
+	// Step announces a stage that has completed.
+	Step(format string, args ...any)
+	// Stdout and Stderr are where a command's own output goes.
+	Stdout() io.Writer
+	Stderr() io.Writer
+}
+
+// UpRequest is everything needed to build a sandbox.
+type UpRequest struct {
+	// Repo is the repository the review happens in.
+	Repo workspace.Repo
+	// PR is the pull request, already read from the forge.
+	PR forge.PR
+	// Config is the repository's .pit.yaml.
+	Config *config.Config
+}
+
+// Up builds a sandbox for a pull request and records it.
+//
+// Every step that creates something registers how to undo it. If a
+// later step fails -- or the reviewer presses Ctrl+C -- the undos run
+// in reverse, so a failed setup leaves the machine as it found it. A
+// half-built sandbox is worse than none: it holds a port, a worktree
+// and a set of containers that nothing knows about.
+func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sandbox, error) {
+	var undo rollback
+	defer func() { undo.run(ctx) }()
+
+	id := req.Repo.Identity
+	pr := req.PR.Number
+
+	sha, err := workspace.Fetch(ctx, m.Git, req.Repo, pr)
+	if err != nil {
+		return state.Sandbox{}, err
+	}
+	undo.push(func(c context.Context) { _ = workspace.DeleteRef(c, m.Git, req.Repo, pr) })
+	rep.Step("fetch      #%d at %s", pr, short(sha))
+
+	wt, err := workspace.AddWorktree(ctx, m.Git, req.Repo, m.StateDir, pr)
+	if err != nil {
+		return state.Sandbox{}, err
+	}
+	undo.push(func(c context.Context) { _ = workspace.RemoveWorktree(c, m.Git, req.Repo, wt.Path) })
+	rep.Step("worktree   %s", wt.Path)
+
+	project, err := runtime.ProjectName(id.Ref(), pr)
+	if err != nil {
+		return state.Sandbox{}, err
+	}
+
+	assigned, err := ports.Reserve(ctx, id.String(), pr, m.portTaken(ctx))
+	if err != nil {
+		return state.Sandbox{}, err
+	}
+
+	repoDir := id.RepoDir(m.StateDir)
+	overridePath := runtime.OverridePath(repoDir, pr)
+	if err := runtime.WriteOverride(overridePath, overrideFor(req.Config, assigned.Port)); err != nil {
+		return state.Sandbox{}, err
+	}
+	undo.push(func(context.Context) { _ = removeFile(overridePath) })
+
+	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
+	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
+
+	if err := m.Runtime.Up(ctx, box, rep.Stdout(), rep.Stderr()); err != nil {
+		return state.Sandbox{}, err
+	}
+	undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
+	rep.Step("up         %s", project)
+
+	if len(req.Config.Hooks.AfterUp) > 0 {
+		h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
+		if err := hooks.Run(ctx, m.Proc, req.Config.Hooks.AfterUp, h, rep.Stdout(), rep.Stderr()); err != nil {
+			return state.Sandbox{}, err
+		}
+		rep.Step("hooks      %s", plural(len(req.Config.Hooks.AfterUp), "command", "commands"))
+	}
+
+	url := runtime.ExpandURL(req.Config.Healthcheck.URL, "localhost", assigned.Port)
+	started := time.Now()
+	probe := runtime.Probe{
+		URL:          url,
+		ExpectStatus: req.Config.Healthcheck.ExpectStatus,
+		Timeout:      req.Config.Healthcheck.Timeout.Duration(),
+		Interval:     req.Config.Healthcheck.Interval.Duration(),
+	}
+	if err := m.Runtime.WaitReady(ctx, box, req.Config.Web.Service, probe); err != nil {
+		return state.Sandbox{}, err
+	}
+	rep.Step("healthy    after %s", time.Since(started).Round(100*time.Millisecond))
+
+	record := state.Sandbox{
+		PR:           pr,
+		Repo:         id.String(),
+		RepoRef:      id.Ref(),
+		RepoRoot:     req.Repo.Root,
+		Project:      project,
+		ComposeFiles: files,
+		Worktree:     wt.Path,
+		Port:         assigned.Port,
+		URL:          url,
+		SHA:          sha,
+		Branch:       req.PR.Branch,
+		Title:        req.PR.Title,
+		Author:       req.PR.Author,
+		CreatedAt:    time.Now(),
+	}
+	if err := m.Store.Update(func(f *state.File) error {
+		f.Put(record)
+		return nil
+	}); err != nil {
+		return state.Sandbox{}, err
+	}
+
+	// Everything worked, so nothing is undone.
+	undo.disarm()
+	return record, nil
+}
+
+// portTaken tells the port allocator about ports pit itself has handed
+// out. Without it two sandboxes started in quick succession can pick
+// the same number: the first has not bound it yet when the second
+// checks.
+func (m *Manager) portTaken(ctx context.Context) func(int) bool {
+	reserved := map[int]bool{}
+	if recorded, err := m.Store.List(); err == nil {
+		for _, box := range recorded {
+			reserved[box.Port] = true
+		}
+	}
+	return func(p int) bool {
+		return reserved[p] || ports.Taken(ctx, p)
+	}
+}
+
+func overrideFor(c *config.Config, hostPort int) runtime.Override {
+	return runtime.Override{
+		Service:       c.Web.Service,
+		HostPort:      hostPort,
+		ContainerPort: c.Web.Port,
+		Env:           c.Env.Set,
+	}
+}
+
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// rollback holds the undo of each step that created something.
+type rollback struct {
+	steps    []func(context.Context)
+	disarmed bool
+}
+
+func (r *rollback) push(f func(context.Context)) { r.steps = append(r.steps, f) }
+
+func (r *rollback) disarm() { r.disarmed = true }
+
+// run undoes the steps in reverse.
+//
+// It deliberately does not use the caller's context. By the time this
+// runs that context is usually the reason we are here -- cancelled by
+// Ctrl+C -- and every cleanup command would refuse to start. Cleanup
+// gets a context of its own, detached but bounded.
+func (r *rollback) run(ctx context.Context) {
+	if r.disarmed {
+		return
+	}
+
+	clean, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupBudget)
+	defer cancel()
+
+	for i := len(r.steps) - 1; i >= 0; i-- {
+		r.steps[i](clean)
+	}
+}
+
+func removeFile(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return errs.Wrap(err, "cannot remove %s", path)
+	}
+	return nil
+}
+
+// absoluteFiles resolves the configured compose files against the
+// worktree. They have to be absolute because the generated override
+// lives outside it, and Compose resolves relative paths against the
+// first file it was given.
+func absoluteFiles(worktree string, files []string) []string {
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		if filepath.IsAbs(f) {
+			out = append(out, f)
+			continue
+		}
+		out = append(out, filepath.Join(worktree, f))
+	}
+	return out
+}

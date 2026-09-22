@@ -134,6 +134,16 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 			out.Warnf("could not ask the runtime about #%d: %v", e.PR, e.Unreachable)
 		}
 	}
+
+	// A reboot takes the containers but leaves the record, the worktree
+	// and the generated files. Saying so, and saying what to do about
+	// it, is the difference between a stale listing and a useful one.
+	if stale := sandbox.Stale(entries); len(stale) > 0 {
+		out.Printf("\n%s no longer running, but %s worktree and files are still on disk.\n",
+			plural(len(stale), "sandbox is", "sandboxes are"),
+			pick(len(stale), "its", "their"))
+		out.Printf("Remove %s with `pit down --gone`.\n", pick(len(stale), "it", "them"))
+	}
 	return nil
 }
 

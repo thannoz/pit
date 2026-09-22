@@ -12,8 +12,9 @@ import (
 )
 
 type downOptions struct {
-	all bool
-	yes bool
+	all  bool
+	gone bool
+	yes  bool
 }
 
 func newDownCmd(_ *globalOptions) *cobra.Command {
@@ -34,6 +35,7 @@ Without a number, pass --all to remove every sandbox.`,
 
 	f := cmd.Flags()
 	f.BoolVar(&o.all, "all", false, "remove every sandbox, from every repository")
+	f.BoolVar(&o.gone, "gone", false, "remove only the sandboxes whose containers no longer exist")
 	f.BoolVarP(&o.yes, "yes", "y", false, "do not ask for confirmation")
 
 	return cmd
@@ -41,12 +43,15 @@ Without a number, pass --all to remove every sandbox.`,
 
 func runDown(c *cobra.Command, o *downOptions, args []string) error {
 	switch {
-	case o.all && len(args) > 0:
-		return errs.New("--all removes everything, so it takes no pull request number").
-			WithHint("use either `pit down %s` or `pit down --all`", args[0])
-	case !o.all && len(args) == 0:
+	case o.all && o.gone:
+		return errs.New("--all and --gone ask for different things").
+			WithHint("--all removes every sandbox; --gone removes only the ones already stopped")
+	case (o.all || o.gone) && len(args) > 0:
+		return errs.New("a pull request number and a bulk flag ask for different things").
+			WithHint("use either `pit down %s` or one of --all and --gone", args[0])
+	case !o.all && !o.gone && len(args) == 0:
 		return errs.New("which sandbox should be removed?").
-			WithHint("pass a pull request number, or --all to remove every sandbox")
+			WithHint("pass a pull request number, --all, or --gone")
 	}
 
 	m, err := manager()
@@ -55,8 +60,8 @@ func runDown(c *cobra.Command, o *downOptions, args []string) error {
 	}
 	out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
 
-	if o.all {
-		return downAll(c, m, out, o)
+	if o.all || o.gone {
+		return downMany(c, m, out, o)
 	}
 	return downOne(c, m, out, args[0])
 }
@@ -88,40 +93,63 @@ func downOne(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, arg string) 
 	return removeOne(c, m, out, box)
 }
 
-func downAll(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, o *downOptions) error {
-	f, err := m.Store.Load()
+func downMany(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, o *downOptions) error {
+	targets, err := bulkTargets(c, m, o)
 	if err != nil {
 		return err
 	}
-	if len(f.Sandboxes) == 0 {
+	if len(targets) == 0 {
 		out.Println("No sandboxes to remove.")
 		return nil
 	}
 
 	if !o.yes {
 		out.Printf("This removes %s, with %s containers, volumes and worktrees:\n",
-			plural(len(f.Sandboxes), "sandbox", "sandboxes"),
-			pick(len(f.Sandboxes), "its", "their"))
-		for _, box := range f.Sandboxes {
+			plural(len(targets), "sandbox", "sandboxes"),
+			pick(len(targets), "its", "their"))
+		for _, box := range targets {
 			out.Printf("  %s #%d\n", box.Repo, box.PR)
 		}
-		if !confirm(c, out, "Remove them all?") {
+		if !confirm(c, out, "Remove "+pick(len(targets), "it", "them all")+"?") {
 			out.Println("Nothing was removed.")
 			return nil
 		}
 	}
 
 	var failed int
-	for _, box := range f.Sandboxes {
+	for _, box := range targets {
 		if err := removeOne(c, m, out, box); err != nil {
 			out.Error(err)
 			failed++
 		}
 	}
 	if failed > 0 {
-		return errs.New("%d of %d sandboxes could not be removed", failed, len(f.Sandboxes))
+		return errs.New("%d of %d sandboxes could not be removed", failed, len(targets))
 	}
 	return nil
+}
+
+// bulkTargets is everything --all or --gone applies to. --gone has to
+// ask the runtime, because only it knows which containers are still
+// there.
+func bulkTargets(c *cobra.Command, m *sandbox.Manager, o *downOptions) ([]state.Sandbox, error) {
+	if o.all {
+		f, err := m.Store.Load()
+		if err != nil {
+			return nil, err
+		}
+		return f.Sandboxes, nil
+	}
+
+	entries, err := m.List(c.Context())
+	if err != nil {
+		return nil, err
+	}
+	var targets []state.Sandbox
+	for _, e := range sandbox.Stale(entries) {
+		targets = append(targets, e.Sandbox)
+	}
+	return targets, nil
 }
 
 func removeOne(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, box state.Sandbox) error {
