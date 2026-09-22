@@ -294,3 +294,32 @@ func TestDoctorNeverBlocks(t *testing.T) {
 		t.Fatal("doctor is waiting for a lock another pit holds")
 	}
 }
+
+// TestABrokenConfigurationIsReportedInFull records a wrong answer an
+// earlier version gave: it showed the first line of the report and
+// pointed at `pit ls` for the rest, which does not read the
+// configuration at all. doctor exists to say what is wrong.
+func TestABrokenConfigurationIsReportedInFull(t *testing.T) {
+	e := env(t, healthyRunner())
+	writeFile(t, filepath.Join(e.WorkDir, ".git"), "")
+	writeFile(t, filepath.Join(e.WorkDir, "docker-compose.yml"), "services:\n  web:\n    image: nginx\n")
+	writeFile(t, filepath.Join(e.WorkDir, ".pit.yaml"),
+		"web:\n  port: 0\nhooks:\n  after_up:\n    - \"\"\n")
+
+	f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), ".pit.yaml")
+
+	if f.Result != doctor.Fail {
+		t.Fatalf("result = %q, want a failure", f.Result)
+	}
+	if !strings.Contains(f.Detail, "\n") {
+		t.Errorf("detail is a single line, so the problems are hidden:\n%s", f.Detail)
+	}
+	for _, want := range []string{"web.service", "web.port", "nothing to run"} {
+		if !strings.Contains(f.Detail, want) {
+			t.Errorf("detail is missing %q:\n%s", want, f.Detail)
+		}
+	}
+	if strings.Contains(f.Fix, "pit ls") {
+		t.Error("the fix still points at a command that does not read the configuration")
+	}
+}

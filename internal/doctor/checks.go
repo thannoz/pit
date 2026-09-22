@@ -205,11 +205,11 @@ func (env Environment) configuration() Check {
 			}
 		}
 		if _, err := config.Load(path); err != nil {
-			return Finding{
-				Name: name, Result: Fail,
-				Detail: firstLine(err.Error()),
-				Fix:    "run `pit ls` in that repository for the full report",
-			}
+			// The whole report, not its first line: doctor exists to
+			// say what is wrong, and an earlier version pointed at
+			// `pit ls` for the detail -- which does not read the
+			// configuration at all.
+			return Finding{Name: name, Result: Fail, Detail: err.Error()}
 		}
 		return Finding{Name: name, Result: OK, Detail: path}
 	}

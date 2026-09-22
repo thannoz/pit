@@ -48,6 +48,16 @@ func Expand(line string, s Sandbox) (proc.Command, error) {
 	return proc.Command{Name: "docker", Args: full, Dir: s.Dir}, nil
 }
 
+// Check reports whether a configured line can be run at all.
+//
+// It exists so that a broken command is caught when the file is read
+// rather than halfway through a setup, with a worktree already made
+// and containers already started.
+func Check(line string) error {
+	_, err := tokenize(line)
+	return err
+}
+
 // ExpandAll expands every line, reporting which one failed rather than
 // only that something did.
 func ExpandAll(lines []string, s Sandbox) ([]proc.Command, error) {

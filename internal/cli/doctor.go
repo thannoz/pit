@@ -68,8 +68,16 @@ func runDoctor(c *cobra.Command, opts *globalOptions) error {
 func writeReport(out *ui.Printer, report doctor.Report) error {
 	w := tabwriter.NewWriter(out.Out(), 0, 0, 2, ' ', 0)
 	for _, f := range report.Findings {
+		// A detail can run to several lines -- a configuration report
+		// does. The first shares the row; the rest are indented under
+		// it, because a table cell cannot hold them.
+		first, rest, _ := strings.Cut(f.Detail, "\n")
+
 		// tabwriter buffers; failures surface at Flush.
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", mark(f.Result), f.Name, f.Detail)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", mark(f.Result), f.Name, first)
+		for _, line := range splitLines(rest) {
+			_, _ = fmt.Fprintf(w, "\t\t%s\n", line)
+		}
 		if f.Fix != "" {
 			_, _ = fmt.Fprintf(w, "\t\t%s\n", f.Fix)
 		}
@@ -102,6 +110,15 @@ func mark(r doctor.Result) string {
 	default:
 		return "✗"
 	}
+}
+
+// splitLines returns the lines of s, and nothing at all for an empty
+// string -- which strings.Split would report as one empty line.
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }
 
 func workDir() string {

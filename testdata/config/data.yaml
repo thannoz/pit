@@ -1,0 +1,33 @@
+# The data block, assembled from the three examples in
+# docs/03-datenkonzept.md. It is mirrored here so a test can hold the
+# schema to what the documentation promises.
+version: 1
+
+web:
+  service: web
+  port: 3000
+
+data:
+  service: db
+
+  snapshot:
+    save:    "compose exec -T db pg_dump -U app --clean --if-exists app"
+    restore: "compose exec -T db psql -U app -d app"
+
+  scenarios:
+    - name: leer
+      description: "Nur Migrationen, keine Daten"
+
+    - name: standard
+      description: "3 Nutzer, 20 Produkte, 5 Bestellungen"
+      apply: ["compose exec -T db psql -U app -d app -f /fixtures/standard.sql"]
+
+    - name: teilerstattung
+      description: "Bestellung mit Teilerstattung aus zwei Lagern"
+      extends: standard
+      apply: ["compose exec -T db psql -U app -d app -f /fixtures/teilerstattung.sql"]
+  default: standard
+
+  production_like:
+    fetch: "aws s3 cp s3://acme-dumps/anonymized-latest.sql.gz -"
+    ttl: 24h

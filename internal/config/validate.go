@@ -11,6 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/hooks"
 )
 
 // parseStrict decodes the file and rejects anything it does not
@@ -57,6 +58,7 @@ func (c *Config) validate(node *yaml.Node, dir, file string) error {
 	p = append(p, c.checkCompose(node, dir)...)
 	p = append(p, c.checkHealthcheck(node)...)
 	p = append(p, c.checkData(node)...)
+	p = append(p, c.checkCommands(node)...)
 	p = append(p, c.checkEnv(node, dir)...)
 
 	if len(p) == 0 {
@@ -204,6 +206,18 @@ func (c *Config) checkData(node *yaml.Node) []Problem {
 		}
 	}
 
+	// A retention time with nothing to retain is a setting that does
+	// nothing, which is worse than a missing one: the author believes
+	// they configured something.
+	if !d.ProductionLike.TTL.IsZero() && d.ProductionLike.Fetch == "" {
+		p = append(p, Problem{
+			Line: lineOf(node, "data", "production_like", "ttl"),
+			Path: "data.production_like.ttl",
+			Msg:  "is set, but there is no fetch command to retain anything from",
+			Hint: "add data.production_like.fetch, or remove the ttl",
+		})
+	}
+
 	// Half a snapshot configuration is worse than none: save would
 	// appear to work and restore would fail when it is needed most.
 	if (d.Snapshot.Save == "") != (d.Snapshot.Restore == "") {
@@ -237,6 +251,66 @@ func (c *Config) knownScenarios() string {
 		return "none are configured"
 	}
 	return strings.Join(names, ", ")
+}
+
+// checkCommands makes sure every configured command can be run.
+//
+// A command with an unbalanced quote is accepted by YAML and fails
+// halfway through a setup, with a worktree already made and containers
+// already started. Finding it while reading the file costs nothing.
+func (c *Config) checkCommands(node *yaml.Node) []Problem {
+	var p []Problem
+
+	for i, line := range c.Hooks.AfterUp {
+		if problem, bad := commandProblem(line, fmt.Sprintf("hooks.after_up[%d]", i),
+			lineOfIndex(node, i, "hooks", "after_up")); bad {
+			p = append(p, problem)
+		}
+	}
+
+	for si, s := range c.Data.Scenarios {
+		for i, line := range s.Apply {
+			path := fmt.Sprintf("data.scenarios[%d].apply[%d]", si, i)
+			if problem, bad := commandProblem(line, path,
+				lineOfIndex(node, si, "data", "scenarios")); bad {
+				p = append(p, problem)
+			}
+		}
+	}
+
+	for _, pair := range []struct{ name, line string }{
+		{"data.snapshot.save", c.Data.Snapshot.Save},
+		{"data.snapshot.restore", c.Data.Snapshot.Restore},
+		{"data.production_like.fetch", c.Data.ProductionLike.Fetch},
+	} {
+		if pair.line == "" {
+			continue
+		}
+		if problem, bad := commandProblem(pair.line, pair.name, lineOf(node, strings.Split(pair.name, ".")...)); bad {
+			p = append(p, problem)
+		}
+	}
+	return p
+}
+
+// commandProblem describes what is wrong with a configured command, if
+// anything.
+func commandProblem(line, path string, atLine int) (Problem, bool) {
+	if strings.TrimSpace(line) == "" {
+		return Problem{
+			Line: atLine, Path: path,
+			Msg:  "is empty; there is nothing to run",
+			Hint: "remove the entry, or write the command it should run",
+		}, true
+	}
+	if err := hooks.Check(line); err != nil {
+		return Problem{
+			Line: atLine, Path: path,
+			Msg:  err.Error(),
+			Hint: errs.Hint(err),
+		}, true
+	}
+	return Problem{}, false
 }
 
 func (c *Config) checkEnv(node *yaml.Node, dir string) []Problem {
