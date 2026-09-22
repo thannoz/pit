@@ -50,6 +50,13 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+      # The suite must not need the network: a test that reaches GitHub
+      # fails on a plane, behind a proxy, and whenever the service is
+      # having a bad day. Running it again with git restricted to local
+      # paths turns that from an intention into a check.
+      - name: Test without network access
+        run: make test-offline
+
       - name: Build
         run: go build ./...
 

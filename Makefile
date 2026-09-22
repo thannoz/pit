@@ -26,6 +26,19 @@ install: ## Install the binary into GOPATH/bin
 test: ## Run all tests
 	go test ./...
 
+.PHONY: test-offline
+test-offline: ## Run the tests with all network access blocked (T-106)
+	@echo "Running the suite with git restricted to local paths and no module proxy."
+	env -i PATH="$$PATH" HOME="$$HOME" \
+		GOPROXY=off \
+		GIT_ALLOW_PROTOCOL=file \
+		GIT_TERMINAL_PROMPT=0 \
+		HTTP_PROXY=http://127.0.0.1:1 \
+		HTTPS_PROXY=http://127.0.0.1:1 \
+		ALL_PROXY=socks5://127.0.0.1:1 \
+		NO_PROXY= \
+		go test -count=1 ./...
+
 .PHONY: cover
 cover: ## Run tests and open the coverage report
 	go test -coverprofile=coverage.out ./...
