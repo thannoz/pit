@@ -47,12 +47,26 @@ type PR struct {
 	Draft bool
 	// URL is the page a human would open.
 	URL string
+	// Limited says the metadata came from the commit rather than from
+	// a hosting service, so Branch, State and URL are unknown. Worth
+	// saying once, because "open" then means "not known to be closed".
+	Limited bool
 }
 
 // Describe renders the pull request the way a reviewer would recognise
 // it.
 func (p PR) Describe() string {
-	s := fmt.Sprintf("#%d %q by @%s", p.Number, p.Title, p.Author)
+	if p.Title == "" {
+		return fmt.Sprintf("#%d", p.Number)
+	}
+
+	by := "@" + p.Author
+	if p.Limited {
+		// Not a login: a commit records a person's name, and printing
+		// it with an @ would claim an account that may not exist.
+		by = p.Author
+	}
+	s := fmt.Sprintf("#%d %q by %s", p.Number, p.Title, by)
 	switch {
 	case p.Draft:
 		s += " (draft)"

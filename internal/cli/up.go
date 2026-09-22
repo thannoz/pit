@@ -12,6 +12,7 @@ import (
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/ui"
+	"github.com/thannoz/pit/internal/workspace"
 )
 
 type upOptions struct {
@@ -42,7 +43,13 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 	// Everything that can be checked before anything is created gets
 	// checked first: finding out that gh is missing after a worktree
 	// exists is a worse experience than finding out now.
-	f, err := forge.For(repo.Identity.Host, repo.Identity.Owner+"/"+repo.Identity.Name, proc.Exec{})
+	f, err := forge.For(forge.Options{
+		Host:     repo.Identity.Host,
+		Repo:     repo.Identity.Owner + "/" + repo.Identity.Name,
+		Runner:   proc.Exec{},
+		Resolver: workspace.PullRequests{Runner: proc.Exec{}, Repo: repo},
+		Dir:      repo.Root,
+	})
 	if err != nil {
 		return err
 	}
@@ -57,7 +64,7 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 		return err
 	}
 	out.Printf("%s\n", pull.Describe())
-	warnIfNotWorthReviewing(out, pull)
+	warnIfNotWorthReviewing(out, pull, repo.Identity.Host)
 
 	m, err := manager()
 	if err != nil {
@@ -84,7 +91,14 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 // warnIfNotWorthReviewing says so when the pull request is already
 // merged, closed or still a draft. It is not an error -- there are good
 // reasons to look at one -- but it is almost always a mistyped number.
-func warnIfNotWorthReviewing(out *ui.Printer, pull forge.PR) {
+func warnIfNotWorthReviewing(out *ui.Printer, pull forge.PR, host string) {
+	if pull.Limited {
+		// Saying nothing would let "open" be read as a fact, when all
+		// pit knows is that the ref exists.
+		out.Warnf("%s; the description above is the commit's own", cannotRead(host))
+		return
+	}
+
 	switch {
 	case pull.State == forge.Merged:
 		out.Warnf("#%d is already merged", pull.Number)
@@ -93,6 +107,17 @@ func warnIfNotWorthReviewing(out *ui.Printer, pull forge.PR) {
 	case pull.Draft:
 		out.Warnf("#%d is still a draft", pull.Number)
 	}
+}
+
+// cannotRead phrases why the details are missing. "local" is pit's own
+// marker for a filesystem remote, not the name of a service, and
+// reading it as one produces a sentence about a place that does not
+// exist.
+func cannotRead(host string) string {
+	if host == forge.LocalHost || host == "" {
+		return "this repository has no hosting service to ask for pull request details"
+	}
+	return "pit cannot read pull request details from " + host
 }
 
 // stepReporter renders the stages of a setup as they happen.

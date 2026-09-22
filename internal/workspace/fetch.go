@@ -96,3 +96,16 @@ func DeleteRef(ctx context.Context, r Runner, repo Repo, pr int) error {
 	}
 	return nil
 }
+
+// PullRequests fetches pull requests for one repository. It exists so
+// that other packages can ask for a pull request's commit without
+// knowing how git names one.
+type PullRequests struct {
+	Runner Runner
+	Repo   Repo
+}
+
+// FetchPullRequest downloads a pull request and returns its commit.
+func (p PullRequests) FetchPullRequest(ctx context.Context, number int) (string, error) {
+	return Fetch(ctx, p.Runner, p.Repo, number)
+}

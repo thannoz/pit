@@ -13,7 +13,7 @@ import (
 func TestForPicksGitHub(t *testing.T) {
 	for _, host := range []string{"github.com", "GitHub.com", "github.acme-corp.net"} {
 		t.Run(host, func(t *testing.T) {
-			f, err := For(host, "acme/shop", &stubGH{})
+			f, err := For(Options{Host: host, Repo: "acme/shop", Runner: &stubGH{}, Resolver: stubResolver{}})
 			if err != nil {
 				t.Fatalf("For(%q): %v", host, err)
 			}
@@ -28,54 +28,28 @@ func TestForPicksGitHub(t *testing.T) {
 	}
 }
 
-// TestForExplainsWhatItCannotRead is one of the three cases T-306 asks
-// for: the repository has no remote pit can talk to.
-func TestForExplainsWhatItCannotRead(t *testing.T) {
-	tests := []struct {
-		name     string
-		host     string
-		wantMsg  string
-		wantHint string
-	}{
-		{
-			name:     "no remote at all",
-			host:     LocalHost,
-			wantMsg:  "no remote on a hosting service",
-			wantHint: "git remote -v",
-		},
-		{
-			name:     "empty host",
-			host:     "",
-			wantMsg:  "no remote on a hosting service",
-			wantHint: "git remote -v",
-		},
-		{
-			name:     "gitlab is known but unsupported",
-			host:     "gitlab.com",
-			wantMsg:  "GitLab repository",
-			wantHint: "planned",
-		},
-		{
-			name:     "an unknown service",
-			host:     "git.example.org",
-			wantMsg:  "does not know how to read pull requests from git.example.org",
-			wantHint: "Enterprise",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := For(tt.host, "team/tool", &stubGH{})
-			if err == nil {
-				t.Fatal("want an error")
+// TestForFallsBackToGit records the change T-316 made: every host pit
+// does not recognise used to be refused outright, which blocked the
+// tool on most of the world's repositories and on testing pit against
+// a local one. Reading the commit is less than a service can offer,
+// but it is not nothing.
+func TestForFallsBackToGit(t *testing.T) {
+	for _, host := range []string{"gitlab.com", "git.example.org", LocalHost, ""} {
+		t.Run(host, func(t *testing.T) {
+			f, err := For(Options{Host: host, Repo: "team/tool", Runner: &stubGH{}, Resolver: stubResolver{}})
+			if err != nil {
+				t.Fatalf("For(%q): %v", host, err)
 			}
-			if !strings.Contains(err.Error(), tt.wantMsg) {
-				t.Errorf("message = %q, want it to contain %q", err, tt.wantMsg)
-			}
-			if !strings.Contains(errs.Hint(err), tt.wantHint) {
-				t.Errorf("hint = %q, want it to contain %q", errs.Hint(err), tt.wantHint)
+			if _, ok := f.(Git); !ok {
+				t.Errorf("For(%q) returned %T, want Git", host, f)
 			}
 		})
+	}
+}
+
+func TestForNeedsAWayToRunCommands(t *testing.T) {
+	if _, err := For(Options{Host: "github.com"}); err == nil {
+		t.Error("want an error without a runner")
 	}
 }
 

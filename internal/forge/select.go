@@ -14,34 +14,54 @@ import (
 // repository.
 const LocalHost = "local"
 
-// For returns the Forge that serves a repository, or explains why
-// there is none.
+// Options is what For needs to choose a forge.
+type Options struct {
+	// Host is the service the repository lives on.
+	Host string
+	// Repo is the repository in owner/name form.
+	Repo string
+	// Runner runs gh and git.
+	Runner Runner
+	// Resolver fetches a pull request's ref, for the git fallback.
+	Resolver Resolver
+	// Dir is the repository root, for reading commits.
+	Dir string
+}
+
+// For returns the forge that serves a repository.
 //
-// Checking here rather than waiting for the first failed command means
-// a reviewer who points pit at a repository it cannot read finds out
-// straight away, with the reason, instead of watching a worktree get
-// created and then seeing gh complain.
-func For(host, repo string, r Runner) (Forge, error) {
-	h := strings.ToLower(host)
-
-	switch {
-	case h == "github.com" || strings.HasPrefix(h, "github."):
-		return GitHub{Runner: r, Repo: repo}, nil
-
-	case strings.Contains(h, "gitlab"):
-		return nil, errs.New("%s is a GitLab repository, which pit cannot read yet", repo).
-			WithHint("GitLab support is planned; until then pit works with GitHub repositories")
-
-	case h == LocalHost || h == "":
-		return nil, errs.New("this repository has no remote on a hosting service").
-			WithHint("pit reviews pull requests, so it needs a remote; check `git remote -v`")
-
-	default:
-		// A self-hosted GitHub Enterprise instance is not recognisable
-		// from its name, so say what is known rather than guessing.
-		return nil, errs.New("pit does not know how to read pull requests from %s", host).
-			WithHint("pit works with GitHub; if %s is GitHub Enterprise, please report it", host)
+// Only GitHub can be asked for a pull request's title, author and
+// state. Everywhere else pit falls back to reading the commit, which
+// is less but is not nothing -- and is the difference between working
+// on GitLab, on a company's own server and against a local repository,
+// and refusing to.
+//
+// An earlier version returned an error for every host it did not
+// recognise. That was honest and useless: it blocked the tool on most
+// of the world's repositories, and it blocked testing pit against a
+// local one.
+func For(o Options) (Forge, error) {
+	if o.Runner == nil {
+		return nil, errs.New("no way to run commands")
 	}
+
+	if isGitHub(o.Host) {
+		return GitHub{Runner: o.Runner, Repo: o.Repo}, nil
+	}
+
+	if o.Resolver == nil {
+		return nil, errs.New("pit cannot read pull requests from %s", o.Host).
+			WithHint("this is a bug in pit; please report it")
+	}
+	return Git{Runner: o.Runner, Resolver: o.Resolver, Dir: o.Dir}, nil
+}
+
+// isGitHub recognises github.com and the naming self-hosted GitHub
+// Enterprise instances usually take. A wrong guess costs a fallback to
+// git, not a failure.
+func isGitHub(host string) bool {
+	h := strings.ToLower(host)
+	return h == "github.com" || strings.HasPrefix(h, "github.")
 }
 
 // Check reports whether gh is usable before pit relies on it.
