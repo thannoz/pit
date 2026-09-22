@@ -1,0 +1,59 @@
+# The canonical example. It mirrors the one in docs/02-architektur.md and
+# exists so that a test can hold the schema to it.
+version: 1
+
+compose:
+  files:
+    - docker-compose.yml
+    - docker-compose.pit.yml     # optional
+
+web:
+  service: web
+  port: 3000
+
+healthcheck:
+  url: "http://{host}:{port}/"   # {host} and {port} are substituted
+  expect_status: 200
+  timeout: 120s
+  interval: 2s
+
+hooks:
+  after_up:
+    - "compose exec -T api npm run migrate"
+
+data:
+  service: db
+
+  snapshot:
+    save:    "compose exec -T db pg_dump -U app --clean --if-exists app"
+    restore: "compose exec -T db psql -U app -d app"
+
+  scenarios:
+    - name: leer
+      description: "Nur Migrationen, keine Daten"
+    - name: standard
+      description: "3 Nutzer, 20 Produkte, 5 Bestellungen"
+      apply: ["compose exec -T db psql -U app -d app -f /fixtures/standard.sql"]
+    - name: teilerstattung
+      description: "Bestellung mit Teilerstattung aus zwei Lagern"
+      extends: standard
+      apply: ["compose exec -T db psql -U app -d app -f /fixtures/teilerstattung.sql"]
+
+  default: standard
+
+  production_like:               # optional
+    fetch: "aws s3 cp s3://acme-dumps/anonymized-latest.sql.gz -"
+    ttl: 24h
+
+review:
+  routes:
+    framework: nextjs            # auto | nextjs | sveltekit | go-chi | …
+  ignore:
+    - "**/*.test.ts"
+    - "docs/**"
+
+env:
+  from_file: .env.pit.example    # never real secrets
+  set:
+    NODE_ENV: development
+    TELEMETRY_DISABLED: "1"
