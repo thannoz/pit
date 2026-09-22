@@ -26,8 +26,11 @@ var currentRepo = realCurrentRepo
 func realCurrentRepo(ctx context.Context) (workspace.Repo, error) {
 	repo, err := workspace.Discover(ctx, proc.Exec{}, ".")
 	if err != nil {
+		// The hint used to name `pit down --all`, which is nonsense for
+		// `pit open` or `pit logs`. Every command goes through here, so
+		// the advice has to fit all of them.
 		return workspace.Repo{}, errs.Wrap(err, "cannot tell which repository this is").
-			WithHint("run this from inside the repository, or use `pit down --all`")
+			WithHint("a pull request number means nothing without its repository; run this from inside one (`pit ls` works anywhere)")
 	}
 	return repo, nil
 }

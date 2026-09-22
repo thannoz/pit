@@ -4,6 +4,8 @@ import (
 	"context"
 	"runtime"
 
+	"github.com/spf13/cobra"
+
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/ui"
 )
@@ -32,5 +34,28 @@ func browserCommand(url string) (string, []string) {
 		return "rundll32", []string{"url.dll,FileProtocolHandler", url}
 	default:
 		return "", nil
+	}
+}
+
+func newOpenCmd(_ *globalOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:   "open <pull request number>",
+		Short: "Open a sandbox in a browser",
+		Long: `Open a sandbox's URL in whatever this system uses for one.
+
+The URL is printed either way, so this still tells you something when
+there is no browser to open.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			box, err := sandboxFor(c, args[0])
+			if err != nil {
+				return err
+			}
+
+			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
+			out.Println(box.URL)
+			openInBrowser(c.Context(), out, box.URL)
+			return nil
+		},
 	}
 }

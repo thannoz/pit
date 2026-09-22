@@ -27,12 +27,23 @@ const cleanupBudget = 60 * time.Second
 // lifecycle knows the steps; how they look on screen is not its
 // business.
 type Reporter interface {
-	// Step announces a stage that has completed.
-	Step(format string, args ...any)
-	// Stdout and Stderr are where a command's own output goes.
+	// Begin announces that a step has started. streams says whether
+	// the step writes output of its own, which decides whether an
+	// animation would be overwritten by it.
+	Begin(name string, streams bool)
+	// Done reports that the step begun last has finished.
+	Done(format string, args ...any)
+	// Stdout and Stderr are where a step's own output goes.
 	Stdout() io.Writer
 	Stderr() io.Writer
 }
+
+// Steps that write output of their own. Naming them here keeps the
+// knowledge with the code that runs them.
+const (
+	quiet     = false
+	streaming = true
+)
 
 // UpRequest is everything needed to build a sandbox.
 type UpRequest struct {
@@ -58,19 +69,21 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	id := req.Repo.Identity
 	pr := req.PR.Number
 
+	rep.Begin("fetch", quiet)
 	sha, err := workspace.Fetch(ctx, m.Git, req.Repo, pr)
 	if err != nil {
 		return state.Sandbox{}, err
 	}
 	undo.push(func(c context.Context) { _ = workspace.DeleteRef(c, m.Git, req.Repo, pr) })
-	rep.Step("fetch      #%d at %s", pr, short(sha))
+	rep.Done("#%d at %s", pr, short(sha))
 
+	rep.Begin("worktree", quiet)
 	wt, err := workspace.AddWorktree(ctx, m.Git, req.Repo, m.StateDir, pr)
 	if err != nil {
 		return state.Sandbox{}, err
 	}
 	undo.push(func(c context.Context) { _ = workspace.RemoveWorktree(c, m.Git, req.Repo, wt.Path) })
-	rep.Step("worktree   %s", wt.Path)
+	rep.Done("%s", wt.Path)
 
 	project, err := runtime.ProjectName(id.Ref(), pr)
 	if err != nil {
@@ -92,22 +105,24 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
 
+	rep.Begin("services", streaming)
 	if err := m.Runtime.Up(ctx, box, rep.Stdout(), rep.Stderr()); err != nil {
 		return state.Sandbox{}, err
 	}
 	undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
-	rep.Step("up         %s", project)
+	rep.Done("%s", project)
 
 	if len(req.Config.Hooks.AfterUp) > 0 {
+		rep.Begin("hooks", streaming)
 		h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
 		if err := hooks.Run(ctx, m.Proc, req.Config.Hooks.AfterUp, h, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
-		rep.Step("hooks      %s", plural(len(req.Config.Hooks.AfterUp), "command", "commands"))
+		rep.Done("%s", plural(len(req.Config.Hooks.AfterUp), "command", "commands"))
 	}
 
 	url := runtime.ExpandURL(req.Config.Healthcheck.URL, "localhost", assigned.Port)
-	started := time.Now()
+	rep.Begin("healthy", quiet)
 	probe := runtime.Probe{
 		URL:          url,
 		ExpectStatus: req.Config.Healthcheck.ExpectStatus,
@@ -117,7 +132,10 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	if err := m.Runtime.WaitReady(ctx, box, req.Config.Web.Service, probe); err != nil {
 		return state.Sandbox{}, err
 	}
-	rep.Step("healthy    after %s", time.Since(started).Round(100*time.Millisecond))
+	// Not the URL: the step line says the sandbox answered, and the
+	// URL is the result. Printing it here as well made it appear three
+	// times in a row.
+	rep.Done("it answers")
 
 	record := state.Sandbox{
 		PR:           pr,

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -20,10 +21,14 @@ import (
 	"github.com/thannoz/pit/internal/workspace"
 )
 
-// quietReporter discards the narration.
-type quietReporter struct{ steps []string }
+// quietReporter records the narration instead of printing it.
+type quietReporter struct {
+	begun []string
+	steps []string
+}
 
-func (r *quietReporter) Step(format string, args ...any) {
+func (r *quietReporter) Begin(name string, _ bool) { r.begun = append(r.begun, name) }
+func (r *quietReporter) Done(format string, args ...any) {
 	r.steps = append(r.steps, fmt.Sprintf(format, args...))
 }
 func (r *quietReporter) Stdout() io.Writer { return io.Discard }
@@ -93,6 +98,17 @@ func TestUpBuildsAndRecords(t *testing.T) {
 	}
 	if _, ok := f.Find(req.Repo.Identity.Ref(), 7); !ok {
 		t.Error("the sandbox was not recorded")
+	}
+
+	// Every step announces itself before it runs and reports when it
+	// is done, so the display always has something to show.
+	if len(rep.begun) != len(rep.steps) {
+		t.Errorf("%d steps begun but %d finished: %v / %v", len(rep.begun), len(rep.steps), rep.begun, rep.steps)
+	}
+	for _, want := range []string{"fetch", "worktree", "services", "healthy"} {
+		if !slices.Contains(rep.begun, want) {
+			t.Errorf("the step %q was never announced: %v", want, rep.begun)
+		}
 	}
 }
 

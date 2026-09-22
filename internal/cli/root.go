@@ -87,6 +87,7 @@ func newRootCmd() *cobra.Command {
 		newInitCmd(opts),
 		newLogsCmd(opts),
 		newLsCmd(opts),
+		newOpenCmd(opts),
 		newShellCmd(opts),
 		newVersionCmd(opts),
 	)

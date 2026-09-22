@@ -64,12 +64,17 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 		return err
 	}
 
-	record, err := m.Up(ctx, sandbox.UpRequest{Repo: repo, PR: pull, Config: cfg}, &stepReporter{out: out, err: c.ErrOrStderr()})
+	rep := newStepReporter(c.ErrOrStderr())
+	record, err := m.Up(ctx, sandbox.UpRequest{Repo: repo, PR: pull, Config: cfg}, rep)
 	if err != nil {
 		return err
 	}
 
-	out.Printf("\n  %s\n", record.URL)
+	// The URL is the answer, so it goes to stdout on its own line. The
+	// narration went to stderr, which is what makes `pit 482` usable
+	// in a pipe.
+	rep.Blank()
+	out.Println(record.URL)
 	if o.open {
 		openInBrowser(ctx, out, record.URL)
 	}
@@ -90,20 +95,24 @@ func warnIfNotWorthReviewing(out *ui.Printer, pull forge.PR) {
 	}
 }
 
-// stepReporter renders the stages of a setup as they complete.
-type stepReporter struct {
-	out *ui.Printer
-	err io.Writer
-}
-
-func (r *stepReporter) Step(format string, args ...any) {
-	r.out.Printf("  ✓ "+format+"\n", args...)
-}
-
-// Stdout of a sandbox's own commands goes to stderr, not stdout: the
-// answer of `pit 482` is the URL, and a build log on stdout would ruin
+// stepReporter renders the stages of a setup as they happen.
+//
+// A sandbox's own output goes to stderr, not stdout: the answer of
+// `pit 482` is the URL, and a build log on stdout would ruin
 // `pit 482 | read url`.
-func (r *stepReporter) Stdout() io.Writer { return r.err }
-func (r *stepReporter) Stderr() io.Writer { return r.err }
+type stepReporter struct {
+	progress *ui.Progress
+	err      io.Writer
+}
+
+func newStepReporter(err io.Writer) *stepReporter {
+	return &stepReporter{progress: ui.NewProgress(err), err: err}
+}
+
+func (r *stepReporter) Begin(name string, streams bool) { r.progress.Begin(name, streams) }
+func (r *stepReporter) Done(format string, args ...any) { r.progress.Done(format, args...) }
+func (r *stepReporter) Blank()                          { r.progress.Blank() }
+func (r *stepReporter) Stdout() io.Writer               { return r.err }
+func (r *stepReporter) Stderr() io.Writer               { return r.err }
 
 var _ sandbox.Reporter = (*stepReporter)(nil)
