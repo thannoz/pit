@@ -1,0 +1,62 @@
+BINARY := pit
+PKG    := github.com/thannoz/pit
+BIN    := bin/$(BINARY)
+
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+LDFLAGS := -s -w \
+	-X $(PKG)/internal/cli.version=$(VERSION) \
+	-X $(PKG)/internal/cli.commit=$(COMMIT) \
+	-X $(PKG)/internal/cli.date=$(DATE)
+
+.DEFAULT_GOAL := check
+
+.PHONY: build
+build: ## Build the binary into bin/
+	@mkdir -p bin
+	go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/$(BINARY)
+
+.PHONY: install
+install: ## Install the binary into GOPATH/bin
+	go install -trimpath -ldflags '$(LDFLAGS)' ./cmd/$(BINARY)
+
+.PHONY: test
+test: ## Run all tests
+	go test ./...
+
+.PHONY: cover
+cover: ## Run tests and open the coverage report
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out
+
+.PHONY: fmt
+fmt: ## Format all Go files
+	gofmt -l -w .
+
+.PHONY: vet
+vet: ## Run go vet
+	go vet ./...
+
+.PHONY: lint
+lint: ## Run golangci-lint (see T-006)
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not installed: brew install golangci-lint"; exit 1; }
+	golangci-lint run
+
+.PHONY: tidy
+tidy: ## Tidy go.mod and go.sum
+	go mod tidy
+
+.PHONY: check
+check: vet test build ## Vet, test and build
+
+.PHONY: clean
+clean: ## Remove build artifacts
+	rm -rf bin dist coverage.out
+
+.PHONY: help
+help: ## List the available targets
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
+		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'

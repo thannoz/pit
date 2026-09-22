@@ -12,7 +12,8 @@ CONTRIBUTING.md
 # Build artifacts
 /bin/
 /dist/
-pit
+# Anchored: a bare "pit" would also match the cmd/pit/ directory.
+/pit
 
 # Go
 *.test
