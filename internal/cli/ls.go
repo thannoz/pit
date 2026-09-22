@@ -1,0 +1,169 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/sandbox"
+	"github.com/thannoz/pit/internal/ui"
+)
+
+func newLsCmd(opts *globalOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List the sandboxes that exist",
+		Long: `List every sandbox pit knows about, with what it is actually doing.
+
+The state is global, so this shows sandboxes from every repository you
+have reviewed, not only the one you are standing in.`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runLs(c, opts)
+		},
+	}
+}
+
+func runLs(c *cobra.Command, opts *globalOptions) error {
+	m, err := manager()
+	if err != nil {
+		return err
+	}
+
+	entries, err := m.List(c.Context())
+	if err != nil {
+		return err
+	}
+
+	out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
+	if opts.jsonOutput {
+		return writeLsJSON(out, entries)
+	}
+	return writeLsTable(out, entries)
+}
+
+// lsRow is the shape `--json` promises. It is a type of its own rather
+// than the internal one, so that renaming a field inside pit does not
+// silently break someone's script.
+type lsRow struct {
+	PR        int      `json:"pr"`
+	Repo      string   `json:"repo"`
+	Branch    string   `json:"branch,omitempty"`
+	Title     string   `json:"title,omitempty"`
+	Status    string   `json:"status"`
+	URL       string   `json:"url,omitempty"`
+	Port      int      `json:"port,omitempty"`
+	Scenario  string   `json:"scenario,omitempty"`
+	CreatedAt string   `json:"createdAt"`
+	Services  []string `json:"services,omitempty"`
+}
+
+func writeLsJSON(out *ui.Printer, entries []sandbox.Entry) error {
+	rows := make([]lsRow, 0, len(entries))
+	for _, e := range entries {
+		services := make([]string, 0, len(e.Services))
+		for _, s := range e.Services {
+			services = append(services, s.Service+"="+s.State)
+		}
+		rows = append(rows, lsRow{
+			PR:        e.PR,
+			Repo:      e.Repo,
+			Branch:    e.Branch,
+			Title:     e.Title,
+			Status:    e.Status(),
+			URL:       e.URL,
+			Port:      e.Port,
+			Scenario:  e.Scenario,
+			CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
+			Services:  services,
+		})
+	}
+
+	enc := json.NewEncoder(out.Out())
+	enc.SetIndent("", "  ")
+	return enc.Encode(rows)
+}
+
+func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
+	if len(entries) == 0 {
+		out.Println("No sandboxes. Run `pit <pull request number>` to start one.")
+		return nil
+	}
+
+	// The repository only earns a column when there is more than one:
+	// with a single project it is the same word on every line.
+	showRepo := len(distinctRepos(entries)) > 1
+
+	w := tabwriter.NewWriter(out.Out(), 0, 0, 2, ' ', 0)
+	header := []string{"PR", "BRANCH", "STATUS", "URL", "AGE"}
+	if showRepo {
+		header = append([]string{"REPO"}, header...)
+	}
+	// tabwriter buffers, so these cannot fail in a way worth checking
+	// here; a broken pipe or a full disk surfaces at Flush below.
+	_, _ = fmt.Fprintln(w, strings.Join(header, "\t"))
+
+	for _, e := range entries {
+		row := []string{
+			"#" + strconv.Itoa(e.PR),
+			orDash(e.Branch),
+			e.Status(),
+			orDash(e.URL),
+			shortDuration(time.Since(e.CreatedAt)),
+		}
+		if showRepo {
+			row = append([]string{e.Repo}, row...)
+		}
+		_, _ = fmt.Fprintln(w, strings.Join(row, "\t"))
+	}
+	if err := w.Flush(); err != nil {
+		return errs.Wrap(err, "cannot write the listing")
+	}
+
+	// A runtime that could not be reached is worth saying once, below
+	// the table, rather than in every row.
+	for _, e := range entries {
+		if e.Unreachable != nil {
+			out.Warnf("could not ask the runtime about #%d: %v", e.PR, e.Unreachable)
+		}
+	}
+	return nil
+}
+
+func distinctRepos(entries []sandbox.Entry) map[string]bool {
+	repos := map[string]bool{}
+	for _, e := range entries {
+		repos[e.Repo] = true
+	}
+	return repos
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// shortDuration renders an age the way a person would say it.
+func shortDuration(d time.Duration) string {
+	switch {
+	case d < 0:
+		return "0s"
+	case d < time.Minute:
+		return strconv.Itoa(int(d.Seconds())) + "s"
+	case d < time.Hour:
+		return strconv.Itoa(int(d.Minutes())) + "m"
+	case d < 24*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + "h"
+	default:
+		return strconv.Itoa(int(d.Hours()/24)) + "d"
+	}
+}

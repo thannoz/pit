@@ -72,9 +72,7 @@ func TestTwoProcessesDoNotCorruptTheState(t *testing.T) {
 	errCh := make(chan error, writersCount)
 
 	for w := range writersCount {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 
 			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestStateWriterHelper") //nolint:gosec // the binary is this test
 			cmd.Env = append(os.Environ(),
@@ -84,7 +82,7 @@ func TestTwoProcessesDoNotCorruptTheState(t *testing.T) {
 			if out, err := cmd.CombinedOutput(); err != nil {
 				errCh <- &writerError{w: w, err: err, out: string(out)}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -134,9 +132,7 @@ func TestConcurrentUpdatesInOneProcess(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for w := range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 
 			store, err := state.Open(dir)
 			if err != nil {
@@ -153,7 +149,7 @@ func TestConcurrentUpdatesInOneProcess(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

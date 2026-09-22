@@ -37,8 +37,16 @@ type Sandbox struct {
 	// RepoRef is the slug-and-hash used for directory and project
 	// names.
 	RepoRef string `json:"repoRef"`
+	// RepoRoot is the working copy the sandbox was created from. It is
+	// recorded because tearing one down has to run `git worktree
+	// prune` there, and `pit down --all` may be run from anywhere.
+	RepoRoot string `json:"repoRoot"`
 	// Project is the Docker Compose project name.
 	Project string `json:"project"`
+	// ComposeFiles are the files the sandbox was brought up with,
+	// recorded because taking it down needs the same set and the
+	// configuration may have changed since.
+	ComposeFiles []string `json:"composeFiles"`
 	// Worktree is where the pull request is checked out.
 	Worktree string `json:"worktree"`
 	// Port is the host port the sandbox is published on.

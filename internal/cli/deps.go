@@ -1,0 +1,52 @@
+package cli
+
+import (
+	"context"
+
+	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/proc"
+	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/sandbox"
+	"github.com/thannoz/pit/internal/state"
+	"github.com/thannoz/pit/internal/workspace"
+)
+
+// manager builds the sandbox manager the commands work through.
+//
+// It is a function rather than a field so that a test can replace it
+// wholesale: every command below goes through here, and nothing in
+// this package reaches for Docker or git directly.
+var manager = realManager
+
+// currentRepo answers which repository the command was run in. It is a
+// variable for the same reason as manager: so a test can say so
+// without building a git repository first.
+var currentRepo = realCurrentRepo
+
+func realCurrentRepo(ctx context.Context) (workspace.Repo, error) {
+	repo, err := workspace.Discover(ctx, proc.Exec{}, ".")
+	if err != nil {
+		return workspace.Repo{}, errs.Wrap(err, "cannot tell which repository this is").
+			WithHint("run this from inside the repository, or use `pit down --all`")
+	}
+	return repo, nil
+}
+
+func realManager() (*sandbox.Manager, error) {
+	dir, err := workspace.StateDir()
+	if err != nil {
+		return nil, err
+	}
+	store, err := state.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	x := proc.Exec{}
+	return &sandbox.Manager{
+		Store:    store,
+		Runtime:  runtime.Compose{Runner: x},
+		Git:      x,
+		StateDir: dir,
+	}, nil
+}
