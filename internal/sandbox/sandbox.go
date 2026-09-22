@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/hooks"
 	"github.com/thannoz/pit/internal/runtime"
@@ -33,6 +34,8 @@ type Manager struct {
 	Git workspace.Runner
 	// Proc runs the repository's configured hooks.
 	Proc hooks.Runner
+	// Data puts a sandbox into a named data state.
+	Data data.Store
 	// StateDir is where worktrees and generated files live.
 	StateDir string
 }

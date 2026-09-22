@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/thannoz/pit/internal/config"
+	"github.com/thannoz/pit/internal/data/datatest"
 	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime/runtimetest"
@@ -48,7 +50,8 @@ func upFixture(t *testing.T) (*sandbox.Manager, sandbox.UpRequest, *runtimetest.
 
 	fake := runtimetest.New("web")
 	m := &sandbox.Manager{
-		Store: store, Runtime: fake, Git: proc.Exec{}, Proc: proc.Exec{}, StateDir: stateDir,
+		Store: store, Runtime: fake, Git: proc.Exec{}, Proc: proc.Exec{},
+		Data: datatest.New(), StateDir: stateDir,
 	}
 
 	cfg, err := config.Parse([]byte("web:\n  service: web\n  port: 80\n"))
@@ -253,4 +256,129 @@ func TestSandboxAge(t *testing.T) {
 	if box.Age() < time.Hour {
 		t.Errorf("Age() = %v, want about 90 minutes", box.Age())
 	}
+}
+
+// scenario configures one named data state and returns the fake store
+// it will be applied against.
+func scenario(t *testing.T, m *sandbox.Manager, req sandbox.UpRequest) *datatest.Fake {
+	t.Helper()
+
+	req.Config.Data.Scenarios = []config.Scenario{{
+		Name:        "standard",
+		Description: "3 users, 20 products, 5 orders",
+		Apply:       []string{"compose exec -T db psql -f /fixtures/standard.sql"},
+	}}
+	req.Config.Data.Default = "standard"
+
+	store, ok := m.Data.(*datatest.Fake)
+	if !ok {
+		t.Fatalf("the fixture's data store is %T", m.Data)
+	}
+	return store
+}
+
+// TestUpAppliesTheDefaultScenario is the acceptance criterion for
+// T-403: a sandbox comes up in the state the repository declared,
+// without the reviewer asking for anything.
+func TestUpAppliesTheDefaultScenario(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	store := scenario(t, m, req)
+	rep := &quietReporter{}
+
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	if applied := store.Applied(); !slices.Equal(applied, []string{"standard"}) {
+		t.Fatalf("applied %v, want the configured default", applied)
+	}
+	if !slices.Contains(rep.steps, "scenario standard") {
+		t.Errorf("the narration does not say which data was loaded:\n%v", rep.steps)
+	}
+}
+
+// TestUpLeavesTheDataAloneWithoutAScenario is the control: the step
+// has to be absent when nothing is configured, or the assertion above
+// proves nothing.
+func TestUpLeavesTheDataAloneWithoutAScenario(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	rep := &quietReporter{}
+
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	store := m.Data.(*datatest.Fake)
+	if applied := store.Applied(); len(applied) != 0 {
+		t.Errorf("applied %v although no scenario is configured", applied)
+	}
+	if slices.Contains(rep.begun, "data") {
+		t.Errorf("a data step was announced anyway:\n%v", rep.begun)
+	}
+}
+
+func TestUpAppliesTheScenarioAfterTheHooks(t *testing.T) {
+	// A fixture that loads before the migration that creates its table
+	// fails in a way that is tedious to diagnose; and once pit says
+	// the sandbox answers, it has to answer with the data.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	scenario(t, m, req)
+	req.Config.Hooks.AfterUp = []string{"true"}
+	rep := &quietReporter{}
+
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	want := []string{"fetch", "worktree", "services", "hooks", "data", "healthy"}
+	if !slices.Equal(rep.begun, want) {
+		t.Errorf("steps ran as %v, want %v", rep.begun, want)
+	}
+}
+
+func TestUpUndoesEverythingWhenTheScenarioFails(t *testing.T) {
+	// A sandbox whose data never loaded looks ready and shows an empty
+	// screen, which is the failure this whole stage exists to prevent.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	store := scenario(t, m, req)
+	store.Err = errors.New("relation \"orders\" does not exist")
+
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err == nil {
+		t.Fatal("want an error from the failing scenario")
+	}
+	assertNothingLeftBehind(t, m, req)
+}
+
+func TestUpRejectsAScenarioThatIsNotConfigured(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	scenario(t, m, req)
+	req.Scenario = "standrad"
+
+	_, err := m.Up(t.Context(), req, &quietReporter{})
+	if err == nil {
+		t.Fatal("want an error for a scenario that is not configured")
+	}
+	if !strings.Contains(err.Error(), "standrad") {
+		t.Errorf("error = %q, want it to quote the name", err)
+	}
+	// And it has to be caught before anything was built, not after.
+	if slices.Contains(fake.Methods(), "Up") {
+		t.Error("the services were started for a scenario that does not exist")
+	}
+	assertNothingLeftBehind(t, m, req)
 }

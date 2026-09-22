@@ -38,7 +38,7 @@ func TestRunExecutesInOrder(t *testing.T) {
 	r := &recordingRunner{}
 	lines := []string{"migrate", "seed", "warm-cache"}
 
-	if err := Run(t.Context(), r, lines, sandbox(), io.Discard, io.Discard); err != nil {
+	if err := Run(t.Context(), r, AfterUp(lines), sandbox(), io.Discard, io.Discard); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestRunStopsAtTheFirstFailure(t *testing.T) {
 	// which is worse than no sandbox.
 	r := &recordingRunner{failAt: 2}
 
-	err := Run(t.Context(), r, []string{"first", "second", "third"}, sandbox(), io.Discard, io.Discard)
+	err := Run(t.Context(), r, AfterUp([]string{"first", "second", "third"}), sandbox(), io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -70,13 +70,13 @@ func TestRunNamesTheFailingHook(t *testing.T) {
 	r := &recordingRunner{failAt: 2}
 	lines := []string{"compose exec -T db true", "compose exec -T api npm run migrate"}
 
-	err := Run(t.Context(), r, lines, sandbox(), io.Discard, io.Discard)
+	err := Run(t.Context(), r, AfterUp(lines), sandbox(), io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("want an error")
 	}
 
 	msg := err.Error()
-	if !strings.Contains(msg, "hook 2") {
+	if !strings.Contains(msg, "hooks.after_up entry 2") {
 		t.Errorf("message does not say which hook failed:\n%s", msg)
 	}
 	if !strings.Contains(msg, "npm run migrate") {
@@ -92,7 +92,7 @@ func TestRunRejectsABrokenLineBeforeRunningAnything(t *testing.T) {
 	// not leave the first three already applied.
 	r := &recordingRunner{}
 
-	err := Run(t.Context(), r, []string{"ok", `broken "quote`}, sandbox(), io.Discard, io.Discard)
+	err := Run(t.Context(), r, AfterUp([]string{"ok", `broken "quote`}), sandbox(), io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("want an error")
 	}
@@ -105,7 +105,7 @@ func TestRunForwardsOutput(t *testing.T) {
 	var out bytes.Buffer
 	r := writingRunner{text: "migrating...\n"}
 
-	if err := Run(t.Context(), r, []string{"migrate"}, sandbox(), &out, io.Discard); err != nil {
+	if err := Run(t.Context(), r, AfterUp([]string{"migrate"}), sandbox(), &out, io.Discard); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := out.String(); got != "migrating...\n" {
@@ -123,7 +123,7 @@ func (w writingRunner) Stream(_ context.Context, _ proc.Command, stdout, _ io.Wr
 func TestRunWithNoHooks(t *testing.T) {
 	r := &recordingRunner{}
 
-	if err := Run(t.Context(), r, nil, sandbox(), io.Discard, io.Discard); err != nil {
+	if err := Run(t.Context(), r, AfterUp(nil), sandbox(), io.Discard, io.Discard); err != nil {
 		t.Errorf("Run with no hooks: %v", err)
 	}
 	if len(r.calls) != 0 {

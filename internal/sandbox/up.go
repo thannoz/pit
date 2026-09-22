@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thannoz/pit/internal/config"
+	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/hooks"
@@ -53,6 +54,9 @@ type UpRequest struct {
 	PR forge.PR
 	// Config is the repository's .pit.yaml.
 	Config *config.Config
+	// Scenario is the data state the reviewer asked for. Empty means
+	// the one the repository configured as its default.
+	Scenario string
 }
 
 // Up builds a sandbox for a pull request and records it.
@@ -68,6 +72,14 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 
 	id := req.Repo.Identity
 	pr := req.PR.Number
+
+	// Before anything is built: a misspelled --scenario is a typo, and
+	// finding it after a five-minute build is an insult. Selecting is
+	// pure configuration work and costs nothing here.
+	scenario, err := data.Select(req.Config, req.Scenario)
+	if err != nil {
+		return state.Sandbox{}, err
+	}
 
 	rep.Begin("fetch", quiet)
 	sha, err := workspace.Fetch(ctx, m.Git, req.Repo, pr)
@@ -112,13 +124,27 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
 	rep.Done("%s", project)
 
-	if len(req.Config.Hooks.AfterUp) > 0 {
+	after := hooks.AfterUp(req.Config.Hooks.AfterUp)
+	if !after.Empty() {
 		rep.Begin("hooks", streaming)
 		h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
-		if err := hooks.Run(ctx, m.Proc, req.Config.Hooks.AfterUp, h, rep.Stdout(), rep.Stderr()); err != nil {
+		if err := hooks.Run(ctx, m.Proc, after, h, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
-		rep.Done("%s", plural(len(req.Config.Hooks.AfterUp), "command", "commands"))
+		rep.Done("%s", plural(len(after.Lines), "command", "commands"))
+	}
+
+	// Applied after the hooks, because the hooks are where migrations
+	// live and a fixture that loads before its table exists fails in a
+	// way that is tedious to diagnose. Before the healthcheck, so that
+	// the moment pit says the sandbox answers, it answers with data.
+	if !scenario.Empty() {
+		rep.Begin("data", streaming)
+		box := data.Sandbox{Project: project, Files: files, Dir: wt.Path}
+		if err := m.Data.Apply(ctx, box, scenario, rep.Stdout(), rep.Stderr()); err != nil {
+			return state.Sandbox{}, err
+		}
+		rep.Done("scenario %s", scenario.Name)
 	}
 
 	url := runtime.ExpandURL(req.Config.Healthcheck.URL, "localhost", assigned.Port)

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 
+	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime"
@@ -50,6 +51,8 @@ func realManager() (*sandbox.Manager, error) {
 		Store:    store,
 		Runtime:  runtime.Compose{Runner: x},
 		Git:      x,
+		Proc:     x,
+		Data:     data.Commands{Runner: x},
 		StateDir: dir,
 	}, nil
 }

@@ -113,15 +113,15 @@ func TestShellEscapeHatch(t *testing.T) {
 func TestExpandAllNamesTheFailingLine(t *testing.T) {
 	// A list of hooks reporting only "unbalanced quote" leaves the
 	// author hunting through the file.
-	_, err := ExpandAll([]string{
+	_, err := ExpandAll(AfterUp([]string{
 		"compose exec -T db true",
 		`compose exec -T db psql -c "select 1`,
-	}, sandbox())
+	}), sandbox())
 
 	if err == nil {
 		t.Fatal("want an error for the broken line")
 	}
-	if !strings.Contains(err.Error(), "hook 2") {
+	if !strings.Contains(err.Error(), "hooks.after_up entry 2") {
 		t.Errorf("error = %q, want it to name the second hook", err)
 	}
 	if errs.Hint(err) == "" {
@@ -132,7 +132,7 @@ func TestExpandAllNamesTheFailingLine(t *testing.T) {
 func TestExpandAllKeepsOrder(t *testing.T) {
 	// Migrations before seeds: the order in the file is the order the
 	// author needs.
-	cmds, err := ExpandAll([]string{"a", "b", "c"}, sandbox())
+	cmds, err := ExpandAll(AfterUp([]string{"a", "b", "c"}), sandbox())
 	if err != nil {
 		t.Fatalf("ExpandAll: %v", err)
 	}
@@ -154,5 +154,37 @@ func TestExpandWithoutComposeFiles(t *testing.T) {
 	}
 	if slices.Contains(got.Args, "--file") {
 		t.Errorf("args %v carry a --file flag although none is configured", got.Args)
+	}
+}
+
+func TestExpandAllKeepsTheSpecificHint(t *testing.T) {
+	// errs.Hint takes the outermost hint it finds, so a generic one
+	// from wrapLine would be printed instead of the advice tokenize
+	// already gives about the actual mistake.
+	_, err := ExpandAll(AfterUp([]string{`compose exec -T db psql -c "select 1`}), sandbox())
+	if err == nil {
+		t.Fatal("want an error for the broken line")
+	}
+
+	if hint := errs.Hint(err); !strings.Contains(hint, "close the quote") {
+		t.Errorf("hint = %q, want the one about the unbalanced quote", hint)
+	}
+}
+
+func TestExpandAllNamesTheSettingTheLinesCameFrom(t *testing.T) {
+	// The same machinery runs hooks and a scenario's fixtures. Saying
+	// "entry 1" without saying where would send the author to the
+	// wrong part of the file.
+	list := List{
+		Path:  `data.scenarios["standard"].apply`,
+		Lines: []string{`psql -c "select 1`},
+	}
+
+	_, err := ExpandAll(list, sandbox())
+	if err == nil {
+		t.Fatal("want an error for the broken line")
+	}
+	if !strings.Contains(err.Error(), `data.scenarios["standard"].apply entry 1`) {
+		t.Errorf("error = %q, want it to name the scenario's setting", err)
 	}
 }

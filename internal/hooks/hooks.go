@@ -58,14 +58,39 @@ func Check(line string) error {
 	return err
 }
 
+// List is a sequence of configured commands together with the setting
+// they were written under.
+//
+// The two travel together because a failure has to name the place to
+// fix. "hook 2" was enough while hooks were the only caller; now that
+// the same machinery also runs a scenario's fixtures, the message has
+// to say which of the two the author should look at.
+type List struct {
+	// Path is the setting in .pit.yaml the lines came from, such as
+	// "hooks.after_up" or `data.scenarios["standard"].apply`.
+	Path string
+	// Lines are the commands, in the author's order.
+	Lines []string
+}
+
+// AfterUp is the list of hooks configured under hooks.after_up. The
+// path lives here rather than at the call site so that renaming the
+// setting is one edit.
+func AfterUp(lines []string) List {
+	return List{Path: "hooks.after_up", Lines: lines}
+}
+
+// Empty reports whether there is nothing to run.
+func (l List) Empty() bool { return len(l.Lines) == 0 }
+
 // ExpandAll expands every line, reporting which one failed rather than
 // only that something did.
-func ExpandAll(lines []string, s Sandbox) ([]proc.Command, error) {
-	cmds := make([]proc.Command, 0, len(lines))
-	for i, line := range lines {
+func ExpandAll(l List, s Sandbox) ([]proc.Command, error) {
+	cmds := make([]proc.Command, 0, len(l.Lines))
+	for i, line := range l.Lines {
 		c, err := Expand(line, s)
 		if err != nil {
-			return nil, wrapLine(err, i, line)
+			return nil, wrapLine(err, l, i)
 		}
 		cmds = append(cmds, c)
 	}
