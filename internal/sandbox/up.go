@@ -125,6 +125,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		RepoRef:      id.Ref(),
 		RepoRoot:     req.Repo.Root,
 		Project:      project,
+		WebService:   req.Config.Web.Service,
 		ComposeFiles: files,
 		Worktree:     wt.Path,
 		Port:         assigned.Port,

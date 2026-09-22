@@ -49,6 +49,10 @@ type Sandbox struct {
 	ComposeFiles []string `json:"composeFiles"`
 	// Worktree is where the pull request is checked out.
 	Worktree string `json:"worktree"`
+	// WebService is the compose service a reviewer opens. It is
+	// recorded so that `pit logs` and `pit shell` work from anywhere,
+	// without finding and reading the repository's configuration.
+	WebService string `json:"webService"`
 	// Port is the host port the sandbox is published on.
 	Port int `json:"port"`
 	// URL is what the reviewer opens.
@@ -139,6 +143,26 @@ func (s *Store) Load() (*File, error) {
 	defer release()
 
 	return s.read()
+}
+
+// TryLoad reads the record only if the lock is free, and reports
+// whether it managed to.
+//
+// It exists for `pit doctor`, which must never block: it is run
+// precisely when something is stuck, and a diagnosis that hangs on the
+// problem it is meant to diagnose is worse than no diagnosis.
+func (s *Store) TryLoad() (*File, bool) {
+	release, ok := s.TryLock()
+	if !ok {
+		return nil, false
+	}
+	defer release()
+
+	f, err := s.read()
+	if err != nil {
+		return nil, false
+	}
+	return f, true
 }
 
 // List returns the sandboxes, most recently created first.

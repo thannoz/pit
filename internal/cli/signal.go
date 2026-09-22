@@ -29,11 +29,14 @@ func WithInterrupt(parent context.Context) (context.Context, func()) {
 			return
 		}
 
-		fmt.Fprintln(os.Stderr, "\nInterrupted. Cleaning up; press Ctrl+C again to leave it.")
+		// The wording has to be true of every command. `pit 482` is
+		// cleaning up; `pit logs -f` has nothing to clean up and would
+		// look broken if told it did.
+		fmt.Fprintln(os.Stderr, "\nInterrupted; stopping. Press Ctrl+C again to give up waiting.")
 		cancel()
 
 		<-ch
-		fmt.Fprintln(os.Stderr, "Left as it is. `pit ls` shows what remains.")
+		fmt.Fprintln(os.Stderr, "Gave up. `pit ls` shows what is still there.")
 		os.Exit(130) // 128 + SIGINT, the shell convention
 	}()
 

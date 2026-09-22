@@ -94,14 +94,23 @@ func (c Compose) Port(ctx context.Context, s Sandbox, service string, containerP
 	return mapping, nil
 }
 
-// command assembles a docker compose invocation. The project name comes
-// before the subcommand, because Compose treats it as a global flag.
-func (c Compose) command(s Sandbox, args ...string) proc.Command {
+// ComposeCommand assembles a docker compose invocation for a sandbox.
+// The project name comes before the subcommand, because Compose treats
+// it as a global flag and rejects it after one.
+//
+// It is exported because `pit logs` and `pit shell` are little more
+// than this call: they should not have to reassemble the isolation
+// flags, nor build a string only to have it taken apart again.
+func ComposeCommand(s Sandbox, args ...string) proc.Command {
 	full := []string{"compose", "--project-name", s.Project}
 	for _, f := range s.Files {
 		full = append(full, "--file", f)
 	}
 	return proc.Command{Name: "docker", Args: append(full, args...), Dir: s.Dir}
+}
+
+func (c Compose) command(s Sandbox, args ...string) proc.Command {
+	return ComposeCommand(s, args...)
 }
 
 // Logs returns the tail of a service's output. It is what a failure

@@ -101,6 +101,30 @@ func (e Exec) Stream(ctx context.Context, c Command, stdout, stderr io.Writer) e
 	return decorate(c, err, captured)
 }
 
+// Attach runs c connected to this process's own terminal.
+//
+// Stream cannot do this: its writers are pipes, and a program that asks
+// "am I on a terminal?" -- docker compose exec, or the shell it starts
+// -- would answer no and refuse to allocate one. An interactive command
+// has to inherit the descriptors themselves.
+func (e Exec) Attach(ctx context.Context, c Command) error {
+	cmd := exec.CommandContext(ctx, c.Name, c.Args...)
+	cmd.Dir = c.Dir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = environment(c.Env)
+
+	// No process group here, deliberately. An interactive child should
+	// receive the terminal's own Ctrl+C the way any foreground process
+	// does, rather than having pit intercept it and signal the group.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = e.grace()
+
+	slog.DebugContext(ctx, "attaching command", "cmd", c.String(), "dir", c.Dir)
+	return decorate(c, cmd.Run(), "")
+}
+
 func (e Exec) run(ctx context.Context, c Command, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, c.Name, c.Args...)
 	cmd.Dir = c.Dir
