@@ -67,29 +67,10 @@ func runDown(c *cobra.Command, o *downOptions, args []string) error {
 }
 
 func downOne(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, arg string) error {
-	pr, err := strconv.Atoi(arg)
-	if err != nil || pr <= 0 {
-		return errs.New("%q is not a pull request number", arg)
-	}
-
-	// The number alone is ambiguous: the record is global, and the same
-	// number exists in every repository. Which one is meant follows
-	// from where the command was run.
-	repo, err := currentRepo(c.Context())
+	box, err := sandboxFor(c, arg)
 	if err != nil {
 		return err
 	}
-
-	f, err := m.Store.Load()
-	if err != nil {
-		return err
-	}
-	box, ok := f.Find(repo.Identity.Ref(), pr)
-	if !ok {
-		return errs.New("there is no sandbox for #%d in %s", pr, repo.Identity).
-			WithHint("`pit ls` shows what exists")
-	}
-
 	return removeOne(c, m, out, box)
 }
 
@@ -108,7 +89,7 @@ func downMany(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, o *downOpti
 			plural(len(targets), "sandbox", "sandboxes"),
 			pick(len(targets), "its", "their"))
 		for _, box := range targets {
-			out.Printf("  %s #%d\n", box.Repo, box.PR)
+			out.Printf("  %s\n", box.Describe())
 		}
 		if !confirm(c, out, "Remove "+pick(len(targets), "it", "them all")+"?") {
 			out.Println("Nothing was removed.")
@@ -156,7 +137,7 @@ func removeOne(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, box state.
 	if err := m.Down(c.Context(), box, c.ErrOrStderr(), c.ErrOrStderr()); err != nil {
 		return err
 	}
-	out.Printf("Removed #%d (%s)\n", box.PR, box.Repo)
+	out.Printf("Removed %s\n", box.Describe())
 	return nil
 }
 

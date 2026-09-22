@@ -4,11 +4,15 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/runtime"
 	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/state"
+	"github.com/thannoz/pit/internal/workspace"
 )
 
 func TestLogsNeedsASandbox(t *testing.T) {
@@ -128,4 +132,110 @@ func TestNotRunningIsRecognised(t *testing.T) {
 	if notRunning(errs.New("bash: not found")) {
 		t.Error("a missing shell was mistaken for a missing service")
 	}
+}
+
+// TestCommandsWorkFromAnywhere is the acceptance criterion for T-317:
+// a number that is unique across every repository resolves without
+// standing anywhere in particular.
+func TestCommandsWorkFromAnywhere(t *testing.T) {
+	notInARepo(t)
+	withManager(t, recorded(7, "github.com/acme/shop", "acme-shop-c56680", "feat/checkout", time.Minute))
+
+	box, err := sandboxFor(rootFor(t), "7")
+	if err != nil {
+		t.Fatalf("sandboxFor: %v", err)
+	}
+	if box.PR != 7 {
+		t.Errorf("PR = %d, want 7", box.PR)
+	}
+}
+
+func TestAmbiguousNumberListsTheCandidates(t *testing.T) {
+	// Telling someone to go and stand in the right directory is not an
+	// answer when they are looking at a list that spans directories.
+	notInARepo(t)
+	withManager(t,
+		recorded(7, "github.com/acme/shop", "acme-shop-c56680", "a", time.Minute),
+		recorded(7, "github.com/acme/admin", "acme-admin-9f2b1a", "b", time.Minute),
+	)
+
+	_, err := sandboxFor(rootFor(t), "7")
+	if err == nil {
+		t.Fatal("want an error for an ambiguous number")
+	}
+
+	hint := errs.Hint(err)
+	for _, want := range []string{"acme/shop#7", "acme/admin#7"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint = %q, missing %q", hint, want)
+		}
+	}
+}
+
+func TestAQualifiedReferenceResolvesTheAmbiguity(t *testing.T) {
+	notInARepo(t)
+	withManager(t,
+		recorded(7, "github.com/acme/shop", "acme-shop-c56680", "a", time.Minute),
+		recorded(7, "github.com/acme/admin", "acme-admin-9f2b1a", "b", time.Minute),
+	)
+
+	box, err := sandboxFor(rootFor(t), "acme/admin#7")
+	if err != nil {
+		t.Fatalf("sandboxFor: %v", err)
+	}
+	if box.Repo != "github.com/acme/admin" {
+		t.Errorf("Repo = %q, want the one that was named", box.Repo)
+	}
+}
+
+func TestStandingInARepositoryResolvesTheAmbiguity(t *testing.T) {
+	// The common case: two reviews open, and the reviewer is in one of
+	// the repositories. No question should be asked.
+	id := atRepo(t, "github.com", "acme", "admin")
+	withManager(t,
+		recorded(7, "github.com/acme/shop", "acme-shop-c56680", "a", time.Minute),
+		recorded(7, id.String(), id.Ref(), "b", time.Minute),
+	)
+
+	box, err := sandboxFor(rootFor(t), "7")
+	if err != nil {
+		t.Fatalf("sandboxFor: %v", err)
+	}
+	if box.RepoRef != id.Ref() {
+		t.Errorf("RepoRef = %q, want the repository we are standing in", box.RepoRef)
+	}
+}
+
+func TestUnknownNumberSaysWhatToDo(t *testing.T) {
+	notInARepo(t)
+	withManager(t)
+
+	_, err := sandboxFor(rootFor(t), "7")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(errs.Hint(err), "pit ls") {
+		t.Errorf("hint = %q, want it to point at pit ls", errs.Hint(err))
+	}
+}
+
+// notInARepo makes the commands behave as they do outside a repository.
+func notInARepo(t *testing.T) {
+	t.Helper()
+
+	previous := currentRepo
+	currentRepo = func(context.Context) (workspace.Repo, error) {
+		return workspace.Repo{}, errs.New("not inside a git repository")
+	}
+	t.Cleanup(func() { currentRepo = previous })
+}
+
+// rootFor is a command carrying a context, which is all sandboxFor
+// needs from one.
+func rootFor(t *testing.T) *cobra.Command {
+	t.Helper()
+
+	cmd := newRootCmd()
+	cmd.SetContext(t.Context())
+	return cmd
 }

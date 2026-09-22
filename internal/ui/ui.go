@@ -73,6 +73,16 @@ func (p *Printer) Println(args ...any) {
 	p.note(fmt.Fprintln(p.out, args...))
 }
 
+// Notef writes context to stderr: which thing a command is acting on,
+// not a problem with it.
+//
+// It goes to stderr because it is not the answer, and it carries no
+// prefix because "warning:" in front of "#7 ..." claims something is
+// wrong when nothing is.
+func (p *Printer) Notef(format string, args ...any) {
+	p.note(fmt.Fprintf(p.err, format+"\n", args...))
+}
+
 // Warnf writes a warning to stderr. It is commentary, not an answer, so
 // it never lands on stdout.
 func (p *Printer) Warnf(format string, args ...any) {

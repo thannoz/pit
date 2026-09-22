@@ -53,6 +53,7 @@ there is no browser to open.`,
 			}
 
 			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
+			out.Notef("%s", box.Describe())
 			out.Println(box.URL)
 			openInBrowser(c.Context(), out, box.URL)
 			return nil

@@ -9,6 +9,7 @@ import (
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime"
 	"github.com/thannoz/pit/internal/sandbox"
+	"github.com/thannoz/pit/internal/ui"
 )
 
 func newShellCmd(_ *globalOptions) *cobra.Command {
@@ -49,6 +50,8 @@ func runShell(c *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	ui.New(c.OutOrStdout(), c.ErrOrStderr()).Notef("%s", box.Describe())
+
 	service := serviceArg(passed, box)
 
 	command := args[len(passed):]

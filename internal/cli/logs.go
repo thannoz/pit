@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/thannoz/pit/internal/runtime"
 	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/state"
+	"github.com/thannoz/pit/internal/ui"
 )
 
 // stateSandbox is an alias so the helpers below read without repeating
@@ -51,6 +53,10 @@ func runLogs(c *cobra.Command, o *logsOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Named once, on stderr, so it survives `pit logs 7 > out.log` and
+	// still tells a reviewer with three reviews open which one this is.
+	ui.New(c.OutOrStdout(), c.ErrOrStderr()).Notef("%s", box.Describe())
+
 	service := serviceArg(args, box)
 
 	cmdArgs := []string{"logs", "--no-color", "--tail", strconv.Itoa(o.tail)}
@@ -76,18 +82,20 @@ func ignoreInterrupt(ctx context.Context, err error) error {
 	return err
 }
 
-// sandboxFor finds the recorded sandbox a command was given a number
-// for.
+// sandboxFor finds the sandbox a command was given a reference for.
+//
+// The record is global, so a number alone can name more than one
+// sandbox. Standing in a repository resolves it; when that is not
+// possible, a number that is unique across every repository is
+// accepted anyway. Only a genuine ambiguity asks the reviewer
+// anything, and then it hands them something they can type.
 func sandboxFor(c *cobra.Command, arg string) (state.Sandbox, error) {
-	pr, err := strconv.Atoi(arg)
-	if err != nil || pr <= 0 {
-		return state.Sandbox{}, errs.New("%q is not a pull request number", arg)
+	ref, err := state.ParseRef(arg)
+	if err != nil {
+		return state.Sandbox{}, errs.New("%s", err.Error()).
+			WithHint("pass a number, or `<repo>#<number>` when several repositories have one")
 	}
 
-	repo, err := currentRepo(c.Context())
-	if err != nil {
-		return state.Sandbox{}, err
-	}
 	m, err := manager()
 	if err != nil {
 		return state.Sandbox{}, err
@@ -97,12 +105,43 @@ func sandboxFor(c *cobra.Command, arg string) (state.Sandbox, error) {
 		return state.Sandbox{}, err
 	}
 
-	box, ok := f.Find(repo.Identity.Ref(), pr)
-	if !ok {
-		return state.Sandbox{}, errs.New("there is no sandbox for #%d in %s", pr, repo.Identity).
-			WithHint("`pit ls` shows what exists; `pit %d` creates one", pr)
+	var matches []state.Sandbox
+	for _, box := range f.Sandboxes {
+		if ref.Matches(box) {
+			matches = append(matches, box)
+		}
 	}
-	return box, nil
+
+	switch len(matches) {
+	case 0:
+		return state.Sandbox{}, errs.New("there is no sandbox for #%d", ref.PR).
+			WithHint("`pit ls` shows what exists; `pit %d` creates one", ref.PR)
+	case 1:
+		return matches[0], nil
+	}
+
+	// Several: the repository the command was run in decides, if it is
+	// one of them.
+	if repo, err := currentRepo(c.Context()); err == nil {
+		for _, box := range matches {
+			if box.RepoRef == repo.Identity.Ref() {
+				return box, nil
+			}
+		}
+	}
+	return state.Sandbox{}, ambiguous(ref, matches)
+}
+
+// ambiguous lists the candidates as references that can be typed back
+// in. Telling someone to go and stand in the right directory is not an
+// answer when they are looking at a list that spans directories.
+func ambiguous(ref state.Ref, matches []state.Sandbox) error {
+	names := make([]string, 0, len(matches))
+	for _, box := range matches {
+		names = append(names, box.QualifiedRef())
+	}
+	return errs.New("#%d exists in %d repositories", ref.PR, len(matches)).
+		WithHint("name one of them: %s", strings.Join(names, ", "))
 }
 
 // serviceArg is the service the command should act on: the one given,

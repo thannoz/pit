@@ -102,7 +102,7 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 	showRepo := len(distinctRepos(entries)) > 1
 
 	w := tabwriter.NewWriter(out.Out(), 0, 0, 2, ' ', 0)
-	header := []string{"PR", "BRANCH", "STATUS", "URL", "AGE"}
+	header := []string{"PR", "TITLE", "BRANCH", "STATUS", "URL", "AGE"}
 	if showRepo {
 		header = append([]string{"REPO"}, header...)
 	}
@@ -113,13 +113,14 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 	for _, e := range entries {
 		row := []string{
 			"#" + strconv.Itoa(e.PR),
+			orDash(truncate(e.Title, maxTitle)),
 			orDash(e.Branch),
 			e.Status(),
 			orDash(e.URL),
 			shortDuration(time.Since(e.CreatedAt)),
 		}
 		if showRepo {
-			row = append([]string{e.Repo}, row...)
+			row = append([]string{truncate(e.ShortRepo(), maxRepo)}, row...)
 		}
 		_, _ = fmt.Fprintln(w, strings.Join(row, "\t"))
 	}
@@ -153,6 +154,22 @@ func distinctRepos(entries []sandbox.Entry) map[string]bool {
 		repos[e.Repo] = true
 	}
 	return repos
+}
+
+// maxTitle keeps the table narrow enough to read in a normal terminal.
+// A pull request title can be a paragraph; the first few words are what
+// makes it recognisable.
+const (
+	maxTitle = 32
+	maxRepo  = 24
+)
+
+func truncate(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 func orDash(s string) string {

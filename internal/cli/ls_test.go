@@ -226,3 +226,70 @@ func TestShortDuration(t *testing.T) {
 		})
 	}
 }
+
+// TestLsShowsTheTitle is the acceptance criterion for T-318 at the
+// listing: a branch name alone does not say what a pull request is.
+func TestLsShowsTheTitle(t *testing.T) {
+	box := recorded(482, "github.com/acme/shop", "acme-shop-c56680", "feat/checkout", time.Minute)
+	box.Title = "Rework the checkout flow"
+	withManager(t, box)
+
+	out, err := runCLI(t, "ls")
+	if err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	if !strings.Contains(out, "TITLE") {
+		t.Errorf("the listing has no title column:\n%s", out)
+	}
+	if !strings.Contains(out, "Rework the checkout flow") {
+		t.Errorf("the listing does not show the title:\n%s", out)
+	}
+}
+
+func TestLsKeepsTheTableNarrow(t *testing.T) {
+	// A pull request title can be a paragraph; the first few words are
+	// what makes it recognisable.
+	box := recorded(482, "github.com/acme/shop", "acme-shop-c56680", "feat/checkout", time.Minute)
+	box.Title = strings.Repeat("a very long title ", 10)
+	withManager(t, box)
+
+	out, err := runCLI(t, "ls")
+	if err != nil {
+		t.Fatalf("ls: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if len([]rune(line)) > 140 {
+			t.Errorf("a line is %d characters wide:\n%s", len([]rune(line)), line)
+		}
+	}
+	if !strings.Contains(out, "…") {
+		t.Errorf("the long title was not shortened:\n%s", out)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"short", 10, "short"},
+		{"exactly-10", 10, "exactly-10"},
+		{"far too long for this", 10, "far too l…"},
+		// Counting runes, not bytes: a title with umlauts must not be
+		// cut in the middle of a character.
+		{"Überarbeitung des Bezahlvorgangs", 10, "Überarbei…"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got := truncate(tt.in, tt.max)
+			if got != tt.want {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tt.in, tt.max, got, tt.want)
+			}
+			if len([]rune(got)) > tt.max {
+				t.Errorf("result is %d runes, want at most %d", len([]rune(got)), tt.max)
+			}
+		})
+	}
+}
