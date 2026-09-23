@@ -66,6 +66,21 @@ func (e Entry) Running() bool {
 	return true
 }
 
+// AnyRunning reports whether at least one service is up.
+//
+// It is a weaker question than Running, and the right one before
+// running a command inside the sandbox: a project where a one-shot
+// service has finished on purpose is not broken, but one where
+// everything has exited has nothing to run a command in.
+func (e Entry) AnyRunning() bool {
+	for _, s := range e.Services {
+		if s.Running() {
+			return true
+		}
+	}
+	return false
+}
+
 // Status is a word for what the sandbox is doing.
 func (e Entry) Status() string {
 	switch {

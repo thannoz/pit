@@ -83,6 +83,7 @@ func newRootCmd() *cobra.Command {
 	f.BoolVar(&opts.jsonOutput, "json", false, "print machine readable output")
 
 	cmd.AddCommand(
+		newDataCmd(opts),
 		newDoctorCmd(opts),
 		newDownCmd(opts),
 		newInitCmd(opts),

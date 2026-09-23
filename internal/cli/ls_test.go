@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thannoz/pit/internal/data/datatest"
 	"github.com/thannoz/pit/internal/runtime"
 	"github.com/thannoz/pit/internal/runtime/runtimetest"
 	"github.com/thannoz/pit/internal/sandbox"
@@ -38,7 +39,7 @@ func withManager(t *testing.T, boxes ...state.Sandbox) (*sandbox.Manager, *runti
 	}
 
 	fake := runtimetest.New("web")
-	m := &sandbox.Manager{Store: store, Runtime: fake, StateDir: dir}
+	m := &sandbox.Manager{Store: store, Runtime: fake, Data: datatest.New(), StateDir: dir}
 
 	previous := manager
 	manager = func() (*sandbox.Manager, error) { return m, nil }
