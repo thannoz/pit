@@ -1,0 +1,77 @@
+# Build one image per service for every pull request, so that a review
+# pulls instead of building.
+#
+# Copy this into .github/workflows/ of the project being reviewed, put
+# the real services in the matrix below, and tell pit where to look:
+#
+#     # .pit.yaml
+#     build:
+#       prebuilt: "ghcr.io/acme/shop-{service}:{sha}"
+#
+# The name in the matrix and the name in .pit.yaml have to agree
+# exactly. Nothing checks them against each other: an image pit cannot
+# find is not an error, it just means building, slowly and silently.
+#
+# The tag is the pull request's head commit, not github.sha. On a
+# pull_request event github.sha is the merge commit GitHub creates for
+# the run, and that commit is not what pit checks out -- pit fetches
+# refs/pull/<n>/head. Tagging with github.sha would publish images no
+# review ever asks for.
+#
+# The pins are commit hashes on purpose, and Dependabot keeps them
+# current; see .github/dependabot.yml in the pit repository for the
+# configuration that does it.
+
+name: Prebuild images for review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+# A pull request that is pushed to twice does not need the first set of
+# images: nobody will ever review that commit.
+concurrency:
+  group: prebuild-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+
+    strategy:
+      # One service failing to build is worth knowing about on its own;
+      # the others still save their reviewer a build.
+      fail-fast: false
+      matrix:
+        include:
+          - service: web
+            context: ./site
+            image: ghcr.io/acme/shop-web
+          - service: api
+            context: ./api
+            image: ghcr.io/acme/shop-api
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit under review, for the same reason as the tag.
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ${{ matrix.image }}:${{ github.event.pull_request.head.sha }}
+          # Scoped per service, or the services overwrite each other's
+          # cache and every run builds from nothing.
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

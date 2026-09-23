@@ -52,6 +52,12 @@ fmt: ## Format all Go files
 vet: ## Run go vet
 	go vet ./...
 
+.PHONY: lint-actions
+lint-actions: ## Check the workflows, including the one shipped in examples/
+	@command -v actionlint >/dev/null 2>&1 || { \
+		echo "actionlint not installed: go install github.com/rhysd/actionlint/cmd/actionlint@latest"; exit 1; }
+	actionlint .github/workflows/*.yml examples/github-actions/*.yml
+
 .PHONY: lint
 lint: ## Run golangci-lint (see T-006)
 	@command -v golangci-lint >/dev/null 2>&1 || { \
