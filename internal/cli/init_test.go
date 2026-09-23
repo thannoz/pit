@@ -213,7 +213,7 @@ func TestInitGeneratesReadableGuidance(t *testing.T) {
 
 	// The sections a project will need next are present but switched
 	// off, so the format is learned from the file rather than the docs.
-	for _, want := range []string{"# hooks:", "# data:", "# env:", "scenarios", "snapshot"} {
+	for _, want := range []string{"# hooks:", "# migrate:", "# env:", "# snapshot:", "# - name: standard"} {
 		if !strings.Contains(generated, want) {
 			t.Errorf("the generated file is missing %q", want)
 		}
@@ -254,4 +254,77 @@ func devNull(t *testing.T) *os.File {
 	}
 	t.Cleanup(func() { _ = f.Close() })
 	return f
+}
+
+// TestInitWritesAUsableScenario is the acceptance criterion for T-409.
+func TestInitWritesAUsableScenario(t *testing.T) {
+	dir := inProject(t, exampleCompose)
+
+	if _, err := runInitCmd(t, "", "--service", "web", "--port", "80"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	c, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatalf("the generated file does not validate: %v", err)
+	}
+
+	if len(c.Data.Scenarios) != 1 || c.Data.Scenarios[0].Name != "empty" {
+		t.Fatalf("Scenarios = %+v, want one called empty", c.Data.Scenarios)
+	}
+	if c.Data.Scenarios[0].Description == "" {
+		t.Error("the scenario has no description, so the listing would show a dash")
+	}
+	// It has to be reachable without editing anything: a scaffold that
+	// needs a change before it works is a comment with extra steps.
+	if c.Data.Default != "empty" {
+		t.Errorf("Default = %q, want the scenario that was written", c.Data.Default)
+	}
+	if len(c.Data.Scenarios[0].Apply) != 0 {
+		t.Errorf("Apply = %v, want no commands; a generated command would name files that do not exist",
+			c.Data.Scenarios[0].Apply)
+	}
+	// The one that needs project knowledge stays switched off.
+	if c.Data.Service != "db" {
+		t.Errorf("Service = %q, want the project's own database service", c.Data.Service)
+	}
+}
+
+func TestInitScenarioIsListedRightAway(t *testing.T) {
+	// End to end, because that is how someone meets it: set up a
+	// project, ask what it offers.
+	inProject(t, exampleCompose)
+
+	if _, err := runInitCmd(t, "", "--service", "web", "--port", "80"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	out, _, err := run(t, "scenarios")
+	if err != nil {
+		t.Fatalf("pit scenarios: %v", err)
+	}
+	if !lineWith(out, "* ", "empty", "Migrations only") {
+		t.Errorf("the generated scenario is not listed as the default:\n%s", out)
+	}
+}
+
+func TestInitLeavesOutADatabaseThatIsNotThere(t *testing.T) {
+	// A name in a comment is an example; a name written as
+	// configuration is a claim about this project.
+	dir := inProject(t, "services:\n  app:\n    image: nginx\n    ports: [\"8080:80\"]\n")
+
+	if _, err := runInitCmd(t, "", "--service", "app", "--port", "80"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	c, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatalf("the generated file does not validate: %v", err)
+	}
+	if c.Data.Service != "" {
+		t.Errorf("Service = %q, but this project has no database service", c.Data.Service)
+	}
+	if c.Data.Default != "empty" {
+		t.Errorf("Default = %q; the scenario is useful with or without a database", c.Data.Default)
+	}
 }

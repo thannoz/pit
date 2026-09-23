@@ -41,10 +41,12 @@ func Render(o InitOptions) ([]byte, error) {
 	}
 
 	var b bytes.Buffer
+	db := guessDatabase(o.Services)
 	if err := initTemplate.Execute(&b, view{
 		InitOptions: o,
 		Version:     Version,
-		DBService:   guessDatabase(o.Services),
+		DBService:   db,
+		DBExample:   orElse(db, "db"),
 	}); err != nil {
 		return nil, errs.Wrap(err, "cannot write the configuration")
 	}
@@ -53,13 +55,23 @@ func Render(o InitOptions) ([]byte, error) {
 
 type view struct {
 	InitOptions
-	Version   int
+	Version int
+	// DBService is the project's own database service, empty when none
+	// was recognised.
 	DBService string
+	// DBExample is a name for the commented examples: the real one
+	// where there is one, a plausible one otherwise.
+	DBExample string
 }
 
-// guessDatabase picks a plausible database service so the commented-out
-// data section names something real. A wrong guess inside a comment
-// costs nothing; a generic placeholder teaches nothing.
+// guessDatabase picks the project's database service so the data
+// section names something real, and returns nothing when none of the
+// services looks like one.
+//
+// The difference matters: a name inside a comment is an example and a
+// wrong guess costs nothing, but a name written as configuration is a
+// claim about this project, and pointing at a service that does not
+// exist is worse than leaving the setting out.
 func guessDatabase(services []string) string {
 	known := []string{"db", "database", "postgres", "postgresql", "mysql", "mariadb", "mongo", "mongodb"}
 	for _, s := range services {
@@ -69,7 +81,17 @@ func guessDatabase(services []string) string {
 			}
 		}
 	}
-	return "db"
+	return ""
+}
+
+// orElse keeps the commented examples readable when nothing was
+// recognised: they need a name, and a made-up one in a comment teaches
+// more than an empty gap.
+func orElse(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }
 
 var initTemplate = template.Must(template.New("pit.yaml").Parse(
@@ -108,28 +130,43 @@ healthcheck:
 #     - "compose exec -T {{ .WebService }} npm ci"
 
 # The state of the database, which decides whether a reviewer sees the
-# change or an empty screen. See the pit documentation on scenarios.
-# data:
-#   service: {{ .DBService }}
-#
-#   # Bringing the schema up to date is a step of its own, so that a
-#   # migration that fails is reported as a migration.
-#   migrate:
-#     - "compose exec -T {{ .WebService }} npm run migrate"
-#
-#   # Two commands are enough for any database: one that writes a dump
-#   # to stdout, one that reads it back from stdin.
-#   snapshot:
-#     save:    "compose exec -T {{ .DBService }} pg_dump -U app --clean --if-exists app"
-#     restore: "compose exec -T {{ .DBService }} psql -U app -d app"
-#
-#   scenarios:
-#     - name: empty
-#       description: "Migrations only, no data"
-#     - name: standard
-#       description: "Enough data to see the usual screens"
-#       apply: ["compose exec -T {{ .DBService }} psql -U app -d app -f /fixtures/standard.sql"]
-#   default: standard
+# change or an empty screen.
+data:
+{{- if .DBService }}
+  service: {{ .DBService }}
+{{- end }}
+
+  # Bringing the schema up to date is a step of its own, so that a
+  # migration that fails is reported as a migration and not as a hook.
+  # migrate:
+  #   - "compose exec -T {{ .WebService }} npm run migrate"
+
+  # A scenario is a name for a data state, so that two reviewers can
+  # talk about the same screen. "empty" is the state the migrations
+  # leave behind: it needs no commands, which is why it works in every
+  # project and is a safe place to start.
+  scenarios:
+    - name: empty
+      description: "Migrations only, no data"
+
+    # Copy this, fill in what puts the project into a state worth
+    # reviewing, and make it the default below. The commands run
+    # inside the sandbox; "compose" stands for this sandbox's own
+    # docker compose, project name and files already filled in.
+    # - name: standard
+    #   description: "Enough data to see the usual screens"
+    #   apply:
+    #     - "compose exec -T {{ .DBExample }} psql -U app -d app -f /fixtures/standard.sql"
+
+  # What a review loads when no --scenario is given. The command
+  # "pit scenarios" lists what this file offers.
+  default: empty
+
+  # Two commands are enough for any database: one that writes a dump
+  # to stdout, one that reads it back from stdin.
+  # snapshot:
+  #   save:    "compose exec -T {{ .DBExample }} pg_dump -U app --clean --if-exists app"
+  #   restore: "compose exec -T {{ .DBExample }} psql -U app -d app"
 
 # Environment for the sandbox's services. from_file points at a template
 # checked into the repository -- never a real .env, and never a secret.
