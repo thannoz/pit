@@ -25,7 +25,7 @@ func bringUp(ctx context.Context, rt runtime.Runtime, s runtime.Sandbox, out io.
 		return "", errors.New("the compose files declare no services")
 	}
 
-	if err := rt.Up(ctx, s, out, out); err != nil {
+	if err := rt.Up(ctx, s, nil, out, out); err != nil {
 		return "", err
 	}
 
@@ -117,7 +117,7 @@ func TestPortIsUnavailableBeforeUp(t *testing.T) {
 
 func TestStatusAfterTheServicesStop(t *testing.T) {
 	f := runtimetest.New("web", "db")
-	if err := f.Up(t.Context(), sandbox(), io.Discard, io.Discard); err != nil {
+	if err := f.Up(t.Context(), sandbox(), nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 	f.Stop(sandbox().Project)
@@ -141,7 +141,7 @@ func TestStatusAfterTheContainersAreRemoved(t *testing.T) {
 	// all -- which is a different answer from "they exited", and the
 	// difference decides whether anything is left to keep.
 	f := runtimetest.New("web", "db")
-	if err := f.Up(t.Context(), sandbox(), io.Discard, io.Discard); err != nil {
+	if err := f.Up(t.Context(), sandbox(), nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 	if err := f.Down(t.Context(), sandbox(), io.Discard, io.Discard); err != nil {

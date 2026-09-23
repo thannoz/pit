@@ -26,6 +26,11 @@ type Service struct {
 	// It is what decides whether a changed file can have changed this
 	// service.
 	Context string
+	// DependsOn are the services it cannot run without. Starting a
+	// subset of a project means starting these too, which is why pit
+	// reads them rather than leaving it to Compose: what is started
+	// is also what has to be built.
+	DependsOn []string
 }
 
 // composeFile is the sliver of the Compose schema pit reads directly.
@@ -35,10 +40,37 @@ type composeFile struct {
 }
 
 type composeService struct {
-	Image  string      `yaml:"image"`
-	Ports  []yaml.Node `yaml:"ports"`
-	Expose []yaml.Node `yaml:"expose"`
-	Build  yaml.Node   `yaml:"build"`
+	Image     string      `yaml:"image"`
+	Ports     []yaml.Node `yaml:"ports"`
+	Expose    []yaml.Node `yaml:"expose"`
+	Build     yaml.Node   `yaml:"build"`
+	DependsOn yaml.Node   `yaml:"depends_on"`
+}
+
+// dependencies reads the services a service cannot run without.
+//
+// Compose accepts a list of names and a mapping whose keys are the
+// names and whose values say how to wait for them; only the names
+// matter here.
+func dependencies(n yaml.Node) []string {
+	switch n.Kind {
+	case yaml.SequenceNode:
+		out := make([]string, 0, len(n.Content))
+		for _, item := range n.Content {
+			if item.Value != "" {
+				out = append(out, item.Value)
+			}
+		}
+		return out
+	case yaml.MappingNode:
+		out := make([]string, 0, len(n.Content)/2)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			out = append(out, n.Content[i].Value)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 // buildContext reads the directory a service is built from.
@@ -98,10 +130,11 @@ func ReadServices(path string) ([]Service, error) {
 	for _, name := range names {
 		s := f.Services[name]
 		services = append(services, Service{
-			Name:    name,
-			Image:   s.Image,
-			Ports:   containerPorts(s),
-			Context: buildContext(s.Build),
+			Name:      name,
+			Image:     s.Image,
+			Ports:     containerPorts(s),
+			Context:   buildContext(s.Build),
+			DependsOn: dependencies(s.DependsOn),
 		})
 	}
 	return services, nil

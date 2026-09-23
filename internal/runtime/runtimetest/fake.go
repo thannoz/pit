@@ -74,8 +74,15 @@ var _ runtime.Runtime = (*Fake)(nil)
 
 // Up marks the sandbox as running and remembers which services it was
 // asked for, which is the whole question an incremental setup turns on.
-func (f *Fake) Up(_ context.Context, s runtime.Sandbox, stdout, _ io.Writer) error {
-	f.record("Up", s.Project, "")
+func (f *Fake) Up(_ context.Context, s runtime.Sandbox, services []string, stdout, _ io.Writer) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, Call{
+		Method:   "Up",
+		Project:  s.Project,
+		Services: append([]string(nil), services...),
+	})
+	f.mu.Unlock()
+
 	if err := f.failure("Up"); err != nil {
 		return err
 	}

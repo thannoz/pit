@@ -105,6 +105,11 @@ compose:
 {{- range .ComposeFiles }}
     - {{ . }}
 {{- end }}
+  # Only these services, and whatever they depend on. Leaving it out
+  # starts the whole project, which is right until one grows a queue
+  # worker and a mail catcher that no review ever looks at.
+  # services:
+  #   - {{ .WebService }}
 
 # The service a reviewer opens, and the port it listens on inside its
 # container. pit chooses the published port itself, one per sandbox, so

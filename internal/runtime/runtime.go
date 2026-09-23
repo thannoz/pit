@@ -37,9 +37,11 @@ func (s Status) Running() bool { return s.State == "running" }
 // watchable, and Logs returns bytes rather than a reader because every
 // caller wants the whole tail at once.
 type Runtime interface {
-	// Up starts the services, building anything that still has no
-	// image, and forwards their output.
-	Up(ctx context.Context, s Sandbox, stdout, stderr io.Writer) error
+	// Up starts the named services, building anything that still has
+	// no image, and forwards their output. An empty list starts the
+	// whole project; naming some starts only those, which is how a
+	// review of eight services can run four.
+	Up(ctx context.Context, s Sandbox, services []string, stdout, stderr io.Writer) error
 	// Build builds the named services, or every one of them when the
 	// list is empty. It is separate from Up because which services
 	// have to be built is a question with an interesting answer:

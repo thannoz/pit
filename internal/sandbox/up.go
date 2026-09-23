@@ -148,6 +148,14 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
 
+	// Which services this review needs at all. Everything below is
+	// about them only: building an image for a service nobody starts
+	// is the purest waste there is.
+	chosen, err := selectServices(req.Config, wt.Path)
+	if err != nil {
+		return state.Sandbox{}, err
+	}
+
 	// What has to be built here. For a sandbox that does not exist yet
 	// that is every service with a build; for one being updated, the
 	// services the new commit can have touched.
@@ -159,6 +167,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	if updating && req.Config.Build.Prebuilt == "" {
 		work = m.plan(ctx, req, previous, sha, wt.Path)
 	}
+	work = work.within(chosen)
 
 	if work.nothing() {
 		// The override that is already there describes this sandbox
@@ -186,13 +195,13 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	}
 
 	st.begin("services", streaming)
-	if err := m.Runtime.Up(ctx, box, rep.Stdout(), rep.Stderr()); err != nil {
+	if err := m.Runtime.Up(ctx, box, chosen.names, rep.Stdout(), rep.Stderr()); err != nil {
 		return state.Sandbox{}, err
 	}
 	if !updating {
 		undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
 	}
-	st.done(ctx, "%s", project)
+	st.done(ctx, "%s", chosen.describe(project))
 
 	if updating {
 		// From here on the sandbox holds the new commit, so the record

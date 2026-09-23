@@ -6,6 +6,9 @@ compose:
   files:
     - docker-compose.yml
     - docker-compose.pit.yml     # optional
+  services:                      # optional: nur diese starten
+    - web
+    - api
 
 web:
   service: web

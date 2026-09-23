@@ -52,7 +52,7 @@ func testSandbox() Sandbox {
 func TestUpIsolatesTheSandbox(t *testing.T) {
 	r := &stubRunner{}
 
-	if err := (Compose{Runner: r}).Up(t.Context(), testSandbox(), io.Discard, io.Discard); err != nil {
+	if err := (Compose{Runner: r}).Up(t.Context(), testSandbox(), nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
@@ -127,7 +127,7 @@ func TestProjectNameComesBeforeTheSubcommand(t *testing.T) {
 	// Compose treats --project-name as a global flag; after the
 	// subcommand it is rejected.
 	r := &stubRunner{}
-	if err := (Compose{Runner: r}).Up(t.Context(), testSandbox(), io.Discard, io.Discard); err != nil {
+	if err := (Compose{Runner: r}).Up(t.Context(), testSandbox(), nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
@@ -162,7 +162,7 @@ func TestEachComposeFileIsPassed(t *testing.T) {
 	s := testSandbox()
 	s.Files = []string{"docker-compose.yml", "docker-compose.pit.yml"}
 
-	if err := (Compose{Runner: r}).Up(t.Context(), s, io.Discard, io.Discard); err != nil {
+	if err := (Compose{Runner: r}).Up(t.Context(), s, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
@@ -231,7 +231,7 @@ func TestFailuresCarryHints(t *testing.T) {
 	c := Compose{Runner: r}
 
 	tests := map[string]func() error{
-		"Up":       func() error { return c.Up(t.Context(), testSandbox(), io.Discard, io.Discard) },
+		"Up":       func() error { return c.Up(t.Context(), testSandbox(), nil, io.Discard, io.Discard) },
 		"Down":     func() error { return c.Down(t.Context(), testSandbox(), io.Discard, io.Discard) },
 		"Services": func() error { _, err := c.Services(t.Context(), testSandbox()); return err },
 	}

@@ -969,3 +969,165 @@ func TestUpNamesThePulledImageInTheOverride(t *testing.T) {
 		t.Errorf("the override names an image nobody published:\n%s", written)
 	}
 }
+
+// eightServices is the shape the question is about: four services
+// decide what a screen looks like, and four more cost build time and
+// answer nothing a reviewer asked.
+const eightServices = `services:
+  web:
+    build: ./site
+    depends_on: [api]
+  api:
+    build: ./api
+    depends_on:
+      db:
+        condition: service_started
+      cache:
+        condition: service_started
+  db:
+    image: postgres:16
+  cache:
+    image: redis:7
+  worker:
+    build: ./api
+  mailer:
+    image: mailhog/mailhog
+  analytics:
+    build: ./analytics
+  docs:
+    build: ./docs
+`
+
+func atEightServices(t *testing.T, req sandbox.UpRequest) {
+	t.Helper()
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"docker-compose.yml":   eightServices,
+		"site/Dockerfile":      "FROM nginx\n",
+		"api/Dockerfile":       "FROM golang\n",
+		"analytics/Dockerfile": "FROM python\n",
+		"docs/Dockerfile":      "FROM nginx\n",
+	})
+}
+
+// TestUpStartsOnlyTheServicesAReviewNeeds is the acceptance criterion
+// for T-508.
+func TestUpStartsOnlyTheServicesAReviewNeeds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api", "db", "cache"}
+	atEightServices(t, req)
+	// One entry point: what it needs comes with it.
+	req.Config.Compose.Services = []string{"web"}
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	ups := callsTo(fake, "Up")
+	if len(ups) != 1 {
+		t.Fatalf("started the services %d times, want once", len(ups))
+	}
+	want := []string{"web", "api", "db", "cache"}
+	if !slices.Equal(ups[0].Services, want) {
+		t.Errorf("started %v, want %v", ups[0].Services, want)
+	}
+	if !slices.Contains(rep.steps, "pit-"+req.Repo.Identity.Ref()+"-7, 4 of 8 services") {
+		t.Errorf("the narration does not say how much of the project is running:\n%v", rep.steps)
+	}
+}
+
+func TestUpBuildsNothingForAServiceItDoesNotStart(t *testing.T) {
+	// Building an image for a service nobody starts costs exactly as
+	// much as building one that somebody does.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api", "db", "cache"}
+	atEightServices(t, req)
+	req.Config.Compose.Services = []string{"web"}
+
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	builds := callsTo(fake, "Build")
+	if len(builds) != 1 {
+		t.Fatalf("built %d times, want once", len(builds))
+	}
+	// worker, analytics and docs are built from source and are not
+	// part of this review.
+	if !slices.Equal(builds[0].Services, []string{"web", "api"}) {
+		t.Errorf("built %v, want only the services being started", builds[0].Services)
+	}
+}
+
+func TestUpStartsEverythingWhenNothingIsChosen(t *testing.T) {
+	// The control: without the setting the whole project comes up, and
+	// the narration says nothing about counts.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api", "db", "cache"}
+	atEightServices(t, req)
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	ups := callsTo(fake, "Up")
+	if len(ups) != 1 || len(ups[0].Services) != 0 {
+		t.Errorf("started %v, want the whole project", ups)
+	}
+	for _, step := range rep.steps {
+		if strings.Contains(step, "of 8 services") {
+			t.Errorf("the narration counts services although all of them are running: %q", step)
+		}
+	}
+}
+
+func TestUpRejectsAServiceThatIsNotDeclared(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	atEightServices(t, req)
+	req.Config.Compose.Services = []string{"wbe"}
+
+	_, err := m.Up(t.Context(), req, &quietReporter{})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if hint := errs.Hint(err); !strings.Contains(hint, `did you mean "web"?`) {
+		t.Errorf("hint = %q, want the suggestion", hint)
+	}
+	if slices.Contains(fake.Methods(), "Up") {
+		t.Error("the services were started for a selection that cannot work")
+	}
+}
+
+func TestUpRejectsASelectionWithoutTheServiceUnderReview(t *testing.T) {
+	// The reviewer opens web.service. A selection that leaves it out
+	// would come up and then fail its healthcheck, which says nothing
+	// about what is wrong.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	atEightServices(t, req)
+	req.Config.Compose.Services = []string{"worker"}
+
+	_, err := m.Up(t.Context(), req, &quietReporter{})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "which is the service a reviewer opens") {
+		t.Errorf("error = %q", err)
+	}
+}

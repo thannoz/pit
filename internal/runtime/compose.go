@@ -41,12 +41,21 @@ type Compose struct {
 // Up builds and starts the sandbox's services in the background,
 // forwarding Compose's own output so the reviewer can watch a build
 // that takes minutes rather than staring at nothing.
-func (c Compose) Up(ctx context.Context, s Sandbox, stdout, stderr io.Writer) error {
+func (c Compose) Up(ctx context.Context, s Sandbox, services []string, stdout, stderr io.Writer) error {
 	// Without --build: what had to be built was built already, by
 	// Build, and anything still missing an image Compose builds here
 	// on its own. Passing --build as well would rebuild the services
 	// this setup deliberately left alone.
-	err := c.Runner.Stream(ctx, c.command(s, "up", "--detach", "--remove-orphans"), stdout, stderr)
+	args := []string{"up", "--detach"}
+	if len(services) == 0 {
+		// Only when the whole project is being started: with a list,
+		// Compose takes every container that is not on it for an
+		// orphan and removes it.
+		args = append(args, "--remove-orphans")
+	}
+	args = append(args, services...)
+
+	err := c.Runner.Stream(ctx, c.command(s, args...), stdout, stderr)
 	if err != nil {
 		return errs.Wrap(err, "cannot start the services").
 			WithHint("check the compose file in %s, or run `docker compose -p %s logs`", s.Dir, s.Project)

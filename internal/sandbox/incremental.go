@@ -207,3 +207,20 @@ func wants(req UpRequest, sc data.Scenario, previous state.Sandbox) bool {
 	}
 	return req.Confirm(fmt.Sprintf("#%d kept the data it had. Load %s again?", req.PR.Number, sc.Describe()))
 }
+
+// within drops whatever is not part of the selection. Building an
+// image for a service this review does not start would cost exactly
+// as much as building it for one that it does.
+func (b build) within(s selection) build {
+	if s.whole() || b.all {
+		return b
+	}
+
+	kept := make([]string, 0, len(b.services))
+	for _, name := range b.services {
+		if s.has(name) {
+			kept = append(kept, name)
+		}
+	}
+	return build{services: kept}
+}

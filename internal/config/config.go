@@ -26,6 +26,15 @@ type Compose struct {
 	// Files are relative to the repository root, in the order Compose
 	// should merge them.
 	Files []string `yaml:"files"`
+	// Services are the ones a review needs. Whatever they depend on
+	// comes with them, so this is a list of entry points rather than
+	// of everything that will run. Empty means the whole project.
+	//
+	// It exists because a project of eight services usually has four
+	// that decide what a screen looks like, and the rest -- a queue
+	// worker, a mail catcher, an analytics sink -- cost minutes of
+	// build and answer nothing a reviewer asked.
+	Services []string `yaml:"services"`
 }
 
 // Web identifies the service a reviewer opens in a browser.

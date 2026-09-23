@@ -40,6 +40,9 @@ func TestCanonicalExampleParses(t *testing.T) {
 		if !slices.Equal(c.Compose.Files, want) {
 			t.Errorf("Compose.Files = %v, want %v", c.Compose.Files, want)
 		}
+		if services := []string{"web", "api"}; !slices.Equal(c.Compose.Services, services) {
+			t.Errorf("Compose.Services = %v, want %v", c.Compose.Services, services)
+		}
 	})
 
 	t.Run("web", func(t *testing.T) {
