@@ -496,3 +496,104 @@ func TestUpRecordsNoStepsItDidNotRun(t *testing.T) {
 		}
 	}
 }
+
+// TestUpReusesARunningSandbox is the acceptance criterion for T-503.
+func TestUpReusesARunningSandbox(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+
+	first, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+
+	rep := &quietReporter{}
+	second, err := m.Up(t.Context(), req, rep)
+	if err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+
+	if second.URL != first.URL {
+		t.Errorf("the second setup answers at %s, want the same URL as the first (%s)", second.URL, first.URL)
+	}
+	if !slices.Contains(rep.begun, "reuse") {
+		t.Errorf("the second setup did not say it was reusing anything:\n%v", rep.begun)
+	}
+	// Nothing was built: the runtime was asked whether the sandbox
+	// answers, and nothing else.
+	if count := countMethod(fake.Methods(), "Up"); count != 1 {
+		t.Errorf("the services were started %d times, want only the first", count)
+	}
+	if slices.Contains(rep.begun, "services") {
+		t.Errorf("a services step ran on the second setup:\n%v", rep.begun)
+	}
+}
+
+func TestUpBuildsAgainForAnotherCommit(t *testing.T) {
+	// The control: a sandbox of yesterday's code answers just as
+	// readily as one of today's, and handing that over would be a
+	// review of something that is not under review.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+	// Move the pull request on by one commit.
+	advancePullRequest(t, req.Repo.Root, req.PR.Number)
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+
+	if slices.Contains(rep.begun, "reuse") {
+		t.Errorf("a sandbox of the previous commit was handed over:\n%v", rep.begun)
+	}
+	if count := countMethod(fake.Methods(), "Up"); count != 2 {
+		t.Errorf("the services were started %d times, want 2", count)
+	}
+}
+
+func TestUpKeepsThePortWhenBuildingAgain(t *testing.T) {
+	// A pull request that moves to a new port every time it is set up
+	// again defeats the reason the ports are deterministic: a browser
+	// tab that stays valid.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+
+	first, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+
+	// Not reusable any more: the services are gone, so the second
+	// call goes the long way round.
+	if err := fake.Down(t.Context(), sandbox.RuntimeSandbox(first), io.Discard, io.Discard); err != nil {
+		t.Fatalf("Down: %v", err)
+	}
+
+	second, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+	if second.Port != first.Port {
+		t.Errorf("port moved from %d to %d", first.Port, second.Port)
+	}
+}
+
+func countMethod(methods []string, want string) int {
+	n := 0
+	for _, m := range methods {
+		if m == want {
+			n++
+		}
+	}
+	return n
+}

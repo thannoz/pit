@@ -63,6 +63,22 @@ func addPullRequest(t *testing.T, clone string, pr int) {
 	git(t, upstream, "checkout", "--quiet", "main")
 }
 
+// advancePullRequest adds a commit to a pull request's branch, the way
+// an author pushing a fix does.
+func advancePullRequest(t *testing.T, clone string, pr int) {
+	t.Helper()
+
+	upstream := remoteOf(t, clone)
+	branch := "pit-test-pr-" + strconv.Itoa(pr)
+
+	git(t, upstream, "checkout", "--quiet", branch)
+	writeFile(t, filepath.Join(upstream, "pr.txt"), "another change for #"+strconv.Itoa(pr)+"\n")
+	git(t, upstream, "add", "-A")
+	git(t, upstream, "commit", "--quiet", "-m", "another change for #"+strconv.Itoa(pr))
+	git(t, upstream, "update-ref", workspace.RemotePullRef(workspace.LocalHost, pr), head(t, upstream))
+	git(t, upstream, "checkout", "--quiet", "main")
+}
+
 func remoteOf(t *testing.T, clone string) string {
 	t.Helper()
 

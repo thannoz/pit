@@ -89,8 +89,17 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	if err != nil {
 		return state.Sandbox{}, err
 	}
-	undo.push(func(c context.Context) { _ = workspace.DeleteRef(c, m.Git, req.Repo, pr) })
 	st.done(ctx, "#%d at %s", pr, short(sha))
+
+	// Before anything is created, and before the ref is registered for
+	// cleanup: a sandbox that is already running is the answer, and
+	// undoing the fetch would take the ref the running one is on.
+	if box, ok := m.reusable(ctx, req, sha); ok {
+		undo.disarm()
+		return m.reuse(ctx, box, scenario, st)
+	}
+
+	undo.push(func(c context.Context) { _ = workspace.DeleteRef(c, m.Git, req.Repo, pr) })
 
 	st.begin("worktree", quiet)
 	wt, err := workspace.AddWorktree(ctx, m.Git, req.Repo, m.StateDir, pr)
@@ -105,7 +114,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		return state.Sandbox{}, err
 	}
 
-	assigned, err := ports.Reserve(ctx, id.String(), pr, m.portTaken(ctx))
+	assigned, err := ports.Reserve(ctx, id.String(), pr, m.portTaken(ctx, id.Ref(), pr))
 	if err != nil {
 		return state.Sandbox{}, err
 	}
@@ -216,10 +225,18 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 // out. Without it two sandboxes started in quick succession can pick
 // the same number: the first has not bound it yet when the second
 // checks.
-func (m *Manager) portTaken(ctx context.Context) func(int) bool {
+func (m *Manager) portTaken(ctx context.Context, repoRef string, pr int) func(int) bool {
 	reserved := map[int]bool{}
 	if recorded, err := m.Store.List(); err == nil {
 		for _, box := range recorded {
+			// Not the sandbox being rebuilt: its own port is the one
+			// it should get back. Counting it as taken would move a
+			// pull request to a new port every time it is set up
+			// again, which is the opposite of what deterministic
+			// ports are for -- a browser tab that stays valid.
+			if box.RepoRef == repoRef && box.PR == pr {
+				continue
+			}
 			reserved[box.Port] = true
 		}
 	}
