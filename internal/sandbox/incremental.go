@@ -14,19 +14,36 @@ import (
 	"github.com/thannoz/pit/internal/workspace"
 )
 
-// build says which services have to be brought up again.
+// build says which services have to be built.
 //
-// The distinction is between "everything" and "these": an empty list
-// with all set means the whole project, an empty list without it means
-// there is genuinely nothing to do, and the two must not be confused
-// into one nil slice.
+// The distinction is between "everything" and "these": all set means
+// the whole project, an empty list without it means there is genuinely
+// nothing to do, and the two must not be confused into one nil slice.
+//
+// all is the fallback for when the services cannot be listed at all.
+// Everywhere else the list is explicit, because a prebuilt image is
+// decided per service and "everything" cannot have one of its members
+// removed.
 type build struct {
 	all      bool
 	services []string
 }
 
-// everything is what a sandbox that does not exist yet needs.
-func everything() build { return build{all: true} }
+// everything is what a sandbox that does not exist yet needs: every
+// service that has something to build, named, so that individual ones
+// can be answered by a registry instead.
+func everything(c *config.Config, worktree string) build {
+	services, err := buildableServices(c, worktree)
+	if err != nil {
+		return build{all: true}
+	}
+
+	names := make([]string, 0, len(services))
+	for _, s := range services {
+		names = append(names, s.name)
+	}
+	return build{services: names}
+}
 
 // nothing reports whether the sandbox is already what the new commit
 // describes.
@@ -67,7 +84,7 @@ func (m *Manager) plan(ctx context.Context, req UpRequest, previous state.Sandbo
 	changed, err := workspace.ChangedFiles(ctx, m.Git, req.Repo, previous.SHA, sha)
 	if err != nil {
 		slog.DebugContext(ctx, "cannot tell what changed, building everything", "error", err)
-		return everything()
+		return everything(req.Config, worktree)
 	}
 	if len(changed) == 0 {
 		// Two commits with the same tree: a rebase, an amended
@@ -82,14 +99,14 @@ func (m *Manager) plan(ctx context.Context, req UpRequest, previous state.Sandbo
 	for _, f := range changed {
 		if f == config.FileName || listed(req.Config.Compose.Files, f) {
 			slog.DebugContext(ctx, "the setup itself changed, building everything", "file", f)
-			return everything()
+			return everything(req.Config, worktree)
 		}
 	}
 
 	services, err := buildableServices(req.Config, worktree)
 	if err != nil {
 		slog.DebugContext(ctx, "cannot read the compose files, building everything", "error", err)
-		return everything()
+		return everything(req.Config, worktree)
 	}
 
 	var affected []string
@@ -160,18 +177,6 @@ func listed(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-// describe says what was rebuilt, because "services" alone hides the
-// answer to the question a reviewer waiting for a build has.
-func describe(b build, project string) string {
-	if b.all {
-		return project
-	}
-	if len(b.services) == 1 {
-		return b.services[0] + " rebuilt"
-	}
-	return strings.Join(b.services, ", ") + " rebuilt"
 }
 
 // recordCommit moves the record to the commit the sandbox now holds.

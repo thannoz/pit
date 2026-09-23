@@ -73,6 +73,12 @@ func TestCanonicalExampleParses(t *testing.T) {
 		}
 	})
 
+	t.Run("build", func(t *testing.T) {
+		if c.Build.Prebuilt != "ghcr.io/acme/shop-{service}:{sha}" {
+			t.Errorf("Prebuilt = %q", c.Build.Prebuilt)
+		}
+	})
+
 	t.Run("data", func(t *testing.T) {
 		d := c.Data
 		if d.Service != "db" {

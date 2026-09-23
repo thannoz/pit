@@ -41,22 +41,65 @@ type Compose struct {
 // Up builds and starts the sandbox's services in the background,
 // forwarding Compose's own output so the reviewer can watch a build
 // that takes minutes rather than staring at nothing.
-func (c Compose) Up(ctx context.Context, s Sandbox, services []string, stdout, stderr io.Writer) error {
-	args := []string{"up", "--detach", "--build"}
-	if len(services) == 0 {
-		// Only when the whole project is being brought up: with a
-		// list, Compose would take every container that is not on it
-		// for an orphan.
-		args = append(args, "--remove-orphans")
-	}
-	args = append(args, services...)
-
-	err := c.Runner.Stream(ctx, c.command(s, args...), stdout, stderr)
+func (c Compose) Up(ctx context.Context, s Sandbox, stdout, stderr io.Writer) error {
+	// Without --build: what had to be built was built already, by
+	// Build, and anything still missing an image Compose builds here
+	// on its own. Passing --build as well would rebuild the services
+	// this setup deliberately left alone.
+	err := c.Runner.Stream(ctx, c.command(s, "up", "--detach", "--remove-orphans"), stdout, stderr)
 	if err != nil {
 		return errs.Wrap(err, "cannot start the services").
 			WithHint("check the compose file in %s, or run `docker compose -p %s logs`", s.Dir, s.Project)
 	}
 	return nil
+}
+
+// Build builds the named services. An empty list builds every service
+// that has something to build.
+func (c Compose) Build(ctx context.Context, s Sandbox, services []string, stdout, stderr io.Writer) error {
+	args := append([]string{"build"}, services...)
+
+	err := c.Runner.Stream(ctx, c.command(s, args...), stdout, stderr)
+	if err != nil {
+		return errs.Wrap(err, "cannot build %s", listOrAll(services)).
+			WithHint("the build output above says what went wrong; `docker compose -p %s build` reproduces it", s.Project)
+	}
+	return nil
+}
+
+// Pull fetches one image by name.
+//
+// By name rather than by service, because this runs before the
+// override that would name the image exists -- and one image at a
+// time, because the answer pit needs is per service: this one arrived,
+// that one has to be built.
+func (c Compose) Pull(ctx context.Context, _ Sandbox, image string, stdout, stderr io.Writer) error {
+	// An image that is already here is already the right one: pit only
+	// ever asks for names that carry the commit, and a given commit's
+	// image does not change. Asking the registry to confirm that costs
+	// a round trip per service and answers nothing.
+	local := proc.Command{Name: "docker", Args: []string{"image", "inspect", "--format", "{{.Id}}", image}}
+	if _, err := c.Runner.Output(ctx, local); err == nil {
+		return nil
+	}
+
+	// --quiet: a pull that finds nothing is an ordinary outcome here,
+	// and progress bars for one that succeeds are not worth the
+	// reviewer's screen.
+	cmd := proc.Command{Name: "docker", Args: []string{"pull", "--quiet", image}}
+
+	if err := c.Runner.Stream(ctx, cmd, stdout, stderr); err != nil {
+		return errs.Wrap(err, "cannot pull %s", image)
+	}
+	return nil
+}
+
+// listOrAll names what was being built, for a message.
+func listOrAll(services []string) string {
+	if len(services) == 0 {
+		return "the services"
+	}
+	return strings.Join(services, ", ")
 }
 
 // Down stops the services and removes everything they brought with

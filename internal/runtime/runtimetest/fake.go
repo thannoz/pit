@@ -43,6 +43,9 @@ type Fake struct {
 	ReadyAfter int
 	// Fail maps a method name to the error it should return.
 	Fail map[string]error
+	// Prebuilt names the images a registry would hand over. Anything
+	// not in it has to be built, which is the ordinary case.
+	Prebuilt map[string]bool
 
 	// running holds the projects whose containers exist, and whether
 	// they are up. A project that is absent has no containers at all,
@@ -63,6 +66,7 @@ func New(services ...string) *Fake {
 		Published: map[string]int{services[0] + ":80": 49580},
 		running:   map[string]bool{},
 		Fail:      map[string]error{},
+		Prebuilt:  map[string]bool{},
 	}
 }
 
@@ -70,11 +74,8 @@ var _ runtime.Runtime = (*Fake)(nil)
 
 // Up marks the sandbox as running and remembers which services it was
 // asked for, which is the whole question an incremental setup turns on.
-func (f *Fake) Up(_ context.Context, s runtime.Sandbox, services []string, stdout, _ io.Writer) error {
-	f.mu.Lock()
-	f.calls = append(f.calls, Call{Method: "Up", Project: s.Project, Services: append([]string(nil), services...)})
-	f.mu.Unlock()
-
+func (f *Fake) Up(_ context.Context, s runtime.Sandbox, stdout, _ io.Writer) error {
+	f.record("Up", s.Project, "")
 	if err := f.failure("Up"); err != nil {
 		return err
 	}
@@ -84,6 +85,36 @@ func (f *Fake) Up(_ context.Context, s runtime.Sandbox, services []string, stdou
 	f.mu.Unlock()
 
 	_, _ = io.WriteString(stdout, "Container "+s.Project+"-"+f.Declared[0]+"-1 Started\n")
+	return nil
+}
+
+// Build records which services it was asked to build, which is the
+// whole question an incremental setup turns on.
+func (f *Fake) Build(_ context.Context, s runtime.Sandbox, services []string, _, _ io.Writer) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, Call{
+		Method:   "Build",
+		Project:  s.Project,
+		Services: append([]string(nil), services...),
+	})
+	f.mu.Unlock()
+
+	return f.failure("Build")
+}
+
+// Pull succeeds for the images named in Prebuilt and fails for the
+// rest, the way a registry answers for an image nobody pushed.
+func (f *Fake) Pull(_ context.Context, s runtime.Sandbox, image string, _, _ io.Writer) error {
+	f.record("Pull", s.Project, image)
+	if err := f.failure("Pull"); err != nil {
+		return err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.Prebuilt[image] {
+		return errors.New("no image named " + image)
+	}
 	return nil
 }
 

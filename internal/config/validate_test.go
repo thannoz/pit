@@ -207,6 +207,42 @@ func TestScenarioHintWhenNoneAreConfigured(t *testing.T) {
 	}
 }
 
+func TestAPrebuiltImageHasToNameTheCommit(t *testing.T) {
+	// The one rule in this file that is about correctness rather than
+	// convenience: an image named after a pull request is whatever a
+	// pipeline pushed last, and pulling it would hand the reviewer a
+	// sandbox of an earlier commit that looks exactly right.
+	err := loadBroken(t, "web:\n  service: web\n  port: 3000\n"+
+		"build:\n  prebuilt: \"ghcr.io/acme/shop:pr-{pr}\"\n", nil)
+
+	msg := err.Error()
+	if !strings.Contains(msg, "build.prebuilt") {
+		t.Errorf("message does not name the setting:\n%s", msg)
+	}
+	if !strings.Contains(msg, "{sha}") {
+		t.Errorf("message does not say what is missing:\n%s", msg)
+	}
+	if !hasLineNumber.MatchString(msg) {
+		t.Errorf("message does not point at a line:\n%s", msg)
+	}
+}
+
+func TestAPrebuiltImageWithTheCommitIsAccepted(t *testing.T) {
+	// The control: the rule has to let a usable pattern through.
+	root := project(t, map[string]string{
+		FileName: "web:\n  service: web\n  port: 3000\n" +
+			"build:\n  prebuilt: \"ghcr.io/acme/shop-{service}:{sha}\"\n",
+	})
+
+	c, err := Load(filepath.Join(root, FileName))
+	if err != nil {
+		t.Fatalf("a pattern naming the commit was rejected: %v", err)
+	}
+	if c.Build.Prebuilt == "" {
+		t.Error("the pattern was not read")
+	}
+}
+
 func TestBrokenMigrationCommandIsRejected(t *testing.T) {
 	// The same reason as for every other configured command: an
 	// unbalanced quote is valid YAML and would fail halfway through a

@@ -94,6 +94,18 @@ func pushToPullRequest(t *testing.T, clone string, pr int, files map[string]stri
 	git(t, upstream, "checkout", "--quiet", "main")
 }
 
+// pullRequestHead is the commit a pull request currently points at,
+// which is what an image name for it has to contain.
+func pullRequestHead(t *testing.T, clone string, pr int) string {
+	t.Helper()
+
+	sha, err := workspace.ResolveRef(t.Context(), proc.Exec{}, remoteOf(t, clone), workspace.RemotePullRef(workspace.LocalHost, pr))
+	if err != nil {
+		t.Fatalf("cannot resolve the pull request ref: %v", err)
+	}
+	return sha
+}
+
 func remoteOf(t *testing.T, clone string) string {
 	t.Helper()
 

@@ -91,7 +91,7 @@ func TestLsShowsThreeSandboxes(t *testing.T) {
 	for _, project := range []string{
 		"pit-acme-shop-c56680-482", "pit-acme-shop-c56680-479", "pit-acme-admin-9f2b1a-12",
 	} {
-		if err := fake.Up(t.Context(), runtime.Sandbox{Project: project}, nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		if err := fake.Up(t.Context(), runtime.Sandbox{Project: project}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 			t.Fatalf("Up: %v", err)
 		}
 	}
@@ -148,7 +148,7 @@ func TestLsWithNothingToShow(t *testing.T) {
 
 func TestLsJSON(t *testing.T) {
 	_, fake := withManager(t, recorded(482, "github.com/acme/shop", "acme-shop-c56680", "feat/checkout", time.Minute))
-	if err := fake.Up(t.Context(), runtime.Sandbox{Project: "pit-acme-shop-c56680-482"}, nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := fake.Up(t.Context(), runtime.Sandbox{Project: "pit-acme-shop-c56680-482"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 

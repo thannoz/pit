@@ -15,6 +15,7 @@ type Config struct {
 	Web         Web         `yaml:"web"`
 	Healthcheck Healthcheck `yaml:"healthcheck"`
 	Hooks       Hooks       `yaml:"hooks"`
+	Build       Build       `yaml:"build"`
 	Data        Data        `yaml:"data"`
 	Review      Review      `yaml:"review"`
 	Env         Env         `yaml:"env"`
@@ -60,6 +61,20 @@ type Hooks struct {
 	// service that comes up slowly. Migrations have their own setting,
 	// data.migrate.
 	AfterUp []string `yaml:"after_up"`
+}
+
+// Build says where images may come from instead of being built here.
+type Build struct {
+	// Prebuilt is the name of an image a pipeline has already built,
+	// with {service} and {sha} filled in. When it can be pulled, the
+	// build is skipped entirely.
+	//
+	// The commit has to appear in the name. An image tagged by pull
+	// request number is whatever a pipeline pushed last, which may be
+	// an older commit -- and handing that to a reviewer would be a
+	// review of code that is not under review. With the commit in the
+	// name, a missing image simply means building, which is right.
+	Prebuilt string `yaml:"prebuilt"`
 }
 
 // Data describes the state of the database, which is the part that

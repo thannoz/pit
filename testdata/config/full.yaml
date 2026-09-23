@@ -21,6 +21,9 @@ hooks:
   after_up:
     - "compose exec -T api npm ci"
 
+build:
+  prebuilt: "ghcr.io/acme/shop-{service}:{sha}"
+
 data:
   service: db
 

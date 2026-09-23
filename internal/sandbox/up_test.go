@@ -349,7 +349,7 @@ func TestUpAppliesTheScenarioAfterTheMigrations(t *testing.T) {
 		t.Fatalf("Up: %v", err)
 	}
 
-	want := []string{"fetch", "worktree", "services", "hooks", "migrate", "data", "healthy"}
+	want := []string{"fetch", "worktree", "build", "services", "hooks", "migrate", "data", "healthy"}
 	if !slices.Equal(rep.begun, want) {
 		t.Errorf("steps ran as %v, want %v", rep.begun, want)
 	}
@@ -465,7 +465,7 @@ func TestUpRecordsHowLongEachStepTook(t *testing.T) {
 		counted += s.Millis
 	}
 
-	want := []string{"fetch", "worktree", "services", "hooks", "migrate", "data", "healthy"}
+	want := []string{"fetch", "worktree", "build", "services", "hooks", "migrate", "data", "healthy"}
 	if !slices.Equal(names, want) {
 		t.Errorf("recorded %v, want every step in the order it ran", names)
 	}
@@ -528,8 +528,8 @@ func TestUpReusesARunningSandbox(t *testing.T) {
 	if count := countMethod(fake.Methods(), "Up"); count != 1 {
 		t.Errorf("the services were started %d times, want only the first", count)
 	}
-	if slices.Contains(rep.begun, "services") {
-		t.Errorf("a services step ran on the second setup:\n%v", rep.begun)
+	if slices.Contains(rep.begun, "build") || slices.Contains(rep.begun, "services") {
+		t.Errorf("the second setup built or started something:\n%v", rep.begun)
 	}
 }
 
@@ -642,17 +642,17 @@ func TestUpRebuildsOnlyWhatChanged(t *testing.T) {
 		t.Fatalf("second Up: %v", err)
 	}
 
-	ups := upCalls(fake)
-	if len(ups) != 2 {
-		t.Fatalf("the runtime was asked to bring services up %d times, want 2", len(ups))
+	builds := callsTo(fake, "Build")
+	if len(builds) != 2 {
+		t.Fatalf("the runtime was asked to build %d times, want 2", len(builds))
 	}
-	if len(ups[0].Services) != 0 {
-		t.Errorf("the first setup built only %v, want the whole project", ups[0].Services)
+	if !slices.Equal(builds[0].Services, []string{"web", "api"}) {
+		t.Errorf("the first setup built %v, want both services", builds[0].Services)
 	}
-	if !slices.Equal(ups[1].Services, []string{"web"}) {
-		t.Errorf("the second setup built %v, want only web", ups[1].Services)
+	if !slices.Equal(builds[1].Services, []string{"web"}) {
+		t.Errorf("the second setup built %v, want only web", builds[1].Services)
 	}
-	if !slices.Contains(rep.steps, "web rebuilt") {
+	if !slices.Contains(rep.steps, "web built") {
 		t.Errorf("the narration does not say what was rebuilt:\n%v", rep.steps)
 	}
 }
@@ -684,8 +684,8 @@ func TestUpRebuildsNothingForAChangeNoServiceContains(t *testing.T) {
 		t.Fatalf("second Up: %v", err)
 	}
 
-	if len(upCalls(fake)) != 1 {
-		t.Errorf("the services were brought up again for a change no service contains")
+	if builds := callsTo(fake, "Build"); len(builds) != 1 {
+		t.Errorf("something was built for a change no service contains: %+v", builds)
 	}
 	if !slices.Contains(rep.steps, "nothing to rebuild") {
 		t.Errorf("the narration does not say that nothing was needed:\n%v", rep.steps)
@@ -718,16 +718,16 @@ func TestUpRebuildsEverythingWhenTheComposeFileChanges(t *testing.T) {
 		t.Fatalf("second Up: %v", err)
 	}
 
-	ups := upCalls(fake)
-	if len(ups) != 2 || len(ups[1].Services) != 0 {
-		t.Errorf("the second setup built %v, want the whole project", ups)
+	builds := callsTo(fake, "Build")
+	if len(builds) != 2 || !slices.Equal(builds[1].Services, []string{"web", "api"}) {
+		t.Errorf("the second setup built %v, want the whole project", builds)
 	}
 }
 
-func upCalls(f *runtimetest.Fake) []runtimetest.Call {
+func callsTo(f *runtimetest.Fake, method string) []runtimetest.Call {
 	var out []runtimetest.Call
 	for _, c := range f.Calls() {
-		if c.Method == "Up" {
+		if c.Method == method {
 			out = append(out, c)
 		}
 	}
@@ -862,5 +862,110 @@ func TestUpKeepsThePortOfASandboxItUpdates(t *testing.T) {
 	}
 	if second.URL != first.URL {
 		t.Errorf("URL moved from %s to %s", first.URL, second.URL)
+	}
+}
+
+// TestUpPullsInsteadOfBuilding is the acceptance criterion for T-506.
+func TestUpPullsInsteadOfBuilding(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api"}
+	req.Config.Build.Prebuilt = "ghcr.io/acme/shop-{service}:{sha}"
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"docker-compose.yml": twoBuiltServices,
+		"site/Dockerfile":    "FROM nginx\n",
+		"api/Dockerfile":     "FROM golang\n",
+	})
+	sha := pullRequestHead(t, req.Repo.Root, req.PR.Number)
+	fake.Prebuilt = map[string]bool{
+		"ghcr.io/acme/shop-web:" + sha: true,
+		"ghcr.io/acme/shop-api:" + sha: true,
+	}
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	if builds := callsTo(fake, "Build"); len(builds) != 0 {
+		t.Errorf("something was built although every image had been published: %+v", builds)
+	}
+	if pulls := callsTo(fake, "Pull"); len(pulls) != 2 {
+		t.Errorf("pulled %d images, want one per service", len(pulls))
+	}
+	if !slices.Contains(rep.steps, "web, api pulled") {
+		t.Errorf("the narration does not say the images were pulled:\n%v", rep.steps)
+	}
+}
+
+func TestUpBuildsWhatWasNotPublished(t *testing.T) {
+	// A pull that finds nothing is an ordinary answer, not a failure:
+	// nobody published that image, so pit builds it, which is what it
+	// would have done anyway.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api"}
+	req.Config.Build.Prebuilt = "ghcr.io/acme/shop-{service}:{sha}"
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"docker-compose.yml": twoBuiltServices,
+		"site/Dockerfile":    "FROM nginx\n",
+		"api/Dockerfile":     "FROM golang\n",
+	})
+	sha := pullRequestHead(t, req.Repo.Root, req.PR.Number)
+	fake.Prebuilt = map[string]bool{"ghcr.io/acme/shop-web:" + sha: true}
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	builds := callsTo(fake, "Build")
+	if len(builds) != 1 || !slices.Equal(builds[0].Services, []string{"api"}) {
+		t.Fatalf("built %+v, want only the service nobody published", builds)
+	}
+	if !slices.Contains(rep.steps, "web pulled, api built") {
+		t.Errorf("the narration does not say which was which:\n%v", rep.steps)
+	}
+}
+
+func TestUpNamesThePulledImageInTheOverride(t *testing.T) {
+	// Compose has to be told to use the image instead of the build,
+	// or the next command would build it after all.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api"}
+	req.Config.Build.Prebuilt = "ghcr.io/acme/shop-{service}:{sha}"
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"docker-compose.yml": twoBuiltServices,
+		"site/Dockerfile":    "FROM nginx\n",
+		"api/Dockerfile":     "FROM golang\n",
+	})
+	sha := pullRequestHead(t, req.Repo.Root, req.PR.Number)
+	fake.Prebuilt = map[string]bool{"ghcr.io/acme/shop-web:" + sha: true}
+
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	override := record.ComposeFiles[len(record.ComposeFiles)-1]
+	written, err := os.ReadFile(override)
+	if err != nil {
+		t.Fatalf("cannot read the generated override: %v", err)
+	}
+	if !strings.Contains(string(written), "image: ghcr.io/acme/shop-web:"+sha) {
+		t.Errorf("the override does not name the pulled image:\n%s", written)
+	}
+	if strings.Contains(string(written), "shop-api") {
+		t.Errorf("the override names an image nobody published:\n%s", written)
 	}
 }

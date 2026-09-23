@@ -37,11 +37,18 @@ func (s Status) Running() bool { return s.State == "running" }
 // watchable, and Logs returns bytes rather than a reader because every
 // caller wants the whole tail at once.
 type Runtime interface {
-	// Up builds and starts the services, forwarding their output.
-	// A nil list means all of them; naming some leaves the rest
-	// alone, which is what makes a second setup of the same pull
-	// request cheap.
-	Up(ctx context.Context, s Sandbox, services []string, stdout, stderr io.Writer) error
+	// Up starts the services, building anything that still has no
+	// image, and forwards their output.
+	Up(ctx context.Context, s Sandbox, stdout, stderr io.Writer) error
+	// Build builds the named services, or every one of them when the
+	// list is empty. It is separate from Up because which services
+	// have to be built is a question with an interesting answer:
+	// only the ones a commit touched, and not the ones whose image a
+	// pipeline has already published.
+	Build(ctx context.Context, s Sandbox, services []string, stdout, stderr io.Writer) error
+	// Pull fetches one image by name, and fails when there is none to
+	// fetch -- which is how pit finds out whether it has to build.
+	Pull(ctx context.Context, s Sandbox, image string, stdout, stderr io.Writer) error
 	// Down stops them and removes everything they brought with them.
 	Down(ctx context.Context, s Sandbox, stdout, stderr io.Writer) error
 	// Services lists the services the compose files declare.

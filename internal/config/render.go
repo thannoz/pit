@@ -129,6 +129,13 @@ healthcheck:
 #   after_up:
 #     - "compose exec -T {{ .WebService }} npm ci"
 
+# Images a pipeline has already built for this commit. When one can be
+# pulled, pit skips the build entirely. The commit has to appear in the
+# name: an image tagged with the pull request number is whatever was
+# pushed last, and that may be an older commit.
+# build:
+#   prebuilt: "ghcr.io/your-org/your-repo-{service}:{sha}"
+
 # The state of the database, which decides whether a reviewer sees the
 # change or an empty screen.
 data:

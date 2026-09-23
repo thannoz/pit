@@ -16,13 +16,19 @@ import (
 type stubRunner struct {
 	replies map[string]string
 	failAll bool
-	calls   []proc.Command
+	// notLocal makes `docker image inspect` fail, the way the daemon
+	// answers for an image nobody has pulled yet.
+	notLocal bool
+	calls    []proc.Command
 }
 
 func (s *stubRunner) Output(_ context.Context, c proc.Command) ([]byte, error) {
 	s.calls = append(s.calls, c)
 	if s.failAll {
 		return nil, errors.New("docker said no")
+	}
+	if s.notLocal && len(c.Args) > 0 && c.Args[0] == "image" {
+		return nil, errors.New("Error: No such image")
 	}
 	return []byte(s.replies[strings.Join(c.Args, " ")]), nil
 }
@@ -46,7 +52,7 @@ func testSandbox() Sandbox {
 func TestUpIsolatesTheSandbox(t *testing.T) {
 	r := &stubRunner{}
 
-	if err := (Compose{Runner: r}).Up(t.Context(), testSandbox(), nil, io.Discard, io.Discard); err != nil {
+	if err := (Compose{Runner: r}).Up(t.Context(), testSandbox(), io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
@@ -67,10 +73,53 @@ func TestUpIsolatesTheSandbox(t *testing.T) {
 		t.Errorf("args %v do not use the sandbox's project name", cmd.Args)
 	}
 
-	for _, want := range []string{"up", "--detach", "--build"} {
+	for _, want := range []string{"up", "--detach"} {
 		if !slices.Contains(cmd.Args, want) {
 			t.Errorf("args %v are missing %q", cmd.Args, want)
 		}
+	}
+	// Not --build: what had to be built was built by Build, and
+	// rebuilding here would undo the decision not to touch the rest.
+	if slices.Contains(cmd.Args, "--build") {
+		t.Errorf("args %v rebuild everything", cmd.Args)
+	}
+}
+
+func TestBuildNamesOnlyTheServicesItWasGiven(t *testing.T) {
+	r := &stubRunner{}
+
+	if err := (Compose{Runner: r}).Build(t.Context(), testSandbox(), []string{"web"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	cmd := r.calls[0]
+	if !slices.Contains(cmd.Args, "build") || !slices.Contains(cmd.Args, "web") {
+		t.Errorf("args %v do not build web", cmd.Args)
+	}
+	if slices.Contains(cmd.Args, "up") {
+		t.Errorf("args %v start the services as well", cmd.Args)
+	}
+}
+
+func TestPullAsksDockerForTheImageByName(t *testing.T) {
+	// By name, not by service: this runs before the override that
+	// would tell Compose what a service's image is.
+	r := &stubRunner{notLocal: true}
+
+	err := (Compose{Runner: r}).Pull(t.Context(), testSandbox(), "ghcr.io/acme/shop-web:abc123", io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	cmd := r.calls[len(r.calls)-1]
+	if cmd.Name != "docker" || !slices.Contains(cmd.Args, "pull") {
+		t.Errorf("ran %q %v, want a docker pull", cmd.Name, cmd.Args)
+	}
+	if !slices.Contains(cmd.Args, "ghcr.io/acme/shop-web:abc123") {
+		t.Errorf("args %v do not name the image", cmd.Args)
+	}
+	if slices.Contains(cmd.Args, "compose") {
+		t.Errorf("args %v go through compose, which cannot resolve this yet", cmd.Args)
 	}
 }
 
@@ -78,7 +127,7 @@ func TestProjectNameComesBeforeTheSubcommand(t *testing.T) {
 	// Compose treats --project-name as a global flag; after the
 	// subcommand it is rejected.
 	r := &stubRunner{}
-	if err := (Compose{Runner: r}).Up(t.Context(), testSandbox(), nil, io.Discard, io.Discard); err != nil {
+	if err := (Compose{Runner: r}).Up(t.Context(), testSandbox(), io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
@@ -113,7 +162,7 @@ func TestEachComposeFileIsPassed(t *testing.T) {
 	s := testSandbox()
 	s.Files = []string{"docker-compose.yml", "docker-compose.pit.yml"}
 
-	if err := (Compose{Runner: r}).Up(t.Context(), s, nil, io.Discard, io.Discard); err != nil {
+	if err := (Compose{Runner: r}).Up(t.Context(), s, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
@@ -182,7 +231,7 @@ func TestFailuresCarryHints(t *testing.T) {
 	c := Compose{Runner: r}
 
 	tests := map[string]func() error{
-		"Up":       func() error { return c.Up(t.Context(), testSandbox(), nil, io.Discard, io.Discard) },
+		"Up":       func() error { return c.Up(t.Context(), testSandbox(), io.Discard, io.Discard) },
 		"Down":     func() error { return c.Down(t.Context(), testSandbox(), io.Discard, io.Discard) },
 		"Services": func() error { _, err := c.Services(t.Context(), testSandbox()); return err },
 	}
@@ -197,5 +246,23 @@ func TestFailuresCarryHints(t *testing.T) {
 				t.Errorf("%v carries no hint", err)
 			}
 		})
+	}
+}
+
+func TestPullSkipsTheRegistryForAnImageThatIsAlreadyHere(t *testing.T) {
+	// pit only ever asks for names that carry the commit, and a given
+	// commit's image does not change. Confirming that with the
+	// registry costs a round trip per service and answers nothing.
+	r := &stubRunner{}
+
+	err := (Compose{Runner: r}).Pull(t.Context(), testSandbox(), "ghcr.io/acme/shop-web:abc123", io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+
+	for _, c := range r.calls {
+		if slices.Contains(c.Args, "pull") {
+			t.Errorf("asked the registry for an image that is already here: %v", c.Args)
+		}
 	}
 }

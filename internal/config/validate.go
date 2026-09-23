@@ -58,6 +58,7 @@ func (c *Config) validate(node *yaml.Node, dir, file string) error {
 	p = append(p, c.checkWeb(node)...)
 	p = append(p, c.checkCompose(node, dir)...)
 	p = append(p, c.checkHealthcheck(node)...)
+	p = append(p, c.checkBuild(node)...)
 	p = append(p, c.checkData(node)...)
 	p = append(p, c.checkCommands(node)...)
 	p = append(p, c.checkEnv(node, dir)...)
@@ -157,6 +158,41 @@ func (c *Config) checkHealthcheck(node *yaml.Node) []Problem {
 			Path: "healthcheck.url",
 			Msg:  fmt.Sprintf("is %q, which has no {port} placeholder", h.URL),
 			Hint: "pit chooses the published port per sandbox, so the URL has to contain {port}",
+		})
+	}
+	return p
+}
+
+// checkBuild makes sure a prebuilt image can only ever be the commit
+// under review.
+//
+// This is the one rule in the file that exists for correctness rather
+// than convenience. An image named after a pull request is whatever a
+// pipeline pushed last; pulling it would hand the reviewer a sandbox
+// of some earlier commit, which looks exactly like the right one. With
+// the commit in the name the worst case is a missing image, and a
+// missing image means building.
+func (c *Config) checkBuild(node *yaml.Node) []Problem {
+	pattern := c.Build.Prebuilt
+	if pattern == "" {
+		return nil
+	}
+
+	var p []Problem
+	if !strings.Contains(pattern, "{sha}") {
+		p = append(p, Problem{
+			Line: lineOf(node, "build", "prebuilt"),
+			Path: "build.prebuilt",
+			Msg:  "does not contain {sha}, so it can name an image of a different commit",
+			Hint: "tag the image with the commit, as in ghcr.io/acme/shop-{service}:{sha}",
+		})
+	}
+	if strings.Contains(pattern, "{pr}") {
+		p = append(p, Problem{
+			Line: lineOf(node, "build", "prebuilt"),
+			Path: "build.prebuilt",
+			Msg:  "contains {pr}, which names an image that changes under it as the pull request moves",
+			Hint: "use {sha}, which names one commit and only that one",
 		})
 	}
 	return p

@@ -145,36 +145,54 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 
 	repoDir := id.RepoDir(m.StateDir)
 	overridePath := runtime.OverridePath(repoDir, pr)
-	if err := runtime.WriteOverride(overridePath, overrideFor(req.Config, port)); err != nil {
-		return state.Sandbox{}, err
-	}
-	if !updating {
-		undo.push(func(context.Context) { _ = removeFile(overridePath) })
-	}
-
 	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
 
-	// Which services a new commit can possibly have changed. For a
-	// sandbox that does not exist yet the answer is all of them.
-	work := everything()
-	if updating {
+	// What has to be built here. For a sandbox that does not exist yet
+	// that is every service with a build; for one being updated, the
+	// services the new commit can have touched.
+	//
+	// Unless a pipeline publishes images: then the registry answers
+	// the same question better than a diff can, because the image for
+	// this commit either exists or it does not.
+	work := everything(req.Config, wt.Path)
+	if updating && req.Config.Build.Prebuilt == "" {
 		work = m.plan(ctx, req, previous, sha, wt.Path)
 	}
 
 	if work.nothing() {
-		st.begin("services", quiet)
+		// The override that is already there describes this sandbox
+		// correctly. Rewriting it would change the configuration of
+		// containers this setup is deliberately leaving alone.
+		st.begin("build", quiet)
 		st.done(ctx, "nothing to rebuild")
 	} else {
-		st.begin("services", streaming)
-		if err := m.Runtime.Up(ctx, box, work.services, rep.Stdout(), rep.Stderr()); err != nil {
+		st.begin("build", streaming)
+		ready := m.prepare(ctx, req, box, work, wt.Path, sha, rep)
+
+		if err := runtime.WriteOverride(overridePath, overrideFor(req.Config, port, ready.images)); err != nil {
 			return state.Sandbox{}, err
 		}
 		if !updating {
-			undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
+			undo.push(func(context.Context) { _ = removeFile(overridePath) })
 		}
-		st.done(ctx, "%s", describe(work, project))
+
+		if !ready.build.nothing() {
+			if err := m.Runtime.Build(ctx, box, ready.build.services, rep.Stdout(), rep.Stderr()); err != nil {
+				return state.Sandbox{}, err
+			}
+		}
+		st.done(ctx, "%s", ready.summarise(project))
 	}
+
+	st.begin("services", streaming)
+	if err := m.Runtime.Up(ctx, box, rep.Stdout(), rep.Stderr()); err != nil {
+		return state.Sandbox{}, err
+	}
+	if !updating {
+		undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
+	}
+	st.done(ctx, "%s", project)
 
 	if updating {
 		// From here on the sandbox holds the new commit, so the record
@@ -303,12 +321,13 @@ func (m *Manager) portTaken(ctx context.Context, repoRef string, pr int) func(in
 	}
 }
 
-func overrideFor(c *config.Config, hostPort int) runtime.Override {
+func overrideFor(c *config.Config, hostPort int, images map[string]string) runtime.Override {
 	return runtime.Override{
 		Service:       c.Web.Service,
 		HostPort:      hostPort,
 		ContainerPort: c.Web.Port,
 		Env:           c.Env.Set,
+		Images:        images,
 	}
 }
 
