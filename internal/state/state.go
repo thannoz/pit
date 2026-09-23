@@ -69,6 +69,45 @@ type Sandbox struct {
 	Scenario string `json:"scenario,omitempty"`
 	// CreatedAt is when the sandbox was set up.
 	CreatedAt time.Time `json:"createdAt"`
+	// Steps is how long each part of the setup took, in the order it
+	// ran. Recorded because the answer to "why does this take so
+	// long" is worth more than a stopwatch held once by hand.
+	Steps []Step `json:"steps,omitempty"`
+	// SetupMillis is the wall clock of the whole setup. It is more
+	// than the steps add up to: reserving a port, writing the
+	// override and recording the result all happen between them.
+	SetupMillis int64 `json:"setupMs,omitempty"`
+}
+
+// Step is one part of a setup and how long it took.
+//
+// The duration is milliseconds rather than Go's nanoseconds so that
+// the state file stays readable by whoever opens it, and because
+// nothing here is decided at a finer resolution than that.
+type Step struct {
+	Name   string `json:"name"`
+	Millis int64  `json:"ms"`
+}
+
+// Took is the duration in a form Go can compute with.
+func (s Step) Took() time.Duration { return time.Duration(s.Millis) * time.Millisecond }
+
+// SetupTook is how long the whole setup ran.
+func (s Sandbox) SetupTook() time.Duration { return time.Duration(s.SetupMillis) * time.Millisecond }
+
+// Millis truncates a duration for recording.
+//
+// Truncating rather than rounding is what keeps the parts from adding
+// up to more than the whole: half a dozen steps each rounded up can
+// exceed a total that was rounded down, and a table whose rows sum to
+// more than its total is a table nobody believes. The cost is that a
+// step under a millisecond is recorded as no time at all, which for a
+// tool measured in seconds is the truth.
+func Millis(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return d.Milliseconds()
 }
 
 // Key identifies a sandbox: a pull request number means nothing without

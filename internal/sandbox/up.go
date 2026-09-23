@@ -81,21 +81,24 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		return state.Sandbox{}, err
 	}
 
-	rep.Begin("fetch", quiet)
+	st := newSteps(rep)
+	started := time.Now()
+
+	st.begin("fetch", quiet)
 	sha, err := workspace.Fetch(ctx, m.Git, req.Repo, pr)
 	if err != nil {
 		return state.Sandbox{}, err
 	}
 	undo.push(func(c context.Context) { _ = workspace.DeleteRef(c, m.Git, req.Repo, pr) })
-	rep.Done("#%d at %s", pr, short(sha))
+	st.done(ctx, "#%d at %s", pr, short(sha))
 
-	rep.Begin("worktree", quiet)
+	st.begin("worktree", quiet)
 	wt, err := workspace.AddWorktree(ctx, m.Git, req.Repo, m.StateDir, pr)
 	if err != nil {
 		return state.Sandbox{}, err
 	}
 	undo.push(func(c context.Context) { _ = workspace.RemoveWorktree(c, m.Git, req.Repo, wt.Path) })
-	rep.Done("%s", wt.Path)
+	st.done(ctx, "%s", wt.Path)
 
 	project, err := runtime.ProjectName(id.Ref(), pr)
 	if err != nil {
@@ -117,22 +120,22 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
 
-	rep.Begin("services", streaming)
+	st.begin("services", streaming)
 	if err := m.Runtime.Up(ctx, box, rep.Stdout(), rep.Stderr()); err != nil {
 		return state.Sandbox{}, err
 	}
 	undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
-	rep.Done("%s", project)
+	st.done(ctx, "%s", project)
 
 	h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
 
 	after := hooks.AfterUp(req.Config.Hooks.AfterUp)
 	if !after.Empty() {
-		rep.Begin("hooks", streaming)
+		st.begin("hooks", streaming)
 		if err := hooks.Run(ctx, m.Proc, after, h, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
-		rep.Done("%s", plural(len(after.Lines), "command", "commands"))
+		st.done(ctx, "%s", plural(len(after.Lines), "command", "commands"))
 	}
 
 	// The schema before the data, and both as steps of their own. A
@@ -141,11 +144,11 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// most wants to know.
 	migrations := hooks.Migrations(req.Config.Data.Migrate)
 	if !migrations.Empty() {
-		rep.Begin("migrate", streaming)
+		st.begin("migrate", streaming)
 		if err := hooks.Run(ctx, m.Proc, migrations, h, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
-		rep.Done("%s", plural(len(migrations.Lines), "migration", "migrations"))
+		st.done(ctx, "%s", plural(len(migrations.Lines), "migration", "migrations"))
 	}
 
 	// Applied after the hooks, because the hooks are where migrations
@@ -153,16 +156,16 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// way that is tedious to diagnose. Before the healthcheck, so that
 	// the moment pit says the sandbox answers, it answers with data.
 	if !scenario.Empty() {
-		rep.Begin("data", streaming)
+		st.begin("data", streaming)
 		box := data.Sandbox{Project: project, Files: files, Dir: wt.Path}
 		if err := m.Data.Apply(ctx, box, scenario, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
-		rep.Done("scenario %s", scenario.Describe())
+		st.done(ctx, "scenario %s", scenario.Describe())
 	}
 
 	url := runtime.ExpandURL(req.Config.Healthcheck.URL, "localhost", assigned.Port)
-	rep.Begin("healthy", quiet)
+	st.begin("healthy", quiet)
 	probe := runtime.Probe{
 		URL:          url,
 		ExpectStatus: req.Config.Healthcheck.ExpectStatus,
@@ -175,7 +178,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// Not the URL: the step line says the sandbox answered, and the
 	// URL is the result. Printing it here as well made it appear three
 	// times in a row.
-	rep.Done("it answers")
+	st.done(ctx, "it answers")
 
 	record := state.Sandbox{
 		PR:           pr,
@@ -194,6 +197,8 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		Author:       req.PR.Author,
 		Scenario:     scenario.Name,
 		CreatedAt:    time.Now(),
+		Steps:        st.taken,
+		SetupMillis:  state.Millis(time.Since(started)),
 	}
 	if err := m.Store.Update(func(f *state.File) error {
 		f.Put(record)

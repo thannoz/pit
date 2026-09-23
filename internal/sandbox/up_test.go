@@ -439,3 +439,60 @@ func TestUpMigratesBeforeTheData(t *testing.T) {
 		t.Errorf("the scenario was applied although the migration failed: %v", applied)
 	}
 }
+
+func TestUpRecordsHowLongEachStepTook(t *testing.T) {
+	// Optimising P5 without this would be guessing. The record is
+	// what a measurement is: taken while it happened, not afterwards.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	scenario(t, m, req)
+	req.Config.Hooks.AfterUp = []string{"true"}
+	req.Config.Data.Migrate = []string{"true"}
+
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	var names []string
+	var counted int64
+	for _, s := range record.Steps {
+		names = append(names, s.Name)
+		counted += s.Millis
+	}
+
+	want := []string{"fetch", "worktree", "services", "hooks", "migrate", "data", "healthy"}
+	if !slices.Equal(names, want) {
+		t.Errorf("recorded %v, want every step in the order it ran", names)
+	}
+	// The whole setup has to be at least the sum of its parts; the
+	// difference is the work between the steps.
+	if record.SetupMillis < counted {
+		t.Errorf("the setup took %dms but its steps add up to %dms", record.SetupMillis, counted)
+	}
+	if record.SetupMillis <= 0 {
+		t.Error("the setup is recorded as having taken no time at all")
+	}
+}
+
+func TestUpRecordsNoStepsItDidNotRun(t *testing.T) {
+	// The control: a project without hooks, migrations or scenarios
+	// must not be given rows of zeros for them.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	for _, s := range record.Steps {
+		if s.Name == "hooks" || s.Name == "migrate" || s.Name == "data" {
+			t.Errorf("recorded a %q step although none was configured", s.Name)
+		}
+	}
+}

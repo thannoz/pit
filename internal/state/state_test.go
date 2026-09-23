@@ -302,3 +302,29 @@ func TestSandboxKey(t *testing.T) {
 		t.Errorf("both repositories produced the key %q", a.Key())
 	}
 }
+
+func TestMillisNeverExceedsTheWhole(t *testing.T) {
+	// The property the table depends on: a row can be short by a
+	// fraction of a millisecond, but the rows together must never add
+	// up to more than the total.
+	parts := []time.Duration{
+		900 * time.Microsecond,
+		1900 * time.Microsecond,
+		16*time.Second + 320900*time.Microsecond,
+		400 * time.Nanosecond,
+	}
+
+	var whole time.Duration
+	var summed int64
+	for _, p := range parts {
+		whole += p
+		summed += Millis(p)
+	}
+
+	if total := Millis(whole); summed > total {
+		t.Errorf("the parts add up to %dms of a %dms whole", summed, total)
+	}
+	if Millis(-time.Second) != 0 {
+		t.Error("a negative duration is recorded as time spent")
+	}
+}
