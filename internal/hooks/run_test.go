@@ -82,8 +82,10 @@ func TestRunNamesTheFailingHook(t *testing.T) {
 	if !strings.Contains(msg, "npm run migrate") {
 		t.Errorf("message does not quote the failing line:\n%s", msg)
 	}
-	if errs.Hint(err) == "" {
-		t.Error("the error carries no hint")
+	// No hint of its own: the message already names the setting, and
+	// the cause keeps whatever it knew.
+	if hint := errs.Hint(err); hint != "" {
+		t.Errorf("hint = %q, want the cause to speak for itself", hint)
 	}
 }
 
@@ -129,4 +131,26 @@ func TestRunWithNoHooks(t *testing.T) {
 	if len(r.calls) != 0 {
 		t.Errorf("ran %d hooks although none are configured", len(r.calls))
 	}
+}
+
+func TestRunKeepsTheCausesOwnHint(t *testing.T) {
+	// The control for the line above: dropping the generic hint must
+	// not drop a specific one. proc says what to do about a program
+	// that is not installed, and that has to survive the wrapping.
+	r := hintingRunner{}
+
+	err := Run(t.Context(), r, AfterUp([]string{"psql -c 'select 1'"}), sandbox(), io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if hint := errs.Hint(err); hint != "install psql and make sure it is on your PATH" {
+		t.Errorf("hint = %q, want the one the cause carries", hint)
+	}
+}
+
+type hintingRunner struct{}
+
+func (hintingRunner) Stream(_ context.Context, c proc.Command, _, _ io.Writer) error {
+	return errs.New("%s is not installed or not on PATH", c.Name).
+		WithHint("install %s and make sure it is on your PATH", c.Name)
 }

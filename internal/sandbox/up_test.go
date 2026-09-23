@@ -324,7 +324,7 @@ func TestUpLeavesTheDataAloneWithoutAScenario(t *testing.T) {
 	}
 }
 
-func TestUpAppliesTheScenarioAfterTheHooks(t *testing.T) {
+func TestUpAppliesTheScenarioAfterTheMigrations(t *testing.T) {
 	// A fixture that loads before the migration that creates its table
 	// fails in a way that is tedious to diagnose; and once pit says
 	// the sandbox answers, it has to answer with the data.
@@ -334,13 +334,14 @@ func TestUpAppliesTheScenarioAfterTheHooks(t *testing.T) {
 	m, req, _ := upFixture(t)
 	scenario(t, m, req)
 	req.Config.Hooks.AfterUp = []string{"true"}
+	req.Config.Data.Migrate = []string{"true"}
 	rep := &quietReporter{}
 
 	if _, err := m.Up(t.Context(), req, rep); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
-	want := []string{"fetch", "worktree", "services", "hooks", "data", "healthy"}
+	want := []string{"fetch", "worktree", "services", "hooks", "migrate", "data", "healthy"}
 	if !slices.Equal(rep.begun, want) {
 		t.Errorf("steps ran as %v, want %v", rep.begun, want)
 	}
@@ -385,4 +386,50 @@ func TestUpRejectsAScenarioThatIsNotConfigured(t *testing.T) {
 		t.Error("the services were started for a scenario that does not exist")
 	}
 	assertNothingLeftBehind(t, m, req)
+}
+
+// TestUpNamesAFailedMigrationAsOne is the acceptance criterion for
+// T-407.
+func TestUpNamesAFailedMigrationAsOne(t *testing.T) {
+	// A migration is frequently the change being reviewed. Reporting
+	// it as "a hook failed" hides the one thing the reviewer most
+	// wants to know.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	req.Config.Hooks.AfterUp = []string{"true"}
+	req.Config.Data.Migrate = []string{"false"}
+
+	_, err := m.Up(t.Context(), req, &quietReporter{})
+	if err == nil {
+		t.Fatal("want an error from the failing migration")
+	}
+
+	msg := err.Error()
+	if !strings.Contains(msg, "data.migrate entry 1") {
+		t.Errorf("error = %q, want it to name the migration", err)
+	}
+	if strings.Contains(msg, "hook") {
+		t.Errorf("error = %q, want it not to blame a hook", err)
+	}
+	assertNothingLeftBehind(t, m, req)
+}
+
+func TestUpMigratesBeforeTheData(t *testing.T) {
+	// A fixture that loads before the table it fills exists fails in a
+	// way that is tedious to diagnose.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	store := scenario(t, m, req)
+	req.Config.Data.Migrate = []string{"false"}
+
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err == nil {
+		t.Fatal("want an error from the failing migration")
+	}
+	if applied := store.Applied(); len(applied) != 0 {
+		t.Errorf("the scenario was applied although the migration failed: %v", applied)
+	}
 }

@@ -80,6 +80,11 @@ func AfterUp(lines []string) List {
 	return List{Path: "hooks.after_up", Lines: lines}
 }
 
+// Migrations is the list configured under data.migrate.
+func Migrations(lines []string) List {
+	return List{Path: "data.migrate", Lines: lines}
+}
+
 // Empty reports whether there is nothing to run.
 func (l List) Empty() bool { return len(l.Lines) == 0 }
 

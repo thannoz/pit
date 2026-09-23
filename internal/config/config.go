@@ -54,8 +54,11 @@ type Healthcheck struct {
 // free-form commands rather than an abstraction on purpose: projects
 // differ too much for pit to be clever about migrations.
 type Hooks struct {
-	// AfterUp runs once the services are up, before the healthcheck is
-	// considered. Migrations belong here.
+	// AfterUp runs once the services are up, before the schema is
+	// migrated and the data loaded. It is for whatever a project needs
+	// before either can work -- installing dependencies, waiting for a
+	// service that comes up slowly. Migrations have their own setting,
+	// data.migrate.
 	AfterUp []string `yaml:"after_up"`
 }
 
@@ -65,6 +68,11 @@ type Hooks struct {
 type Data struct {
 	// Service is the compose service holding the database.
 	Service string `yaml:"service"`
+	// Migrate brings the schema up to date. It runs as a step of its
+	// own, before any data is loaded, because a migration that fails
+	// is a different problem from a hook that fails: it is the change
+	// under review often enough to deserve being named.
+	Migrate []string `yaml:"migrate"`
 	// Snapshot says how to dump and restore that service.
 	Snapshot Snapshot `yaml:"snapshot"`
 	// Scenarios are the named states a reviewer can start from.

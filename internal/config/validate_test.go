@@ -207,6 +207,22 @@ func TestScenarioHintWhenNoneAreConfigured(t *testing.T) {
 	}
 }
 
+func TestBrokenMigrationCommandIsRejected(t *testing.T) {
+	// The same reason as for every other configured command: an
+	// unbalanced quote is valid YAML and would fail halfway through a
+	// setup, with containers already started.
+	err := loadBroken(t, "web:\n  service: web\n  port: 3000\n"+
+		"data:\n  migrate:\n    - \"compose exec -T api psql -c \\\"select 1\"\n", nil)
+
+	msg := err.Error()
+	if !strings.Contains(msg, "data.migrate[0]") {
+		t.Errorf("message does not name the setting:\n%s", msg)
+	}
+	if !hasLineNumber.MatchString(msg) {
+		t.Errorf("message does not point at a line:\n%s", msg)
+	}
+}
+
 // TestExtendsCycleIsRejected is the second half of T-404's acceptance
 // criterion: a cycle produces a message a person can act on, and it
 // does so while the file is being read rather than halfway through a

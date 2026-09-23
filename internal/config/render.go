@@ -99,17 +99,23 @@ healthcheck:
   timeout: 120s
   interval: 2s
 
-# Commands to run once the services are up, before the healthcheck
-# counts. Migrations belong here. The "compose" shorthand runs inside
-# this sandbox; pit fills in the project name and files.
+# Commands to run once the services are up, before the schema is
+# migrated and the data loaded -- whatever a project needs before
+# either can work. The "compose" shorthand runs inside this sandbox;
+# pit fills in the project name and files.
 # hooks:
 #   after_up:
-#     - "compose exec -T {{ .WebService }} npm run migrate"
+#     - "compose exec -T {{ .WebService }} npm ci"
 
 # The state of the database, which decides whether a reviewer sees the
 # change or an empty screen. See the pit documentation on scenarios.
 # data:
 #   service: {{ .DBService }}
+#
+#   # Bringing the schema up to date is a step of its own, so that a
+#   # migration that fails is reported as a migration.
+#   migrate:
+#     - "compose exec -T {{ .WebService }} npm run migrate"
 #
 #   # Two commands are enough for any database: one that writes a dump
 #   # to stdout, one that reads it back from stdin.

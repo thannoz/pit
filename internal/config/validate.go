@@ -305,6 +305,13 @@ func (c *Config) checkCommands(node *yaml.Node) []Problem {
 		}
 	}
 
+	for i, line := range c.Data.Migrate {
+		if problem, bad := commandProblem(line, fmt.Sprintf("data.migrate[%d]", i),
+			lineOfIndex(node, i, "data", "migrate")); bad {
+			p = append(p, problem)
+		}
+	}
+
 	for si, s := range c.Data.Scenarios {
 		for i, line := range s.Apply {
 			path := fmt.Sprintf("data.scenarios[%d].apply[%d]", si, i)

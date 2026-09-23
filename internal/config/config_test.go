@@ -68,7 +68,7 @@ func TestCanonicalExampleParses(t *testing.T) {
 		if len(c.Hooks.AfterUp) != 1 {
 			t.Fatalf("AfterUp = %v, want one command", c.Hooks.AfterUp)
 		}
-		if c.Hooks.AfterUp[0] != "compose exec -T api npm run migrate" {
+		if c.Hooks.AfterUp[0] != "compose exec -T api npm ci" {
 			t.Errorf("AfterUp[0] = %q", c.Hooks.AfterUp[0])
 		}
 	})
@@ -77,6 +77,9 @@ func TestCanonicalExampleParses(t *testing.T) {
 		d := c.Data
 		if d.Service != "db" {
 			t.Errorf("Service = %q, want db", d.Service)
+		}
+		if len(d.Migrate) != 1 || d.Migrate[0] != "compose exec -T api npm run migrate" {
+			t.Errorf("Migrate = %v, want the one migration command", d.Migrate)
 		}
 		if d.Default != "standard" {
 			t.Errorf("Default = %q, want standard", d.Default)

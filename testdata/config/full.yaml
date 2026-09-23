@@ -19,10 +19,13 @@ healthcheck:
 
 hooks:
   after_up:
-    - "compose exec -T api npm run migrate"
+    - "compose exec -T api npm ci"
 
 data:
   service: db
+
+  migrate:
+    - "compose exec -T api npm run migrate"
 
   snapshot:
     save:    "compose exec -T db pg_dump -U app --clean --if-exists app"

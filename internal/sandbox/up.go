@@ -124,14 +124,28 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
 	rep.Done("%s", project)
 
+	h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
+
 	after := hooks.AfterUp(req.Config.Hooks.AfterUp)
 	if !after.Empty() {
 		rep.Begin("hooks", streaming)
-		h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
 		if err := hooks.Run(ctx, m.Proc, after, h, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
 		rep.Done("%s", plural(len(after.Lines), "command", "commands"))
+	}
+
+	// The schema before the data, and both as steps of their own. A
+	// migration that fails is frequently the change under review;
+	// reporting it as "a hook failed" hides the one thing the reviewer
+	// most wants to know.
+	migrations := hooks.Migrations(req.Config.Data.Migrate)
+	if !migrations.Empty() {
+		rep.Begin("migrate", streaming)
+		if err := hooks.Run(ctx, m.Proc, migrations, h, rep.Stdout(), rep.Stderr()); err != nil {
+			return state.Sandbox{}, err
+		}
+		rep.Done("%s", plural(len(migrations.Lines), "migration", "migrations"))
 	}
 
 	// Applied after the hooks, because the hooks are where migrations
