@@ -5,6 +5,7 @@ import (
 
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/suggest"
 )
 
 // Select returns the scenario a sandbox should start from.
@@ -46,15 +47,21 @@ func Select(c *config.Config, requested string) (Scenario, error) {
 	return sc, nil
 }
 
-// unknown reports a name that is not configured, and lists what is. A
-// typo is the likeliest reason to land here, and the answer to it is
-// the set of real names.
+// unknown reports a name that is not configured.
+//
+// A typo is the likeliest reason to land here, so the nearest real
+// name comes first and the full list after it: the guess is what the
+// reader usually needs, and the list is what they need when the guess
+// is wrong.
 func unknown(c *config.Config, name string) error {
 	e := errs.New("there is no scenario named %q", name)
 
 	names := c.ScenarioNames()
 	if len(names) == 0 {
 		return e.WithHint("no scenarios are configured; add one under data.scenarios in the .pit.yaml")
+	}
+	if near := suggest.Closest(name, names); near != "" {
+		return e.WithHint("did you mean %q? configured scenarios: %s", near, strings.Join(names, ", "))
 	}
 	return e.WithHint("configured scenarios: %s", strings.Join(names, ", "))
 }

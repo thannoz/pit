@@ -15,6 +15,7 @@ import (
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/suggest"
 	"github.com/thannoz/pit/internal/ui"
 )
 
@@ -120,8 +121,12 @@ func chooseService(c *cobra.Command, out *ui.Printer, services []runtime.Service
 
 	found, ok := find(services, service)
 	if !ok {
-		return "", 0, errs.New("%q is not a service in the compose file", service).
-			WithHint("the file declares: %s", strings.Join(names(services), ", "))
+		declared := names(services)
+		e := errs.New("%q is not a service in the compose file", service)
+		if near := suggest.Closest(service, declared); near != "" {
+			return "", 0, e.WithHint("did you mean %q? the file declares: %s", near, strings.Join(declared, ", "))
+		}
+		return "", 0, e.WithHint("the file declares: %s", strings.Join(declared, ", "))
 	}
 
 	port := o.port

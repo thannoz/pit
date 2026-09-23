@@ -15,6 +15,7 @@ import (
 
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/data/datatest"
+	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime/runtimetest"
@@ -375,6 +376,9 @@ func TestUpRejectsAScenarioThatIsNotConfigured(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "standrad") {
 		t.Errorf("error = %q, want it to quote the name", err)
+	}
+	if hint := errs.Hint(err); !strings.Contains(hint, `did you mean "standard"?`) {
+		t.Errorf("hint = %q, want the suggestion", hint)
 	}
 	// And it has to be caught before anything was built, not after.
 	if slices.Contains(fake.Methods(), "Up") {

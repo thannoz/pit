@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thannoz/pit/internal/config"
+	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/proc"
@@ -17,6 +18,9 @@ import (
 
 type upOptions struct {
 	open bool
+	// scenario is the data state to load. Empty means the one the
+	// repository configured as its default.
+	scenario string
 }
 
 // runUp builds the sandbox for a pull request. It is what `pit 482`
@@ -37,6 +41,14 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 	}
 	cfg, _, err := config.LoadFrom(repo.Root)
 	if err != nil {
+		return err
+	}
+
+	// A misspelled --scenario is answerable from the configuration
+	// alone. Up resolves it again for every caller, but doing it here
+	// too means the answer comes before GitHub is asked anything,
+	// which is the difference between instant and a round trip.
+	if _, err := data.Select(cfg, o.scenario); err != nil {
 		return err
 	}
 
@@ -72,7 +84,12 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 	}
 
 	rep := newStepReporter(c.ErrOrStderr())
-	record, err := m.Up(ctx, sandbox.UpRequest{Repo: repo, PR: pull, Config: cfg}, rep)
+	record, err := m.Up(ctx, sandbox.UpRequest{
+		Repo:     repo,
+		PR:       pull,
+		Config:   cfg,
+		Scenario: o.scenario,
+	}, rep)
 	if err != nil {
 		return err
 	}

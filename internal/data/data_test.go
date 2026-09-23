@@ -352,3 +352,37 @@ func TestCommandsRunTheBaseFirst(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectSuggestsTheNameThatWasMeant(t *testing.T) {
+	c := parse(t, inherited)
+
+	_, err := data.Select(c, "tielerstattung")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+
+	hint := errs.Hint(err)
+	if !strings.Contains(hint, `did you mean "teilerstattung"?`) {
+		t.Errorf("hint = %q, want the suggestion", hint)
+	}
+	// The guess is what the reader usually needs; the list is what
+	// they need when the guess is wrong.
+	if !strings.Contains(hint, "teilerstattung, standard, leer") {
+		t.Errorf("hint = %q, want it to list what is configured", hint)
+	}
+}
+
+func TestSelectDoesNotGuessWildly(t *testing.T) {
+	// A wrong suggestion is worse than none: it sends the reader
+	// looking for something that has nothing to do with what they
+	// meant.
+	c := parse(t, inherited)
+
+	_, err := data.Select(c, "postgres-dump")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if strings.Contains(errs.Hint(err), "did you mean") {
+		t.Errorf("hint = %q, want no guess", errs.Hint(err))
+	}
+}

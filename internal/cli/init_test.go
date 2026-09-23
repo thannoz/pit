@@ -175,6 +175,18 @@ func TestInitRejectsAServiceThatIsNotThere(t *testing.T) {
 	}
 }
 
+func TestInitSuggestsTheServiceThatWasMeant(t *testing.T) {
+	inProject(t, exampleCompose)
+
+	_, err := runInitCmd(t, "", "--service", "wbe", "--port", "80")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if hint := errs.Hint(err); !strings.Contains(hint, `did you mean "web"?`) {
+		t.Errorf("hint = %q, want the suggestion", hint)
+	}
+}
+
 func TestInitWithoutACompose(t *testing.T) {
 	t.Chdir(t.TempDir())
 

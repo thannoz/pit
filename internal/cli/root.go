@@ -75,6 +75,7 @@ func newRootCmd() *cobra.Command {
 	cmd.SuggestionsMinimumDistance = 2
 
 	cmd.Flags().BoolVar(&up.open, "open", false, "open the sandbox in a browser once it is ready")
+	cmd.Flags().StringVar(&up.scenario, "scenario", "", "data state to load (default: the one configured as data.default)")
 
 	f := cmd.PersistentFlags()
 	f.BoolVarP(&opts.verbose, "verbose", "v", false, "print diagnostic logging to stderr")
