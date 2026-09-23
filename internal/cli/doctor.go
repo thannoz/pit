@@ -33,7 +33,7 @@ in a setup script.`,
 }
 
 func runDoctor(c *cobra.Command, opts *globalOptions) error {
-	env := doctor.Environment{Runner: proc.Exec{}, WorkDir: workDir()}
+	env := doctor.Environment{Runner: proc.Exec{}, WorkDir: workDir(), Getenv: os.Getenv}
 
 	// The state directory is itself one of the things under test, so a
 	// failure to open it becomes a finding rather than an error.

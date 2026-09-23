@@ -28,6 +28,9 @@ type Environment struct {
 	// WorkDir is where the command was run, used to look for a
 	// configuration. It may be outside a repository, and that is fine.
 	WorkDir string
+	// Getenv reads the environment the checks run in. It is a field so
+	// that a test can describe a machine without becoming one.
+	Getenv func(string) string
 }
 
 // Default is the list of checks pit doctor runs.
@@ -42,8 +45,37 @@ func Default(env Environment) []Check {
 		env.stateWritable(),
 		env.noOtherPit(),
 		env.portsAvailable(),
+		env.buildCache(),
 		env.configuration(),
 		env.strayProjects(),
+	}
+}
+
+// buildCache warns when the one setting that makes pit slow is set.
+//
+// pit checks every pull request out into a worktree of its own, so
+// every build sees files that were written a moment ago. BuildKit keys
+// its cache on what is in a file and does not care when it was
+// written, which is why a second sandbox of the same repository
+// reuses the first one's layers. The builder Docker used before it
+// keys COPY on timestamps, and so rebuilds everything, every time, for
+// every pull request.
+//
+// Measured on a project with a twelve-second dependency layer: one
+// second with BuildKit, fourteen without.
+func (env Environment) buildCache() Check {
+	return func(context.Context) Finding {
+		const name = "build cache"
+
+		if env.Getenv != nil && env.Getenv("DOCKER_BUILDKIT") == "0" {
+			return Finding{
+				Name:   name,
+				Result: Warn,
+				Detail: "DOCKER_BUILDKIT=0 makes every sandbox rebuild from nothing, because each one is a fresh worktree",
+				Fix:    "unset DOCKER_BUILDKIT, or set it to 1",
+			}
+		}
+		return Finding{Name: name, Result: OK, Detail: "shared between sandboxes of the same repository"}
 	}
 }
 

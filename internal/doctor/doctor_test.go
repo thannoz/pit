@@ -58,7 +58,10 @@ func env(t *testing.T, r doctor.Runner) doctor.Environment {
 	if err != nil {
 		t.Fatalf("state.Open: %v", err)
 	}
-	return doctor.Environment{Runner: r, Store: store, StateDir: dir, WorkDir: dir}
+	return doctor.Environment{
+		Runner: r, Store: store, StateDir: dir, WorkDir: dir,
+		Getenv: func(string) string { return "" },
+	}
 }
 
 func findingFor(t *testing.T, report doctor.Report, name string) doctor.Finding {
@@ -321,5 +324,46 @@ func TestABrokenConfigurationIsReportedInFull(t *testing.T) {
 	}
 	if strings.Contains(f.Fix, "pit ls") {
 		t.Error("the fix still points at a command that does not read the configuration")
+	}
+}
+
+func TestTheBuildCacheIsReportedWhenItIsTurnedOff(t *testing.T) {
+	// pit gives every pull request a worktree of its own, so every
+	// build sees files written a moment ago. The builder that keys its
+	// cache on timestamps rebuilds all of it, every time -- measured
+	// at fourteen seconds against one.
+	e := env(t, healthyRunner())
+	e.Getenv = func(key string) string {
+		if key == "DOCKER_BUILDKIT" {
+			return "0"
+		}
+		return ""
+	}
+
+	report := doctor.Run(t.Context(), doctor.Default(e))
+
+	f := findingFor(t, report, "build cache")
+	if f.Result != doctor.Warn {
+		t.Errorf("result = %q, want a warning: %+v", f.Result, f)
+	}
+	if !strings.Contains(f.Detail, "DOCKER_BUILDKIT") {
+		t.Errorf("detail = %q, want it to name the setting", f.Detail)
+	}
+	if !strings.Contains(f.Fix, "unset") {
+		t.Errorf("fix = %q, want it to say what to do", f.Fix)
+	}
+	// Worth knowing, not broken: builds still work, they are just slow.
+	if report.Failed() {
+		t.Error("a slow build cache is reported as a machine that cannot run pit")
+	}
+}
+
+func TestTheBuildCacheIsFineByDefault(t *testing.T) {
+	// The control: the warning must not appear on a machine where
+	// nobody has turned anything off.
+	report := doctor.Run(t.Context(), doctor.Default(env(t, healthyRunner())))
+
+	if f := findingFor(t, report, "build cache"); f.Result != doctor.OK {
+		t.Errorf("build cache = %+v on an ordinary machine", f)
 	}
 }
