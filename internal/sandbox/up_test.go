@@ -289,12 +289,18 @@ func TestUpAppliesTheDefaultScenario(t *testing.T) {
 	store := scenario(t, m, req)
 	rep := &quietReporter{}
 
-	if _, err := m.Up(t.Context(), req, rep); err != nil {
+	record, err := m.Up(t.Context(), req, rep)
+	if err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
 	if applied := store.Applied(); !slices.Equal(applied, []string{"standard"}) {
 		t.Fatalf("applied %v, want the configured default", applied)
+	}
+	// Recorded, so that `pit ls` can say what a sandbox was started
+	// with without reading a configuration that may have changed.
+	if record.Scenario != "standard" {
+		t.Errorf("the record says %q was loaded", record.Scenario)
 	}
 	if !slices.Contains(rep.steps, "scenario standard") {
 		t.Errorf("the narration does not say which data was loaded:\n%v", rep.steps)

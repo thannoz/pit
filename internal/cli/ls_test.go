@@ -293,3 +293,61 @@ func TestTruncate(t *testing.T) {
 		})
 	}
 }
+
+// TestLsShowsTheScenario is the acceptance criterion for T-408.
+func TestLsShowsTheScenario(t *testing.T) {
+	// Two sandboxes of the same pull request differ in nothing a
+	// listing shows except the data they were started with, which is
+	// exactly when it has to be visible.
+	box := recorded(482, "github.com/acme/shop", "acme-shop-c56680", "refunds", time.Minute)
+	box.Scenario = "teilerstattung"
+	_, fake := withManager(t, box)
+	fake.Declared = []string{"web"}
+
+	out, _, err := run(t, "ls")
+	if err != nil {
+		t.Fatalf("pit ls: %v", err)
+	}
+
+	if !strings.Contains(out, "SCENARIO") {
+		t.Errorf("listing has no scenario column:\n%s", out)
+	}
+	if !lineWith(out, "#482", "teilerstattung") {
+		t.Errorf("the row does not name the data it was started with:\n%s", out)
+	}
+}
+
+func TestLsOmitsTheScenarioColumnWhenNothingLoadedOne(t *testing.T) {
+	// The control: most projects have no scenarios at all, and a
+	// column of dashes is width spent on nothing.
+	withManager(t, recorded(7, "github.com/acme/shop", "acme-shop-c56680", "feature", time.Minute))
+
+	out, _, err := run(t, "ls")
+	if err != nil {
+		t.Fatalf("pit ls: %v", err)
+	}
+	if strings.Contains(out, "SCENARIO") {
+		t.Errorf("listing has a scenario column although none was loaded:\n%s", out)
+	}
+}
+
+func TestLsJSONCarriesTheScenario(t *testing.T) {
+	box := recorded(482, "github.com/acme/shop", "acme-shop-c56680", "refunds", time.Minute)
+	box.Scenario = "teilerstattung"
+	withManager(t, box)
+
+	out, _, err := run(t, "ls", "--json")
+	if err != nil {
+		t.Fatalf("pit ls --json: %v", err)
+	}
+
+	var rows []struct {
+		Scenario string `json:"scenario"`
+	}
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if len(rows) != 1 || rows[0].Scenario != "teilerstattung" {
+		t.Errorf("rows = %+v, want the scenario the sandbox was started with", rows)
+	}
+}

@@ -192,6 +192,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		Branch:       req.PR.Branch,
 		Title:        req.PR.Title,
 		Author:       req.PR.Author,
+		Scenario:     scenario.Name,
 		CreatedAt:    time.Now(),
 	}
 	if err := m.Store.Update(func(f *state.File) error {

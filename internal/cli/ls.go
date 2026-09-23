@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -100,9 +101,16 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 	// The repository only earns a column when there is more than one:
 	// with a single project it is the same word on every line.
 	showRepo := len(distinctRepos(entries)) > 1
+	// The data state only earns one when something loaded one. Most
+	// projects have no scenarios at all, and a column of dashes is
+	// width spent on nothing.
+	showScenario := anyScenario(entries)
 
 	w := tabwriter.NewWriter(out.Out(), 0, 0, 2, ' ', 0)
 	header := []string{"PR", "TITLE", "BRANCH", "STATUS", "URL", "AGE"}
+	if showScenario {
+		header = slices.Insert(header, 3, "SCENARIO")
+	}
 	if showRepo {
 		header = append([]string{"REPO"}, header...)
 	}
@@ -118,6 +126,9 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 			e.Status(),
 			orDash(e.URL),
 			shortDuration(time.Since(e.CreatedAt)),
+		}
+		if showScenario {
+			row = slices.Insert(row, 3, orDash(truncate(e.Scenario, maxScenario)))
 		}
 		if showRepo {
 			row = append([]string{truncate(e.ShortRepo(), maxRepo)}, row...)
@@ -148,6 +159,15 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 	return nil
 }
 
+func anyScenario(entries []sandbox.Entry) bool {
+	for _, e := range entries {
+		if e.Scenario != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func distinctRepos(entries []sandbox.Entry) map[string]bool {
 	repos := map[string]bool{}
 	for _, e := range entries {
@@ -160,8 +180,9 @@ func distinctRepos(entries []sandbox.Entry) map[string]bool {
 // A pull request title can be a paragraph; the first few words are what
 // makes it recognisable.
 const (
-	maxTitle = 32
-	maxRepo  = 24
+	maxTitle    = 32
+	maxRepo     = 24
+	maxScenario = 16
 )
 
 func truncate(s string, max int) string {
