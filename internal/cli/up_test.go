@@ -28,6 +28,11 @@ func atConfiguredRepo(t *testing.T, pitYAML string) {
 	write("docker-compose.yml", "services:\n  web:\n    image: nginx\n")
 	write(".pit.yaml", pitYAML)
 
+	// Commands that read the configuration find it from the working
+	// directory; those that build a sandbox go through currentRepo.
+	// A fixture has to serve both.
+	t.Chdir(root)
+
 	previous := currentRepo
 	currentRepo = func(context.Context) (workspace.Repo, error) {
 		return workspace.Repo{
@@ -47,9 +52,12 @@ web:
 data:
   scenarios:
     - name: leer
+      description: "nothing but the empty schema"
     - name: standard
+      description: "3 users, 20 products, 5 orders"
       apply: ["compose exec -T db psql -f /fixtures/standard.sql"]
     - name: teilerstattung
+      description: "an order with a partial refund from two warehouses"
       extends: standard
       apply: ["compose exec -T db psql -f /fixtures/refund.sql"]
   default: standard
