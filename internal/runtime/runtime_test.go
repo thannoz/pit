@@ -25,7 +25,7 @@ func bringUp(ctx context.Context, rt runtime.Runtime, s runtime.Sandbox, out io.
 		return "", errors.New("the compose files declare no services")
 	}
 
-	if err := rt.Up(ctx, s, out, out); err != nil {
+	if err := rt.Up(ctx, s, nil, out, out); err != nil {
 		return "", err
 	}
 
@@ -115,9 +115,33 @@ func TestPortIsUnavailableBeforeUp(t *testing.T) {
 	}
 }
 
-func TestStatusAfterTheServicesExit(t *testing.T) {
+func TestStatusAfterTheServicesStop(t *testing.T) {
 	f := runtimetest.New("web", "db")
-	if err := f.Up(t.Context(), sandbox(), io.Discard, io.Discard); err != nil {
+	if err := f.Up(t.Context(), sandbox(), nil, io.Discard, io.Discard); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	f.Stop(sandbox().Project)
+
+	statuses, err := f.Status(t.Context(), sandbox())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("got %d statuses, want the containers that are still there", len(statuses))
+	}
+	for _, s := range statuses {
+		if s.Running() {
+			t.Errorf("%s reports as running after it stopped", s.Service)
+		}
+	}
+}
+
+func TestStatusAfterTheContainersAreRemoved(t *testing.T) {
+	// A down removes the containers, so compose reports nothing at
+	// all -- which is a different answer from "they exited", and the
+	// difference decides whether anything is left to keep.
+	f := runtimetest.New("web", "db")
+	if err := f.Up(t.Context(), sandbox(), nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 	if err := f.Down(t.Context(), sandbox(), io.Discard, io.Discard); err != nil {
@@ -128,13 +152,8 @@ func TestStatusAfterTheServicesExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if len(statuses) != 2 {
-		t.Fatalf("got %d statuses, want 2", len(statuses))
-	}
-	for _, s := range statuses {
-		if s.Running() {
-			t.Errorf("%s reports as running after Down", s.Service)
-		}
+	if len(statuses) != 0 {
+		t.Errorf("got %d statuses, want none for containers that no longer exist", len(statuses))
 	}
 }
 

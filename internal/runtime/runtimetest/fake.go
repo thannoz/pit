@@ -19,6 +19,10 @@ type Call struct {
 	Method  string
 	Project string
 	Service string
+	// Services is what Up was asked to act on: empty means the whole
+	// project, which is the difference between a rebuild and an
+	// incremental one.
+	Services []string
 }
 
 // Fake is an in-memory Runtime.
@@ -40,9 +44,12 @@ type Fake struct {
 	// Fail maps a method name to the error it should return.
 	Fail map[string]error
 
-	up    map[string]bool
-	calls []Call
-	ready int
+	// running holds the projects whose containers exist, and whether
+	// they are up. A project that is absent has no containers at all,
+	// which is what compose reports after a down.
+	running map[string]bool
+	calls   []Call
+	ready   int
 }
 
 // New returns a Fake that behaves like a working single-service
@@ -54,22 +61,26 @@ func New(services ...string) *Fake {
 	return &Fake{
 		Declared:  services,
 		Published: map[string]int{services[0] + ":80": 49580},
-		up:        map[string]bool{},
+		running:   map[string]bool{},
 		Fail:      map[string]error{},
 	}
 }
 
 var _ runtime.Runtime = (*Fake)(nil)
 
-// Up marks the sandbox as running.
-func (f *Fake) Up(_ context.Context, s runtime.Sandbox, stdout, _ io.Writer) error {
-	f.record("Up", s.Project, "")
+// Up marks the sandbox as running and remembers which services it was
+// asked for, which is the whole question an incremental setup turns on.
+func (f *Fake) Up(_ context.Context, s runtime.Sandbox, services []string, stdout, _ io.Writer) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, Call{Method: "Up", Project: s.Project, Services: append([]string(nil), services...)})
+	f.mu.Unlock()
+
 	if err := f.failure("Up"); err != nil {
 		return err
 	}
 
 	f.mu.Lock()
-	f.up[s.Project] = true
+	f.running[s.Project] = true
 	f.mu.Unlock()
 
 	_, _ = io.WriteString(stdout, "Container "+s.Project+"-"+f.Declared[0]+"-1 Started\n")
@@ -83,10 +94,20 @@ func (f *Fake) Down(_ context.Context, s runtime.Sandbox, _, _ io.Writer) error 
 		return err
 	}
 
+	// Down removes the containers, so the project is not stopped but
+	// gone -- which is what makes its volumes gone too.
 	f.mu.Lock()
-	delete(f.up, s.Project)
+	delete(f.running, s.Project)
 	f.mu.Unlock()
 	return nil
+}
+
+// Stop models `compose stop`: the containers are still there, and none
+// of them is running.
+func (f *Fake) Stop(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.running[project] = false
 }
 
 // Services lists the declared services.
@@ -126,16 +147,23 @@ func (f *Fake) Logs(_ context.Context, s runtime.Sandbox, service string, _ int)
 	return []byte(f.Tail), nil
 }
 
-// Status reports every declared service as running while the sandbox
-// is up, and as exited once it is not.
+// Status reports what the containers of a project are doing, and
+// nothing at all for a project whose containers were removed.
 func (f *Fake) Status(_ context.Context, s runtime.Sandbox) ([]runtime.Status, error) {
 	f.record("Status", s.Project, "")
 	if err := f.failure("Status"); err != nil {
 		return nil, err
 	}
 
+	f.mu.Lock()
+	up, exists := f.running[s.Project]
+	f.mu.Unlock()
+	if !exists {
+		return nil, nil
+	}
+
 	state, code := "exited", 0
-	if f.IsUp(s.Project) {
+	if up {
 		state = "running"
 	}
 
@@ -169,7 +197,7 @@ func (f *Fake) WaitReady(_ context.Context, s runtime.Sandbox, service string, _
 func (f *Fake) IsUp(project string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.up[project]
+	return f.running[project]
 }
 
 // Calls returns what the Fake was asked to do, in order.

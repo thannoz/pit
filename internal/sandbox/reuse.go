@@ -20,33 +20,6 @@ import (
 // works, so the cheap attempt should fail fast.
 const reuseProbe = 3 * time.Second
 
-// reusable returns the recorded sandbox for this pull request when it
-// is still worth having: same commit, and it still answers.
-//
-// The commit has to match because a sandbox of yesterday's code
-// answers just as readily as one of today's, and handing it over would
-// be the worst kind of wrong -- a review of something that is not
-// under review.
-func (m *Manager) reusable(ctx context.Context, req UpRequest, sha string) (state.Sandbox, bool) {
-	f, err := m.Store.Load()
-	if err != nil {
-		slog.DebugContext(ctx, "cannot read the state, building instead", "error", err)
-		return state.Sandbox{}, false
-	}
-
-	box, ok := f.Find(req.Repo.Identity.Ref(), req.PR.Number)
-	switch {
-	case !ok:
-		return state.Sandbox{}, false
-	case box.SHA != sha:
-		slog.DebugContext(ctx, "the sandbox is of another commit", "recorded", box.SHA, "wanted", sha)
-		return state.Sandbox{}, false
-	case !m.answers(ctx, box, req.Config):
-		return state.Sandbox{}, false
-	}
-	return box, true
-}
-
 // answers asks the sandbox itself rather than the record.
 //
 // Every cheaper question -- is it recorded, are its containers listed,

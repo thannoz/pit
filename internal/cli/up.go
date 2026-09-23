@@ -89,6 +89,7 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 		PR:       pull,
 		Config:   cfg,
 		Scenario: o.scenario,
+		Confirm:  func(question string) bool { return ask(c, out, question) },
 	}, rep)
 	if err != nil {
 		return err

@@ -21,6 +21,11 @@ type Service struct {
 	// they appear. They are a suggestion, not the truth: a service can
 	// listen on a port it never declares.
 	Ports []int
+	// Context is the directory Docker builds it from, relative to the
+	// compose file, and empty when the service is not built at all.
+	// It is what decides whether a changed file can have changed this
+	// service.
+	Context string
 }
 
 // composeFile is the sliver of the Compose schema pit reads directly.
@@ -33,6 +38,32 @@ type composeService struct {
 	Image  string      `yaml:"image"`
 	Ports  []yaml.Node `yaml:"ports"`
 	Expose []yaml.Node `yaml:"expose"`
+	Build  yaml.Node   `yaml:"build"`
+}
+
+// buildContext reads the directory a service is built from.
+//
+// Compose accepts a bare path and a mapping; only the context is of
+// interest here, because everything Docker is handed to build with
+// lives inside it. A Dockerfile outside the context is possible and
+// rare, and treating it as part of the context would be wrong in the
+// other direction.
+func buildContext(n yaml.Node) string {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		return n.Value
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value == "context" {
+				return n.Content[i+1].Value
+			}
+		}
+		// A mapping without a context means the compose file's own
+		// directory, which is what Compose defaults to.
+		return "."
+	default:
+		return ""
+	}
 }
 
 // ReadServices lists the services a compose file declares, without
@@ -67,9 +98,10 @@ func ReadServices(path string) ([]Service, error) {
 	for _, name := range names {
 		s := f.Services[name]
 		services = append(services, Service{
-			Name:  name,
-			Image: s.Image,
-			Ports: containerPorts(s),
+			Name:    name,
+			Image:   s.Image,
+			Ports:   containerPorts(s),
+			Context: buildContext(s.Build),
 		})
 	}
 	return services, nil

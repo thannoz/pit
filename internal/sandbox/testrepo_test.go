@@ -67,14 +67,29 @@ func addPullRequest(t *testing.T, clone string, pr int) {
 // an author pushing a fix does.
 func advancePullRequest(t *testing.T, clone string, pr int) {
 	t.Helper()
+	pushToPullRequest(t, clone, pr, map[string]string{
+		"pr.txt": "another change for #" + strconv.Itoa(pr) + "\n",
+	})
+}
+
+// pushToPullRequest writes files on a pull request's branch and moves
+// its ref, which is what a reviewer sees as "the author pushed".
+func pushToPullRequest(t *testing.T, clone string, pr int, files map[string]string) {
+	t.Helper()
 
 	upstream := remoteOf(t, clone)
 	branch := "pit-test-pr-" + strconv.Itoa(pr)
 
 	git(t, upstream, "checkout", "--quiet", branch)
-	writeFile(t, filepath.Join(upstream, "pr.txt"), "another change for #"+strconv.Itoa(pr)+"\n")
+	for name, content := range files {
+		path := filepath.Join(upstream, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		writeFile(t, path, content)
+	}
 	git(t, upstream, "add", "-A")
-	git(t, upstream, "commit", "--quiet", "-m", "another change for #"+strconv.Itoa(pr))
+	git(t, upstream, "commit", "--quiet", "-m", "a change to #"+strconv.Itoa(pr))
 	git(t, upstream, "update-ref", workspace.RemotePullRef(workspace.LocalHost, pr), head(t, upstream))
 	git(t, upstream, "checkout", "--quiet", "main")
 }

@@ -148,6 +148,16 @@ func confirm(c *cobra.Command, out *ui.Printer, question string) bool {
 		out.Warnf("nothing to read an answer from; pass --yes to confirm")
 		return false
 	}
+	return ask(c, out, question)
+}
+
+// ask is confirm without the warning, for questions that have a
+// sensible answer when nobody is there: the ones where no means
+// leaving something alone.
+func ask(c *cobra.Command, out *ui.Printer, question string) bool {
+	if !interactive(c) {
+		return false
+	}
 	answer := prompt(c, out, question+" [y/N]: ")
 	return answer == "y" || answer == "Y" || answer == "yes"
 }

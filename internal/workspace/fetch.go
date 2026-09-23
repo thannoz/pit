@@ -109,3 +109,35 @@ type PullRequests struct {
 func (p PullRequests) FetchPullRequest(ctx context.Context, number int) (string, error) {
 	return Fetch(ctx, p.Runner, p.Repo, number)
 }
+
+// ChangedFiles lists the paths that differ between two commits,
+// relative to the repository root.
+//
+// It is how pit tells a change to the frontend from a change to the
+// backend: what a diff touches decides what has to be built again.
+func ChangedFiles(ctx context.Context, r Runner, repo Repo, from, to string) ([]string, error) {
+	out, err := r.Output(ctx, proc.Command{
+		Name: "git",
+		Args: []string{"diff", "--name-only", from, to},
+		Dir:  repo.Root,
+	})
+	if err != nil {
+		return nil, errs.Wrap(err, "cannot compare %s with %s", short(from), short(to))
+	}
+
+	var files []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			files = append(files, line)
+		}
+	}
+	return files, nil
+}
+
+// short is a commit at the length people actually read.
+func short(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}

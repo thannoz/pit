@@ -41,8 +41,17 @@ type Compose struct {
 // Up builds and starts the sandbox's services in the background,
 // forwarding Compose's own output so the reviewer can watch a build
 // that takes minutes rather than staring at nothing.
-func (c Compose) Up(ctx context.Context, s Sandbox, stdout, stderr io.Writer) error {
-	err := c.Runner.Stream(ctx, c.command(s, "up", "--detach", "--build", "--remove-orphans"), stdout, stderr)
+func (c Compose) Up(ctx context.Context, s Sandbox, services []string, stdout, stderr io.Writer) error {
+	args := []string{"up", "--detach", "--build"}
+	if len(services) == 0 {
+		// Only when the whole project is being brought up: with a
+		// list, Compose would take every container that is not on it
+		// for an orphan.
+		args = append(args, "--remove-orphans")
+	}
+	args = append(args, services...)
+
+	err := c.Runner.Stream(ctx, c.command(s, args...), stdout, stderr)
 	if err != nil {
 		return errs.Wrap(err, "cannot start the services").
 			WithHint("check the compose file in %s, or run `docker compose -p %s logs`", s.Dir, s.Project)

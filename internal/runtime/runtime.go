@@ -38,7 +38,10 @@ func (s Status) Running() bool { return s.State == "running" }
 // caller wants the whole tail at once.
 type Runtime interface {
 	// Up builds and starts the services, forwarding their output.
-	Up(ctx context.Context, s Sandbox, stdout, stderr io.Writer) error
+	// A nil list means all of them; naming some leaves the rest
+	// alone, which is what makes a second setup of the same pull
+	// request cheap.
+	Up(ctx context.Context, s Sandbox, services []string, stdout, stderr io.Writer) error
 	// Down stops them and removes everything they brought with them.
 	Down(ctx context.Context, s Sandbox, stdout, stderr io.Writer) error
 	// Services lists the services the compose files declare.

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -531,31 +533,32 @@ func TestUpReusesARunningSandbox(t *testing.T) {
 	}
 }
 
-func TestUpBuildsAgainForAnotherCommit(t *testing.T) {
-	// The control: a sandbox of yesterday's code answers just as
-	// readily as one of today's, and handing that over would be a
-	// review of something that is not under review.
+func TestUpDoesNotHandBackASandboxOfTheOldCommit(t *testing.T) {
+	// The control for reuse: a sandbox of yesterday's code answers
+	// just as readily as one of today's, and handing it over would be
+	// a review of something that is not under review.
 	if testing.Short() {
 		t.Skip("skipping: talks to the git binary")
 	}
-	m, req, fake := upFixture(t)
+	m, req, _ := upFixture(t)
 
-	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+	first, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
 		t.Fatalf("first Up: %v", err)
 	}
-	// Move the pull request on by one commit.
 	advancePullRequest(t, req.Repo.Root, req.PR.Number)
 
 	rep := &quietReporter{}
-	if _, err := m.Up(t.Context(), req, rep); err != nil {
+	second, err := m.Up(t.Context(), req, rep)
+	if err != nil {
 		t.Fatalf("second Up: %v", err)
 	}
 
 	if slices.Contains(rep.begun, "reuse") {
 		t.Errorf("a sandbox of the previous commit was handed over:\n%v", rep.begun)
 	}
-	if count := countMethod(fake.Methods(), "Up"); count != 2 {
-		t.Errorf("the services were started %d times, want 2", count)
+	if second.SHA == first.SHA {
+		t.Errorf("the record still points at %s", first.SHA)
 	}
 }
 
@@ -596,4 +599,268 @@ func countMethod(methods []string, want string) int {
 		}
 	}
 	return n
+}
+
+// twoBuiltServices is a project where both services are built from
+// source, each from its own directory -- the shape the incremental
+// question is about.
+const twoBuiltServices = `services:
+  web:
+    build: ./site
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+`
+
+// TestUpRebuildsOnlyWhatChanged is the acceptance criterion for T-504.
+func TestUpRebuildsOnlyWhatChanged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api"}
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"docker-compose.yml": twoBuiltServices,
+		"site/Dockerfile":    "FROM nginx\n",
+		"site/index.html":    "<h1>shop</h1>\n",
+		"api/Dockerfile":     "FROM golang\n",
+		"api/main.go":        "package main\n",
+	})
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+
+	// The author pushes a change to the frontend only.
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"site/index.html": "<h1>shop, now with refunds</h1>\n",
+	})
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+
+	ups := upCalls(fake)
+	if len(ups) != 2 {
+		t.Fatalf("the runtime was asked to bring services up %d times, want 2", len(ups))
+	}
+	if len(ups[0].Services) != 0 {
+		t.Errorf("the first setup built only %v, want the whole project", ups[0].Services)
+	}
+	if !slices.Equal(ups[1].Services, []string{"web"}) {
+		t.Errorf("the second setup built %v, want only web", ups[1].Services)
+	}
+	if !slices.Contains(rep.steps, "web rebuilt") {
+		t.Errorf("the narration does not say what was rebuilt:\n%v", rep.steps)
+	}
+}
+
+func TestUpRebuildsNothingForAChangeNoServiceContains(t *testing.T) {
+	// A commit that only touches documentation leaves the sandbox
+	// exactly as it is.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api"}
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"docker-compose.yml": twoBuiltServices,
+		"site/Dockerfile":    "FROM nginx\n",
+		"api/Dockerfile":     "FROM golang\n",
+	})
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"README.md": "a paragraph about refunds\n",
+	})
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+
+	if len(upCalls(fake)) != 1 {
+		t.Errorf("the services were brought up again for a change no service contains")
+	}
+	if !slices.Contains(rep.steps, "nothing to rebuild") {
+		t.Errorf("the narration does not say that nothing was needed:\n%v", rep.steps)
+	}
+}
+
+func TestUpRebuildsEverythingWhenTheComposeFileChanges(t *testing.T) {
+	// What a diff means is worked out from the compose file. Once
+	// that has moved, the diff cannot be read against it.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api"}
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"docker-compose.yml": twoBuiltServices,
+		"site/Dockerfile":    "FROM nginx\n",
+		"api/Dockerfile":     "FROM golang\n",
+	})
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		"docker-compose.yml": twoBuiltServices + "  cache:\n    image: redis\n",
+	})
+
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+
+	ups := upCalls(fake)
+	if len(ups) != 2 || len(ups[1].Services) != 0 {
+		t.Errorf("the second setup built %v, want the whole project", ups)
+	}
+}
+
+func upCalls(f *runtimetest.Fake) []runtimetest.Call {
+	var out []runtimetest.Call
+	for _, c := range f.Calls() {
+		if c.Method == "Up" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// updated brings a sandbox up, moves the pull request on by a commit,
+// and returns the manager ready for the second setup.
+func updated(t *testing.T) (*sandbox.Manager, sandbox.UpRequest, *datatest.Fake) {
+	t.Helper()
+
+	m, req, _ := upFixture(t)
+	store := scenario(t, m, req)
+
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+	advancePullRequest(t, req.Repo.Root, req.PR.Number)
+	return m, req, store
+}
+
+func TestUpKeepsTheDataOfASandboxItUpdates(t *testing.T) {
+	// The reviewer has been working in this sandbox. A new commit is
+	// no reason to throw away what they put in it.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, store := updated(t)
+
+	rep := &quietReporter{}
+	record, err := m.Up(t.Context(), req, rep)
+	if err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+
+	if applied := store.Applied(); len(applied) != 1 {
+		t.Errorf("the data was loaded %d times, want only the first setup", len(applied))
+	}
+	if !slices.Contains(rep.steps, "kept as it was") {
+		t.Errorf("the narration does not say the data was kept:\n%v", rep.steps)
+	}
+	if record.Scenario != "standard" {
+		t.Errorf("Scenario = %q, want what is actually in the sandbox", record.Scenario)
+	}
+}
+
+func TestUpReloadsTheDataWhenTheReviewerSaysSo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, store := updated(t)
+
+	var asked string
+	req.Confirm = func(question string) bool {
+		asked = question
+		return true
+	}
+
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+
+	if applied := store.Applied(); len(applied) != 2 {
+		t.Errorf("the data was loaded %d times, want it loaded again", len(applied))
+	}
+	if !strings.Contains(asked, "standard") {
+		t.Errorf("the question does not say what would be loaded: %q", asked)
+	}
+}
+
+func TestUpDoesNotAskWhenAScenarioWasNamed(t *testing.T) {
+	// Typing --scenario is an answer in itself.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, store := updated(t)
+	req.Scenario = "leer"
+	req.Config.Data.Scenarios = append(req.Config.Data.Scenarios, config.Scenario{
+		Name:  "leer",
+		Apply: []string{"compose exec -T db psql -f /fixtures/empty.sql"},
+	})
+	req.Confirm = func(string) bool {
+		t.Error("the reviewer was asked although they had already said what they wanted")
+		return false
+	}
+
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+
+	if applied := store.Applied(); len(applied) != 2 || applied[1] != "leer" {
+		t.Errorf("applied %v, want the scenario that was asked for", applied)
+	}
+	if record.Scenario != "leer" {
+		t.Errorf("Scenario = %q, want what was loaded", record.Scenario)
+	}
+}
+
+func TestUpKeepsThePortOfASandboxItUpdates(t *testing.T) {
+	// The port is bound -- by this sandbox's own container -- so it
+	// looks taken to anyone who asks, and the allocator would move the
+	// pull request to the next one. A fake runtime binds nothing, so
+	// this only shows up when something really holds the port.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+
+	first, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+
+	// On every interface, the way Docker publishes a port -- a
+	// loopback-only listener does not collide with it everywhere.
+	var lc net.ListenConfig
+	listener, err := lc.Listen(t.Context(), "tcp", ":"+strconv.Itoa(first.Port))
+	if err != nil {
+		t.Fatalf("cannot hold the sandbox's port: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	advancePullRequest(t, req.Repo.Root, req.PR.Number)
+
+	second, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+	if second.Port != first.Port {
+		t.Errorf("port moved from %d to %d while the sandbox was holding it", first.Port, second.Port)
+	}
+	if second.URL != first.URL {
+		t.Errorf("URL moved from %s to %s", first.URL, second.URL)
+	}
 }

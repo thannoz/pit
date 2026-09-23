@@ -57,6 +57,13 @@ type UpRequest struct {
 	// Scenario is the data state the reviewer asked for. Empty means
 	// the one the repository configured as its default.
 	Scenario string
+	// Confirm asks the reviewer a yes-or-no question.
+	//
+	// It is used in one place: whether to replace data a sandbox
+	// already holds. A nil Confirm answers no, because pit does not
+	// throw away someone's work on the grounds that nobody was there
+	// to object.
+	Confirm func(question string) bool
 }
 
 // Up builds a sandbox for a pull request and records it.
@@ -94,19 +101,29 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// Before anything is created, and before the ref is registered for
 	// cleanup: a sandbox that is already running is the answer, and
 	// undoing the fetch would take the ref the running one is on.
-	if box, ok := m.reusable(ctx, req, sha); ok {
+	previous, updating := m.updating(ctx, req)
+	if updating && previous.SHA == sha && m.answers(ctx, previous, req.Config) {
 		undo.disarm()
-		return m.reuse(ctx, box, scenario, st)
+		return m.reuse(ctx, previous, scenario, st)
 	}
 
-	undo.push(func(c context.Context) { _ = workspace.DeleteRef(c, m.Git, req.Repo, pr) })
+	// Nothing that already exists is registered for undoing. A failed
+	// setup of a new sandbox should leave the machine as it found it,
+	// but a failed update of one the reviewer is working in should
+	// leave them what they had, not take it away because a migration
+	// in the new commit is broken.
+	if !updating {
+		undo.push(func(c context.Context) { _ = workspace.DeleteRef(c, m.Git, req.Repo, pr) })
+	}
 
 	st.begin("worktree", quiet)
 	wt, err := workspace.AddWorktree(ctx, m.Git, req.Repo, m.StateDir, pr)
 	if err != nil {
 		return state.Sandbox{}, err
 	}
-	undo.push(func(c context.Context) { _ = workspace.RemoveWorktree(c, m.Git, req.Repo, wt.Path) })
+	if !updating {
+		undo.push(func(c context.Context) { _ = workspace.RemoveWorktree(c, m.Git, req.Repo, wt.Path) })
+	}
 	st.done(ctx, "%s", wt.Path)
 
 	project, err := runtime.ProjectName(id.Ref(), pr)
@@ -114,27 +131,58 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		return state.Sandbox{}, err
 	}
 
-	assigned, err := ports.Reserve(ctx, id.String(), pr, m.portTaken(ctx, id.Ref(), pr))
-	if err != nil {
-		return state.Sandbox{}, err
+	// A sandbox that is being updated keeps the port it already has.
+	// Asking the allocator would move it: the port is bound, by this
+	// sandbox's own container, so it looks taken to anyone who asks.
+	port := previous.Port
+	if !updating {
+		assigned, err := ports.Reserve(ctx, id.String(), pr, m.portTaken(ctx, id.Ref(), pr))
+		if err != nil {
+			return state.Sandbox{}, err
+		}
+		port = assigned.Port
 	}
 
 	repoDir := id.RepoDir(m.StateDir)
 	overridePath := runtime.OverridePath(repoDir, pr)
-	if err := runtime.WriteOverride(overridePath, overrideFor(req.Config, assigned.Port)); err != nil {
+	if err := runtime.WriteOverride(overridePath, overrideFor(req.Config, port)); err != nil {
 		return state.Sandbox{}, err
 	}
-	undo.push(func(context.Context) { _ = removeFile(overridePath) })
+	if !updating {
+		undo.push(func(context.Context) { _ = removeFile(overridePath) })
+	}
 
 	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
 
-	st.begin("services", streaming)
-	if err := m.Runtime.Up(ctx, box, rep.Stdout(), rep.Stderr()); err != nil {
-		return state.Sandbox{}, err
+	// Which services a new commit can possibly have changed. For a
+	// sandbox that does not exist yet the answer is all of them.
+	work := everything()
+	if updating {
+		work = m.plan(ctx, req, previous, sha, wt.Path)
 	}
-	undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
-	st.done(ctx, "%s", project)
+
+	if work.nothing() {
+		st.begin("services", quiet)
+		st.done(ctx, "nothing to rebuild")
+	} else {
+		st.begin("services", streaming)
+		if err := m.Runtime.Up(ctx, box, work.services, rep.Stdout(), rep.Stderr()); err != nil {
+			return state.Sandbox{}, err
+		}
+		if !updating {
+			undo.push(func(c context.Context) { _ = m.Runtime.Down(c, box, io.Discard, io.Discard) })
+		}
+		st.done(ctx, "%s", describe(work, project))
+	}
+
+	if updating {
+		// From here on the sandbox holds the new commit, so the record
+		// has to say so even if a later step fails.
+		if err := m.recordCommit(previous, sha); err != nil {
+			return state.Sandbox{}, err
+		}
+	}
 
 	h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
 
@@ -160,20 +208,30 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		st.done(ctx, "%s", plural(len(migrations.Lines), "migration", "migrations"))
 	}
 
-	// Applied after the hooks, because the hooks are where migrations
-	// live and a fixture that loads before its table exists fails in a
-	// way that is tedious to diagnose. Before the healthcheck, so that
-	// the moment pit says the sandbox answers, it answers with data.
-	if !scenario.Empty() {
+	// Applied after the hooks and the migrations, because a fixture
+	// that loads before the table it fills exists fails in a way that
+	// is tedious to diagnose. Before the healthcheck, so that the
+	// moment pit says the sandbox answers, it answers with data.
+	loaded := scenario.Name
+	switch {
+	case scenario.Empty():
+		// Nothing configured, so nothing to say about it.
+	case updating && !wants(req, scenario, previous):
+		// The data survived the update. Replacing it would throw away
+		// whatever the reviewer had done in the sandbox so far.
+		loaded = previous.Scenario
+		st.begin("data", quiet)
+		st.done(ctx, "kept as it was")
+	default:
 		st.begin("data", streaming)
-		box := data.Sandbox{Project: project, Files: files, Dir: wt.Path}
-		if err := m.Data.Apply(ctx, box, scenario, rep.Stdout(), rep.Stderr()); err != nil {
+		target := data.Sandbox{Project: project, Files: files, Dir: wt.Path}
+		if err := m.Data.Apply(ctx, target, scenario, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
 		st.done(ctx, "scenario %s", scenario.Describe())
 	}
 
-	url := runtime.ExpandURL(req.Config.Healthcheck.URL, "localhost", assigned.Port)
+	url := runtime.ExpandURL(req.Config.Healthcheck.URL, "localhost", port)
 	st.begin("healthy", quiet)
 	probe := runtime.Probe{
 		URL:          url,
@@ -198,13 +256,13 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		WebService:   req.Config.Web.Service,
 		ComposeFiles: files,
 		Worktree:     wt.Path,
-		Port:         assigned.Port,
+		Port:         port,
 		URL:          url,
 		SHA:          sha,
 		Branch:       req.PR.Branch,
 		Title:        req.PR.Title,
 		Author:       req.PR.Author,
-		Scenario:     scenario.Name,
+		Scenario:     loaded,
 		CreatedAt:    time.Now(),
 		Steps:        st.taken,
 		SetupMillis:  state.Millis(time.Since(started)),

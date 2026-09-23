@@ -42,7 +42,7 @@ func dataFake(t *testing.T, boxes ...state.Sandbox) *datatest.Fake {
 	fake.Declared = []string{"web"}
 	// The runtime has to believe the sandbox is up, or the reset is
 	// refused before it reaches the data.
-	if err := fake.Up(t.Context(), sandbox.RuntimeSandbox(boxes[0]), io.Discard, io.Discard); err != nil {
+	if err := fake.Up(t.Context(), sandbox.RuntimeSandbox(boxes[0]), nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 
