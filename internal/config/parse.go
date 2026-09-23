@@ -69,23 +69,3 @@ func (c *Config) applyDefaults() {
 		c.Data.ProductionLike.TTL = Duration(DefaultProductionTTL)
 	}
 }
-
-// Scenario returns the named scenario.
-func (c *Config) Scenario(name string) (Scenario, bool) {
-	for _, s := range c.Data.Scenarios {
-		if s.Name == name {
-			return s, true
-		}
-	}
-	return Scenario{}, false
-}
-
-// ScenarioNames lists the configured scenarios in the order they appear
-// in the file, which is the order the author found sensible.
-func (c *Config) ScenarioNames() []string {
-	names := make([]string, 0, len(c.Data.Scenarios))
-	for _, s := range c.Data.Scenarios {
-		names = append(names, s.Name)
-	}
-	return names
-}

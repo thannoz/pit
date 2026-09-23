@@ -206,3 +206,53 @@ func TestScenarioHintWhenNoneAreConfigured(t *testing.T) {
 		t.Errorf("want the hint to say there are no scenarios:\n%s", err)
 	}
 }
+
+// TestExtendsCycleIsRejected is the second half of T-404's acceptance
+// criterion: a cycle produces a message a person can act on, and it
+// does so while the file is being read rather than halfway through a
+// setup.
+func TestExtendsCycleIsRejected(t *testing.T) {
+	err := loadBroken(t, "web:\n  service: web\n  port: 3000\n"+
+		"data:\n  scenarios:\n"+
+		"    - name: standard\n      extends: teilerstattung\n"+
+		"    - name: teilerstattung\n      extends: standard\n", nil)
+
+	msg := err.Error()
+	if !strings.Contains(msg, "standard → teilerstattung → standard") {
+		t.Errorf("message does not show the cycle:\n%s", msg)
+	}
+	if !hasLineNumber.MatchString(msg) {
+		t.Errorf("message does not point at a line:\n%s", msg)
+	}
+	if errs.Hint(err) == "" {
+		t.Error("the error carries no hint")
+	}
+}
+
+func TestExtendsCycleIsReportedOnce(t *testing.T) {
+	// Every scenario in a cycle is equally at fault; three copies of
+	// the same finding read as three separate problems.
+	err := loadBroken(t, "web:\n  service: web\n  port: 3000\n"+
+		"data:\n  scenarios:\n"+
+		"    - name: a\n      extends: b\n"+
+		"    - name: b\n      extends: c\n"+
+		"    - name: c\n      extends: a\n", nil)
+
+	if n := strings.Count(err.Error(), "never reaches a base"); n != 1 {
+		t.Errorf("the cycle is reported %d times, want once:\n%s", n, err)
+	}
+}
+
+func TestExtendsThatIsNotACycleIsAccepted(t *testing.T) {
+	// The control: the check has to let a real chain through, or the
+	// two above prove only that something is rejected.
+	root := project(t, map[string]string{FileName: "web:\n  service: web\n  port: 3000\n" +
+		"data:\n  scenarios:\n" +
+		"    - name: teilerstattung\n      extends: standard\n" +
+		"    - name: standard\n      extends: leer\n" +
+		"    - name: leer\n  default: teilerstattung\n"})
+
+	if _, err := Load(filepath.Join(root, FileName)); err != nil {
+		t.Errorf("a three-level chain was rejected: %v", err)
+	}
+}

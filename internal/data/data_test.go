@@ -102,7 +102,7 @@ func TestSelectPrefersWhatWasAskedFor(t *testing.T) {
 		t.Errorf("Select(\"leer\") = %q", got.Name)
 	}
 	if !got.Empty() {
-		t.Errorf("a scenario with no apply commands is not empty: %v", got.Apply)
+		t.Errorf("a scenario with no apply commands is not empty: %v", got.Commands())
 	}
 }
 
@@ -135,43 +135,115 @@ func TestSelectRejectsAnUnknownName(t *testing.T) {
 	}
 }
 
-func TestSelectSaysExtendsIsNotResolved(t *testing.T) {
-	// Applying only the child's commands would produce data quietly
-	// missing its base, which is the failure the data concept exists
-	// to prevent.
+// inherited is the three-level chain from docs/03-datenkonzept.md,
+// written in the order an author would: the base last, to make sure
+// nothing relies on the file's order.
+const inherited = `
+web:
+  service: web
+  port: 3000
+data:
+  scenarios:
+    - name: teilerstattung
+      description: "an order with a partial refund from two warehouses"
+      extends: standard
+      apply: ["psql -f /fixtures/refund.sql"]
+    - name: standard
+      extends: leer
+      apply: ["psql -f /fixtures/standard.sql"]
+    - name: leer
+      apply: ["psql -f /fixtures/schema.sql"]
+`
+
+// TestSelectResolvesExtendsInOrder is the acceptance criterion for
+// T-404: a three-level chain loads base first.
+func TestSelectResolvesExtendsInOrder(t *testing.T) {
+	c := parse(t, inherited)
+
+	got, err := data.Select(c, "teilerstattung")
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+
+	want := []string{
+		"psql -f /fixtures/schema.sql",
+		"psql -f /fixtures/standard.sql",
+		"psql -f /fixtures/refund.sql",
+	}
+	if !slices.Equal(got.Commands(), want) {
+		t.Errorf("commands = %v, want %v", got.Commands(), want)
+	}
+	if got.Name != "teilerstattung" {
+		t.Errorf("Name = %q, want the scenario that was asked for", got.Name)
+	}
+	if got.Description != "an order with a partial refund from two warehouses" {
+		t.Errorf("Description = %q, want the one of the scenario asked for", got.Description)
+	}
+}
+
+func TestSelectKeepsEachCommandWithItsScenario(t *testing.T) {
+	// A base fixture that fails has to send the author to the base.
+	c := parse(t, inherited)
+
+	got, err := data.Select(c, "teilerstattung")
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+
+	want := []string{"leer", "standard", "teilerstattung"}
+	names := make([]string, 0, len(got.Steps))
+	for _, s := range got.Steps {
+		names = append(names, s.Scenario)
+	}
+	if !slices.Equal(names, want) {
+		t.Errorf("steps = %v, want %v", names, want)
+	}
+	if describe := got.Describe(); !strings.Contains(describe, "leer → standard → teilerstattung") {
+		t.Errorf("Describe = %q, want it to show the chain", describe)
+	}
+}
+
+func TestSelectReportsACycle(t *testing.T) {
+	// Parse rather than Load: the validation rejects this file, and
+	// the resolver still must not walk in circles when it is handed
+	// one anyway.
 	c := parse(t, `
 web:
   service: web
   port: 3000
 data:
   scenarios:
-    - name: standard
-      apply: ["compose exec -T db psql -f /fixtures/standard.sql"]
-    - name: teilerstattung
-      extends: standard
-      apply: ["compose exec -T db psql -f /fixtures/refund.sql"]
+    - name: a
+      extends: b
+    - name: b
+      extends: a
 `)
 
-	_, err := data.Select(c, "teilerstattung")
+	_, err := data.Select(c, "a")
 	if err == nil {
-		t.Fatal("want an error while extends is unresolved")
+		t.Fatal("want an error rather than a walk that never ends")
 	}
-	if !strings.Contains(err.Error(), "extends") {
-		t.Errorf("error = %q, want it to name the reason", err)
+	if !strings.Contains(err.Error(), "a → b → a") {
+		t.Errorf("error = %q, want it to show the cycle", err)
 	}
 }
 
 // recordingRunner remembers what it was asked to run.
 type recordingRunner struct {
-	mu    sync.Mutex
-	calls []proc.Command
-	err   error
+	mu     sync.Mutex
+	calls  []proc.Command
+	err    error
+	failAt int // 1-based; 0 means never
 }
 
 func (r *recordingRunner) Stream(_ context.Context, c proc.Command, _, _ io.Writer) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.calls = append(r.calls, c)
+	if r.failAt == len(r.calls) {
+		return errs.New("exit status 1")
+	}
 	return r.err
 }
 
@@ -217,7 +289,10 @@ func TestCommandsNameTheScenarioThatFailed(t *testing.T) {
 	// "entry 1 failed" would send the author to hooks.after_up, which
 	// is the wrong half of the file.
 	r := &recordingRunner{err: errs.New("exit status 1")}
-	scenario := data.Scenario{Name: "standard", Apply: []string{"compose exec -T db psql -f /fixtures/standard.sql"}}
+	scenario := data.Scenario{
+		Name:  "standard",
+		Steps: []data.Step{{Scenario: "standard", Apply: []string{"compose exec -T db psql -f /fixtures/standard.sql"}}},
+	}
 
 	err := (data.Commands{Runner: r}).Apply(t.Context(), sandbox(), scenario, io.Discard, io.Discard)
 	if err == nil {
@@ -225,5 +300,55 @@ func TestCommandsNameTheScenarioThatFailed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `data.scenarios["standard"].apply`) {
 		t.Errorf("error = %q, want it to name the scenario's setting", err)
+	}
+}
+
+func TestCommandsNameTheScenarioTheFailingCommandBelongsTo(t *testing.T) {
+	// The reviewer asked for "teilerstattung", but the fixture that
+	// failed is written under "standard". Naming the wrong one sends
+	// the author to a file that is not at fault.
+	c := parse(t, inherited)
+	scenario, err := data.Select(c, "teilerstattung")
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	r := &recordingRunner{failAt: 2}
+
+	err = (data.Commands{Runner: r}).Apply(t.Context(), sandbox(), scenario, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+
+	if !strings.Contains(err.Error(), `data.scenarios["standard"].apply`) {
+		t.Errorf("error = %q, want it to name the scenario the command is written under", err)
+	}
+	if strings.Contains(err.Error(), "teilerstattung") {
+		t.Errorf("error = %q, want it not to blame the scenario that was asked for", err)
+	}
+	if len(r.calls) != 2 {
+		t.Errorf("ran %d commands, want it to stop at the one that failed", len(r.calls))
+	}
+}
+
+func TestCommandsRunTheBaseFirst(t *testing.T) {
+	c := parse(t, inherited)
+	scenario, err := data.Select(c, "teilerstattung")
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	r := &recordingRunner{}
+
+	if err := (data.Commands{Runner: r}).Apply(t.Context(), sandbox(), scenario, io.Discard, io.Discard); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	want := []string{"/fixtures/schema.sql", "/fixtures/standard.sql", "/fixtures/refund.sql"}
+	for i, fixture := range want {
+		if i >= len(r.calls) {
+			t.Fatalf("ran %d commands, want %d", len(r.calls), len(want))
+		}
+		if !slices.Contains(r.calls[i].Args, fixture) {
+			t.Errorf("command %d is %v, want it to load %s", i+1, r.calls[i].Args, fixture)
+		}
 	}
 }

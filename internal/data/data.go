@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/thannoz/pit/internal/hooks"
 )
@@ -29,13 +30,60 @@ type Scenario struct {
 	Name string
 	// Description is what the name means, for listings.
 	Description string
-	// Apply are the commands that produce the state, in the order they
-	// have to run.
+	// Steps are the scenarios it is made of, base first. A scenario
+	// without extends has exactly one.
+	Steps []Step
+}
+
+// Step is one stage of an extends chain.
+//
+// The commands keep the name they were written under, which is not
+// necessarily the scenario that was asked for: when a base fixture
+// fails, the author has to be sent to the base, not to the scenario
+// that happens to build on it.
+type Step struct {
+	// Scenario is the name the commands are configured under.
+	Scenario string
+	// Apply are its commands, in the author's order.
 	Apply []string
 }
 
-// Empty reports whether the scenario asks for nothing.
-func (s Scenario) Empty() bool { return len(s.Apply) == 0 }
+// Empty reports whether the scenario asks for nothing. A scenario that
+// only declares a description is a legitimate choice -- "leer" in the
+// data concept is exactly that.
+func (s Scenario) Empty() bool {
+	for _, step := range s.Steps {
+		if len(step.Apply) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// Commands returns every command the scenario runs, in order, without
+// their origin. It is for callers that only want to show them.
+func (s Scenario) Commands() []string {
+	var out []string
+	for _, step := range s.Steps {
+		out = append(out, step.Apply...)
+	}
+	return out
+}
+
+// Describe names the scenario, and the chain it came from when there
+// is one. A reviewer who asked for "teilerstattung" and gets the data
+// of "standard" as well should be able to see that.
+func (s Scenario) Describe() string {
+	if len(s.Steps) < 2 {
+		return s.Name
+	}
+
+	names := make([]string, 0, len(s.Steps))
+	for _, step := range s.Steps {
+		names = append(names, step.Scenario)
+	}
+	return s.Name + " (" + strings.Join(names, " → ") + ")"
+}
 
 // Store puts a sandbox into a known data state.
 //
@@ -65,17 +113,26 @@ type Commands struct {
 
 var _ Store = Commands{}
 
-// Apply runs the scenario's commands in order.
+// Apply runs the scenario's commands, base first.
+//
+// Each step is run as its own list so that a failure names the
+// scenario the command is written under rather than the one that was
+// asked for.
 func (c Commands) Apply(ctx context.Context, s Sandbox, sc Scenario, stdout, stderr io.Writer) error {
-	if sc.Empty() {
-		return nil
-	}
-
-	list := hooks.List{
-		Path:  fmt.Sprintf("data.scenarios[%q].apply", sc.Name),
-		Lines: sc.Apply,
-	}
 	box := hooks.Sandbox{Project: s.Project, Files: s.Files, Dir: s.Dir}
 
-	return hooks.Run(ctx, c.Runner, list, box, stdout, stderr)
+	for _, step := range sc.Steps {
+		if len(step.Apply) == 0 {
+			continue
+		}
+
+		list := hooks.List{
+			Path:  fmt.Sprintf("data.scenarios[%q].apply", step.Scenario),
+			Lines: step.Apply,
+		}
+		if err := hooks.Run(ctx, c.Runner, list, box, stdout, stderr); err != nil {
+			return err
+		}
+	}
+	return nil
 }

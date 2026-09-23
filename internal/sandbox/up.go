@@ -144,7 +144,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		if err := m.Data.Apply(ctx, box, scenario, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
-		rep.Done("scenario %s", scenario.Name)
+		rep.Done("scenario %s", scenario.Describe())
 	}
 
 	url := runtime.ExpandURL(req.Config.Healthcheck.URL, "localhost", assigned.Port)

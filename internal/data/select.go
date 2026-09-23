@@ -26,20 +26,24 @@ func Select(c *config.Config, requested string) (Scenario, error) {
 	if !ok {
 		return Scenario{}, unknown(c, name)
 	}
-	if found.Extends != "" {
-		// Applying only this scenario's own commands would produce
-		// data that is quietly missing its base -- exactly the kind of
-		// wrong state the whole data concept exists to prevent. Saying
-		// so is the only honest option until inheritance is resolved.
-		return Scenario{}, errs.New("scenario %q extends %q, which pit does not resolve yet", found.Name, found.Extends).
-			WithHint("pick a scenario without extends, or write its base commands into it")
+
+	// The chain, not just this scenario: applying only its own
+	// commands would produce data quietly missing its base, which is
+	// the kind of wrong state the data concept exists to prevent.
+	chain, err := c.Chain(name)
+	if err != nil {
+		return Scenario{}, err
 	}
 
-	return Scenario{
+	sc := Scenario{
 		Name:        found.Name,
 		Description: found.Description,
-		Apply:       found.Apply,
-	}, nil
+		Steps:       make([]Step, 0, len(chain)),
+	}
+	for _, s := range chain {
+		sc.Steps = append(sc.Steps, Step{Scenario: s.Name, Apply: s.Apply})
+	}
+	return sc, nil
 }
 
 // unknown reports a name that is not configured, and lists what is. A

@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -195,6 +196,8 @@ func (c *Config) checkData(node *yaml.Node) []Problem {
 		}
 	}
 
+	p = append(p, c.checkExtends(node)...)
+
 	if d.Default != "" {
 		if _, ok := c.Scenario(d.Default); !ok {
 			p = append(p, Problem{
@@ -230,6 +233,40 @@ func (c *Config) checkData(node *yaml.Node) []Problem {
 			Path: "data.snapshot." + missing,
 			Msg:  fmt.Sprintf("is not set although %s is; snapshots need both", present),
 			Hint: "save writes a dump to stdout, restore reads one from stdin",
+		})
+	}
+	return p
+}
+
+// checkExtends reports inheritance that never reaches a base.
+//
+// A cycle cannot be seen by reading one scenario at a time, and it is
+// the one mistake in this file that would otherwise make pit walk in
+// circles rather than fail. Each cycle is reported once: every
+// scenario in it is equally at fault, and three copies of the same
+// finding read as three separate problems.
+func (c *Config) checkExtends(node *yaml.Node) []Problem {
+	var p []Problem
+	reported := map[string]bool{}
+
+	for i, s := range c.Data.Scenarios {
+		if s.Extends == "" || reported[s.Name] {
+			continue
+		}
+
+		var ce *CycleError
+		if _, err := c.Chain(s.Name); !errors.As(err, &ce) {
+			continue
+		}
+		for _, name := range ce.Path {
+			reported[name] = true
+		}
+
+		p = append(p, Problem{
+			Line: lineOfIndex(node, i, "data", "scenarios"),
+			Path: fmt.Sprintf("data.scenarios[%d].extends", i),
+			Msg:  fmt.Sprintf("never reaches a base: %s", strings.Join(ce.Path, " → ")),
+			Hint: "extends has to point at a base; a scenario cannot build on something that already builds on it",
 		})
 	}
 	return p

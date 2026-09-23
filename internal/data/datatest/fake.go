@@ -15,7 +15,12 @@ import (
 type Call struct {
 	Project  string
 	Scenario string
+	// Commands are every command the scenario would have run, base
+	// first and flattened: what a test asserts about is usually that
+	// the right data was asked for, not how it was layered.
 	Commands []string
+	// Steps keeps the layering for the tests that are about it.
+	Steps []data.Step
 }
 
 // Fake is an in-memory Store.
@@ -43,7 +48,8 @@ func (f *Fake) Apply(_ context.Context, s data.Sandbox, sc data.Scenario, stdout
 	f.calls = append(f.calls, Call{
 		Project:  s.Project,
 		Scenario: sc.Name,
-		Commands: append([]string(nil), sc.Apply...),
+		Commands: sc.Commands(),
+		Steps:    append([]data.Step(nil), sc.Steps...),
 	})
 	f.mu.Unlock()
 
