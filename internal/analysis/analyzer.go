@@ -200,11 +200,14 @@ func (g *guideBuilder) follow(f File, routes []ranked, served map[string][]int, 
 	type step struct {
 		file  string
 		lines diff.Range
+		// gap marks a pure deletion: no lines, only the place between
+		// two where lines were.
+		gap   bool
 		trail Trail
 	}
 	var queue []step
-	for _, r := range changedLines(f.File) {
-		queue = append(queue, step{file: f.Path, lines: r, trail: Trail{f.Path}})
+	for _, c := range changedLines(f.File) {
+		queue = append(queue, step{file: f.Path, lines: c.lines, gap: c.gap, trail: Trail{f.Path}})
 	}
 	seen := map[spot]bool{}
 	for _, s := range queue {
@@ -222,7 +225,7 @@ func (g *guideBuilder) follow(f File, routes []ranked, served map[string][]int, 
 
 		found := false
 		for _, i := range served[s.file] {
-			if overlaps(routes[i].Lines, s.lines) {
+			if reaches(routes[i].Lines, s.lines, s.gap) {
 				hits = append(hits, hit{route: i, trail: s.trail})
 				if _, ok := nearest[routes[i].Path]; !ok {
 					nearest[routes[i].Path] = len(s.trail)
@@ -237,7 +240,7 @@ func (g *guideBuilder) follow(f File, routes []ranked, served map[string][]int, 
 			continue
 		}
 		for _, l := range users[s.file] {
-			if !overlaps(l.Target, s.lines) {
+			if !reaches(l.Target, s.lines, s.gap) {
 				continue
 			}
 			next := spot{file: l.From, lines: l.At}
@@ -349,23 +352,41 @@ func (g *guideBuilder) done() Guide {
 	return g.Guide
 }
 
+// change is one place a file changed.
+type change struct {
+	lines diff.Range
+	gap   bool
+}
+
 // changedLines are the places a file changed, as ranges of its new
 // lines. A pure deletion has no new lines, only the place where they
-// were: it stands for the lines on either side. A file changed without
-// a hunk -- a binary, a new mode -- changed as a whole.
-func changedLines(f diff.File) []diff.Range {
+// were, between two lines. A file changed without a hunk -- a binary,
+// a new mode -- changed as a whole.
+func changedLines(f diff.File) []change {
 	if len(f.Hunks) == 0 {
-		return []diff.Range{{}}
+		return []change{{}}
 	}
-	out := make([]diff.Range, 0, len(f.Hunks))
+	out := make([]change, 0, len(f.Hunks))
 	for _, h := range f.Hunks {
-		r := h.New
-		if r.Count == 0 {
-			r.Count = 2
+		if h.New.Count == 0 {
+			out = append(out, change{lines: diff.Range{Start: h.New.Start, Count: 2}, gap: true})
+			continue
 		}
-		out = append(out, r)
+		out = append(out, change{lines: h.New})
 	}
 	return out
+}
+
+// reaches reports whether a change reaches a declaration's lines. A
+// deletion is inside a declaration when the lines on both sides of it
+// belong to it: a line taken out of a handler's body changes the
+// handler, a registration taken out between two others changes
+// neither of them -- that it is gone is a warning of its own.
+func reaches(target, changed diff.Range, gap bool) bool {
+	if !gap || target == (diff.Range{}) {
+		return overlaps(target, changed)
+	}
+	return target.Start <= changed.Start && changed.End() <= target.End()
 }
 
 // overlaps reports whether two ranges share a line. The zero range is

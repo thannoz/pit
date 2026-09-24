@@ -93,6 +93,7 @@ func newRootCmd() *cobra.Command {
 		newScenariosCmd(opts),
 		newShellCmd(opts),
 		newTimingCmd(opts),
+		newWhatCmd(opts),
 		newVersionCmd(opts),
 	)
 

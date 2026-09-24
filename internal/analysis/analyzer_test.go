@@ -268,9 +268,14 @@ func TestARouteWithLinesCountsOnlyWhenTheyChanged(t *testing.T) {
 		{"one line of the registrations", []analysis.File{hunked("server/routes.go", at(11, 1))}, []string{"/api/push"}},
 		{"inside a handler", []analysis.File{hunked("server/push.go", at(30, 2))}, []string{"/api/push"}},
 		{"next to a handler", []analysis.File{hunked("server/push.go", at(40, 2), at(1, 3))}, nil},
-		// A deletion has no new lines, only a place: between line 11
-		// and 12, which touches both.
-		{"a deletion between two", []analysis.File{hunked("server/routes.go", at(11, 0))}, []string{"/api/push", "/api/tags"}},
+		// A deletion has no new lines, only a place. Between two
+		// one-line registrations it belongs to neither: the pit shop
+		// fixture removed DELETE /api/orders/{id} and the guide listed
+		// POST /api/orders, the line above it.
+		{"a deletion between two", []analysis.File{hunked("server/routes.go", at(11, 0))}, nil},
+		// Inside a handler's body, it changes the handler.
+		{"a deletion inside a handler", []analysis.File{hunked("server/push.go", at(25, 0))}, []string{"/api/push"}},
+		{"a deletion at a handler's edge", []analysis.File{hunked("server/push.go", at(34, 0))}, nil},
 		{"a deletion at the top", []analysis.File{hunked("server/routes.go", at(0, 0))}, nil},
 	} {
 		g := guide(t, tc.files, routes)

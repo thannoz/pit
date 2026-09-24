@@ -92,6 +92,12 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	if err != nil {
 		return state.Sandbox{}, err
 	}
+	// The branch it goes into, which `pit what` measures the change
+	// from. Not needed to run the sandbox, so not worth failing it:
+	// without it, the guide says what it cannot do.
+	if _, err := workspace.FetchBase(ctx, m.Git, req.Repo, pr, req.PR.BaseBranch); err != nil {
+		rep.Note("could not fetch the branch #%d goes into, so `pit what` cannot tell what it changes: %v", pr, err)
+	}
 	st.done(ctx, "#%d at %s", pr, short(sha))
 
 	// Before anything is created, and before the ref is registered for
@@ -324,6 +330,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		URL:          url,
 		SHA:          sha,
 		Branch:       req.PR.Branch,
+		BaseBranch:   req.PR.BaseBranch,
 		Title:        req.PR.Title,
 		Author:       req.PR.Author,
 		Scenario:     loaded,

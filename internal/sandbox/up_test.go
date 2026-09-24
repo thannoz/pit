@@ -1363,3 +1363,40 @@ func TestUpWritesTheOverrideForAProjectThatBuildsNothing(t *testing.T) {
 		t.Errorf("the override does not publish the sandbox's port:\n%s", written)
 	}
 }
+
+// pit what measures a change from the branch it goes into, so Up fetches
+// that too. Not being able to is worth a note and not a failed setup.
+func TestUpFetchesTheBranchItGoesInto(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	for _, tc := range []struct {
+		branch string
+		found  bool
+	}{
+		{"", true},              // the remote's default, when no forge says
+		{"main", true},          // what GitHub says
+		{"gone-already", false}, // deleted since
+	} {
+		m, req, _ := upFixture(t)
+		req.PR.BaseBranch = tc.branch
+		rep := &quietReporter{}
+		record, err := m.Up(t.Context(), req, rep)
+		if err != nil {
+			t.Fatalf("%q: Up failed: %v", tc.branch, err)
+		}
+		if record.BaseBranch != tc.branch {
+			t.Errorf("%q: BaseBranch = %q", tc.branch, record.BaseBranch)
+		}
+		_, err = (proc.Exec{}).Output(t.Context(), proc.Command{
+			Name: "git", Args: []string{"rev-parse", "--verify", "--quiet", workspace.BaseRef(7)}, Dir: req.Repo.Root,
+		})
+		if found := err == nil; found != tc.found {
+			t.Errorf("%q: base ref found = %v, want %v", tc.branch, found, tc.found)
+		}
+		noted := slices.ContainsFunc(rep.notes, func(n string) bool { return strings.Contains(n, "pit what") })
+		if noted == tc.found {
+			t.Errorf("%q: notes %q", tc.branch, rep.notes)
+		}
+	}
+}

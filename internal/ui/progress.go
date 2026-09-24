@@ -101,9 +101,7 @@ func (p *Progress) startSpinner(name string) {
 	p.stop = stop
 	p.mu.Unlock()
 
-	p.done.Add(1)
-	go func() {
-		defer p.done.Done()
+	p.done.Go(func() {
 
 		ticker := time.NewTicker(spinnerInterval)
 		defer ticker.Stop()
@@ -116,7 +114,7 @@ func (p *Progress) startSpinner(name string) {
 				_, _ = fmt.Fprintf(p.out, "\r  %s %s", spinnerFrames[i%len(spinnerFrames)], name)
 			}
 		}
-	}()
+	})
 }
 
 // finishSpinner stops the animation and clears its line, so the next

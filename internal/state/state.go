@@ -62,8 +62,11 @@ type Sandbox struct {
 	// Branch, Title and Author are cached so that `pit ls` works
 	// without a network.
 	Branch string `json:"branch,omitempty"`
-	Title  string `json:"title,omitempty"`
-	Author string `json:"author,omitempty"`
+	// BaseBranch is where the pull request is headed; empty when the
+	// hosting service did not say, and then it is the remote's default.
+	BaseBranch string `json:"baseBranch,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Author     string `json:"author,omitempty"`
 	// Scenario records where the data came from, so two people can
 	// talk about the same thing. See docs/03-datenkonzept.md.
 	Scenario string `json:"scenario,omitempty"`
