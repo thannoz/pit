@@ -141,8 +141,8 @@ func TestFilesMeetingAtOneAddressAreListedTogether(t *testing.T) {
 	g := guide(t, changed(nil, "app/orders/page.tsx", "app/orders/layout.tsx"), a)
 
 	want := []analysis.Entrypoint{
-		{Path: "/orders", Kind: analysis.Page, Files: []string{"app/orders/layout.tsx", "app/orders/page.tsx"}, Analyzer: "Fake"},
-		{Path: "/orders/[id]", Kind: analysis.Page, Files: []string{"app/orders/layout.tsx"}, Analyzer: "Fake"},
+		{Path: "/orders", Kind: analysis.Page, Files: []string{"app/orders/layout.tsx", "app/orders/page.tsx"}, Analyzer: "Fake", Confidence: analysis.Certain},
+		{Path: "/orders/[id]", Kind: analysis.Page, Files: []string{"app/orders/layout.tsx"}, Analyzer: "Fake", Confidence: analysis.Certain},
 	}
 	if !reflect.DeepEqual(g.Entrypoints, want) {
 		t.Errorf("entrypoints\n got %+v\nwant %+v", g.Entrypoints, want)
@@ -498,5 +498,96 @@ func TestMutualRecursionInOneFileEnds(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the walk did not end")
+	}
+}
+
+func entry(t *testing.T, g analysis.Guide, path string) analysis.Entrypoint {
+	t.Helper()
+	for _, e := range g.Entrypoints {
+		if e.Path == path {
+			return e
+		}
+	}
+	t.Fatalf("no entrypoint %s in %v", path, paths(g))
+	return analysis.Entrypoint{}
+}
+
+// A file serving the address is certain; a file reached through
+// another is likely, and says through which.
+func TestConfidenceFollowsTheEvidence(t *testing.T) {
+	g := guideWith(t, changed(nil, "app/cart/page.tsx", "components/Price.tsx", "lib/money.ts"),
+		pages("cart", "checkout"),
+		use("app/cart/page.tsx", "components/Price.tsx"),
+		use("app/checkout/page.tsx", "components/Price.tsx"),
+		use("components/Price.tsx", "lib/money.ts"),
+	)
+	cart := entry(t, g, "/cart")
+	if cart.Confidence != analysis.Certain || len(cart.Doubts) != 0 {
+		t.Errorf("/cart: %s %v; its page changed, so it is certain, and says nothing else", cart.Confidence, cart.Doubts)
+	}
+	checkout := entry(t, g, "/checkout")
+	if checkout.Confidence != analysis.Likely {
+		t.Errorf("/checkout: %s, want likely", checkout.Confidence)
+	}
+	want := []string{
+		"components/Price.tsx does not serve this address; app/checkout/page.tsx uses it",
+		"lib/money.ts does not serve this address; it is used through 2 files, the last app/checkout/page.tsx",
+	}
+	if !slices.Equal(checkout.Doubts, want) {
+		t.Errorf("/checkout doubts\n got %q\nwant %q", checkout.Doubts, want)
+	}
+}
+
+// The heuristic's doubts travel with the route, and the lowest one
+// decides.
+func TestAHeuristicsDoubtsDecide(t *testing.T) {
+	a := analysistest.New("Fake",
+		analysis.Route{Path: "/app/{slug}", File: "app/app/[slug]/page.tsx", Kind: analysis.Page, Doubts: []analysis.Doubt{
+			{Confidence: analysis.Likely, Reason: "shows only while loading"},
+			{Confidence: analysis.Uncertain, Reason: "middleware.ts can rewrite requests to this address"},
+		}},
+		analysis.Route{Path: "/api/links", File: "app/api/links/route.ts", Kind: analysis.Endpoint},
+	)
+	g := guide(t, changed(nil, "app/app/[slug]/page.tsx", "app/api/links/route.ts"), a)
+
+	app := entry(t, g, "/app/{slug}")
+	if app.Confidence != analysis.Uncertain || !slices.Equal(app.Doubts, []string{"middleware.ts can rewrite requests to this address"}) {
+		t.Errorf("/app/{slug}: %s %q", app.Confidence, app.Doubts)
+	}
+	if api := entry(t, g, "/api/links"); api.Confidence != analysis.Certain {
+		t.Errorf("/api/links: %s, want certain", api.Confidence)
+	}
+}
+
+// The best evidence wins, and only its reasons are kept: an address a
+// changed file serves itself does not become doubtful because another
+// changed file reaches it the long way round.
+func TestTheBestEvidenceWins(t *testing.T) {
+	for _, order := range [][]string{
+		{"lib/money.ts", "app/cart/page.tsx"},
+		{"app/cart/page.tsx", "lib/money.ts"},
+	} {
+		g := guideWith(t, changed(nil, order...), pages("cart"), use("app/cart/page.tsx", "lib/money.ts"))
+		cart := entry(t, g, "/cart")
+		if cart.Confidence != analysis.Certain || len(cart.Doubts) != 0 {
+			t.Errorf("order %v: /cart %s %q", order, cart.Confidence, cart.Doubts)
+		}
+	}
+}
+
+func TestAWideFileSaysSo(t *testing.T) {
+	var names []string
+	var links []analysis.Link
+	for i := range analysis.MaxReach + 1 {
+		name := fmt.Sprintf("p%02d", i)
+		names = append(names, name)
+		links = append(links, use("app/"+name+"/page.tsx", "lib/cn.ts"))
+	}
+	g := guideWith(t, changed(nil, "lib/cn.ts"), pages(names...), links...)
+	e := g.Entrypoints[0]
+	if !slices.ContainsFunc(e.Doubts, func(d string) bool {
+		return strings.HasPrefix(d, fmt.Sprintf("one of %d addresses lib/cn.ts reaches", analysis.MaxReach+1))
+	}) {
+		t.Errorf("doubts %q do not say the file is used everywhere", e.Doubts)
 	}
 }

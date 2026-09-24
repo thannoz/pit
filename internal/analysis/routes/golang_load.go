@@ -59,6 +59,7 @@ type goPackage struct {
 type goFile struct {
 	path    string
 	syntax  *ast.File
+	src     []byte
 	imports map[string]string // local name -> import path
 }
 
@@ -69,6 +70,27 @@ type decl struct {
 	// escapes is set for a function whose router leaves it, returned
 	// or stored, which puts its routes wherever the caller mounts it.
 	escapes bool
+}
+
+// name is how a reader refers to the function: Routes, or
+// (*Server).Routes for a method.
+func (d *decl) name() string {
+	fn := d.node
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return fn.Name.Name
+	}
+	t := fn.Recv.List[0].Type
+	star := ""
+	if s, ok := t.(*ast.StarExpr); ok {
+		t, star = s.X, "*"
+	}
+	if g, ok := t.(*ast.IndexExpr); ok {
+		t = g.X
+	}
+	if id, ok := t.(*ast.Ident); ok {
+		return "(" + star + id.Name + ")." + fn.Name.Name
+	}
+	return fn.Name.Name
 }
 
 type constant struct {
@@ -155,7 +177,7 @@ func load(ctx context.Context, fsys fs.FS) (*program, error) {
 		if err != nil {
 			continue
 		}
-		p.add(name, syntax)
+		p.add(name, syntax, data)
 	}
 	return p, nil
 }
@@ -172,7 +194,7 @@ func modulePath(gomod []byte) string {
 	return ""
 }
 
-func (p *program) add(name string, syntax *ast.File) {
+func (p *program) add(name string, syntax *ast.File, src []byte) {
 	dir := path.Dir(name)
 	pkg := p.packages[dir]
 	if pkg == nil {
@@ -182,7 +204,7 @@ func (p *program) add(name string, syntax *ast.File) {
 		}
 		p.packages[dir] = pkg
 	}
-	f := &goFile{path: name, syntax: syntax, imports: map[string]string{}}
+	f := &goFile{path: name, syntax: syntax, src: src, imports: map[string]string{}}
 	pkg.files = append(pkg.files, f)
 
 	for _, imp := range syntax.Imports {

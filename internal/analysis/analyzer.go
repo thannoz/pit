@@ -3,6 +3,7 @@ package analysis
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"io/fs"
 	"slices"
 
@@ -54,6 +55,9 @@ type Route struct {
 	// forty routes has changed for one of them when the change is on
 	// its line, not for all forty. Zero means the whole file.
 	Lines diff.Range
+	// Doubts are what the heuristic could not read about how the
+	// address is served. None means certain.
+	Doubts []Doubt
 }
 
 // Entrypoint is an address a reviewer should visit, and why.
@@ -73,6 +77,13 @@ type Entrypoint struct {
 	Via []Trail
 	// Analyzer is the heuristic that found it.
 	Analyzer string
+	// Confidence is how sure the guide is, from the best evidence it
+	// has: an address one changed file serves itself is certain, even
+	// when another reaches it only through three files.
+	Confidence Confidence
+	// Doubts say why it is not certain, for the evidence the
+	// confidence comes from. Sorted, each once.
+	Doubts []string
 }
 
 // Trail is a changed file and the files that use it, in order, up to
@@ -245,6 +256,7 @@ func (g *guideBuilder) follow(f File, routes []ranked, served map[string][]int, 
 	}
 
 	keep := func(string) bool { return true }
+	var wide *Doubt
 	if len(nearest) > MaxReach {
 		addresses := make([]string, 0, len(nearest))
 		for a := range nearest {
@@ -256,10 +268,11 @@ func (g *guideBuilder) follow(f File, routes []ranked, served map[string][]int, 
 		kept := addresses[:MaxReach]
 		keep = func(a string) bool { return slices.Contains(kept, a) }
 		g.Wide = append(g.Wide, Reach{File: f.Path, Addresses: len(addresses)})
+		wide = &Doubt{Likely, fmt.Sprintf("one of %d addresses %s reaches; the %d nearest are listed", len(addresses), f.Path, MaxReach)}
 	}
 	for _, h := range hits {
 		if keep(routes[h.route].Path) {
-			g.add(routes[h.route], f.Path, h.trail)
+			g.add(routes[h.route], f.Path, h.trail, wide)
 		}
 	}
 	return len(hits) > 0
@@ -271,15 +284,44 @@ type spot struct {
 	lines diff.Range
 }
 
-func (g *guideBuilder) add(r ranked, changed string, trail Trail) {
+func (g *guideBuilder) add(r ranked, changed string, trail Trail, wide *Doubt) {
+	doubts := slices.Clone(r.Doubts)
+	if len(trail) > 1 {
+		by := trail[len(trail)-1]
+		reason := fmt.Sprintf("%s does not serve this address; %s uses it", changed, by)
+		if len(trail) > 2 {
+			reason = fmt.Sprintf("%s does not serve this address; it is used through %d files, the last %s", changed, len(trail)-1, by)
+		}
+		doubts = append(doubts, Doubt{Likely, reason})
+	}
+	if wide != nil {
+		doubts = append(doubts, *wide)
+	}
+	level := Certain
+	for _, d := range doubts {
+		level = min(level, d.Confidence)
+	}
+
 	i, ok := g.at[r.Path]
 	if !ok {
 		i = len(g.Entrypoints)
 		g.at[r.Path] = i
-		g.Entrypoints = append(g.Entrypoints, Entrypoint{Path: r.Path, Kind: r.Kind, Analyzer: r.by})
+		g.Entrypoints = append(g.Entrypoints, Entrypoint{Path: r.Path, Kind: r.Kind, Analyzer: r.by, Confidence: level})
 		g.ranks = append(g.ranks, r.rank)
 	}
 	e := &g.Entrypoints[i]
+	// The best evidence decides; its reasons are the ones that count.
+	switch {
+	case level > e.Confidence:
+		e.Confidence, e.Doubts = level, nil
+		fallthrough
+	case level == e.Confidence:
+		for _, d := range doubts {
+			if d.Confidence == level && !slices.Contains(e.Doubts, d.Reason) {
+				e.Doubts = append(e.Doubts, d.Reason)
+			}
+		}
+	}
 	if r.rank < g.ranks[i] {
 		// An earlier heuristic found it after a later one did.
 		e.Analyzer, e.Kind, g.ranks[i] = r.by, r.Kind, r.rank
@@ -300,6 +342,7 @@ func (g *guideBuilder) done() Guide {
 		e := &g.Entrypoints[i]
 		slices.Sort(e.Files)
 		slices.Sort(e.Methods)
+		slices.Sort(e.Doubts)
 		slices.SortFunc(e.Via, func(a, b Trail) int { return cmp.Compare(a[0], b[0]) })
 	}
 	slices.SortStableFunc(g.Entrypoints, func(a, b Entrypoint) int { return cmp.Compare(a.Path, b.Path) })

@@ -97,7 +97,7 @@ func (s *Server) Routes() (http.Handler, error) {
 		registerAdmin(api.Group("/admin"))
 	}
 
-	r.GET(computed(), s.ListHandler)  // read at run time: unknown
+	r.GET(computed(), s.ListHandler)  // read at run time: "…", and why
 	slog.Any("inference", 1)          // not a route, though it looks like one to a regex
 	return r, nil
 }
@@ -162,7 +162,14 @@ func (a *App) ChatHandler() {}
 		"POST /v1/chat/completions",
 		"GET /api/v2/users/{id}",
 		"POST /api/v2/admin/reindex",
+		"GET /…",
 	)
+	if got := doubtsOf(routes, "GET", "/…"); !slices.Equal(got, []string{"uncertain: the path is computed(), which pit cannot read"}) {
+		t.Errorf("GET /… doubts %q", got)
+	}
+	if got := doubtsOf(routes, "POST", "/api/pull"); len(got) != 0 {
+		t.Errorf("a literal route has doubts: %q", got)
+	}
 
 	// The registration's own line, and the handler with its comment.
 	if got, want := servedBy(routes, "POST", "/api/pull"), []string{
@@ -289,10 +296,11 @@ func main() {
 
 // A router that leaves the function that makes it -- returned, even
 // wrapped, or stored -- sits wherever it is mounted. Where the source
-// does not say, its routes are left out: a wrong address is worse than
-// none. Checked against navidrome, whose routers are mounted by
-// dependency injection under a path from its configuration.
-func TestARouterNobodyIsSeenMountingHasNoAddresses(t *testing.T) {
+// does not say, the address starts with "…" and says why: a guessed
+// root would be wrong, and leaving the route out would say its handler
+// serves nothing. Checked against navidrome, whose routers are mounted
+// by dependency injection under a path from its configuration.
+func TestWhatCannotBeReadIsMarked(t *testing.T) {
 	routes := goRoutes(t, goProgram(map[string]string{
 		"jellyfin/api.go": `package jellyfin
 
@@ -345,7 +353,34 @@ func (s *Server) redirect(w http.ResponseWriter, r *http.Request) {}
 `,
 	}))
 
-	expectAddresses(t, routes, "GET /{rest...}")
+	expectAddresses(t, routes, "GET /{rest...}", "GET /…/system/ping", "POST /…/login")
+	for address, want := range map[string][]string{
+		"/{rest...}":     nil,
+		"/…/system/ping": {"uncertain: the router made in (*Router).routes is handed on, and pit cannot see where it is mounted"},
+		"/…/login":       {`uncertain: mounted under path.Join(s.base, "/auth"), which pit cannot read`},
+	} {
+		var got []string
+		for _, m := range []string{"GET", "POST"} {
+			got = append(got, doubtsOf(routes, m, address)...)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s doubts\n got %q\nwant %q", address, got, want)
+		}
+	}
+}
+
+// doubtsOf is what the registration of an address says about it.
+func doubtsOf(routes []analysis.Route, method, path string) []string {
+	for _, r := range routes {
+		if r.Method == method && r.Path == path {
+			var out []string
+			for _, d := range r.Doubts {
+				out = append(out, d.Confidence.String()+": "+d.Reason)
+			}
+			return out
+		}
+	}
+	return nil
 }
 
 func TestNetHTTP(t *testing.T) {
@@ -492,5 +527,90 @@ func TestACancelledReadStops(t *testing.T) {
 	_, err := Go{}.Routes(ctx, goProgram(map[string]string{"a.go": "package a\n"}))
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want context.Canceled", err)
+	}
+}
+
+// An unreadable path counts only on a receiver that registers readable
+// ones as well. In a package that imports chi, rdb.Get(ctx, key) is a
+// cache lookup, not a route with a path pit cannot read.
+func TestAnUnreadablePathNeedsARouter(t *testing.T) {
+	routes := goRoutes(t, goProgram(map[string]string{
+		"api/api.go": `package api
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type cache interface{ Get(ctx context.Context, key string) string }
+
+var rdb cache
+
+func Routes(r chi.Router, base string) {
+	r.Get("/health", health)
+	r.Get(base+"/items", health)
+	_ = rdb.Get(context.Background(), base)
+}
+
+func health(w http.ResponseWriter, r *http.Request) {}
+`,
+		"main.go": `package main
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"example.com/shop/api"
+)
+
+func main() {
+	r := chi.NewRouter()
+	api.Routes(r, "")
+	_ = http.ListenAndServe(":1", r)
+}
+`,
+	}))
+	expectAddresses(t, routes, "GET /health", "GET /…/items")
+}
+
+// Without types, x.Serve is every method of that name in the package.
+// The guide still follows them all -- one of them is the handler -- but
+// says it went by the name.
+func TestAHandlerFoundByNameAloneSaysSo(t *testing.T) {
+	routes := goRoutes(t, goProgram(map[string]string{
+		"web/web.go": `package web
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type Pages struct{}
+type Files struct{}
+
+func (p *Pages) Serve(w http.ResponseWriter, r *http.Request) {}
+func (f *Files) Serve(w http.ResponseWriter, r *http.Request) {}
+
+func Setup(p *Pages) {
+	r := chi.NewRouter()
+	r.Get("/pages", p.Serve)
+	_ = http.ListenAndServe(":1", r)
+}
+`,
+	}))
+	var got []string
+	for _, r := range routes {
+		if r.File == "web/web.go" && r.Lines.Start == 12 {
+			for _, d := range r.Doubts {
+				got = append(got, d.Confidence.String()+": "+d.Reason)
+			}
+		}
+	}
+	want := []string{"likely: (*Pages).Serve is found by its name alone; 2 methods of that name are in its package"}
+	if !slices.Equal(got, want) {
+		t.Errorf("doubts %q, want %q", got, want)
 	}
 }

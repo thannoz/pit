@@ -40,22 +40,37 @@ func (NextJS) Routes(ctx context.Context, fsys fs.FS) ([]analysis.Route, error) 
 
 	var out []analysis.Route
 	for _, root := range apps {
-		if dir := findDir(fsys, root, "app"); dir != "" {
-			routes, err := appRouter(ctx, fsys, dir)
+		appDir, pagesDir := findDir(fsys, root, "app"), findDir(fsys, root, "pages")
+		cfg := readNextConfig(fsys, root, cmp.Or(appDir, pagesDir))
+		if appDir != "" {
+			routes, err := appRouter(ctx, fsys, appDir)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, routes...)
+			out = append(out, cfg.apply(routes, false)...)
 		}
-		if dir := findDir(fsys, root, "pages"); dir != "" {
-			routes, err := pagesRouter(ctx, fsys, dir)
+		if pagesDir != "" {
+			routes, err := pagesRouter(ctx, fsys, pagesDir)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, routes...)
+			out = append(out, cfg.apply(routes, true)...)
 		}
 	}
 	return out, nil
+}
+
+// apply adds what the configuration says to each route: its doubts,
+// read on the address as the application sees it, and then the
+// basePath in front.
+func (c nextConfig) apply(routes []analysis.Route, pagesRouter bool) []analysis.Route {
+	for i, r := range routes {
+		routes[i].Doubts = append(slices.Clip(routes[i].Doubts), c.doubts(r, pagesRouter)...)
+		if c.basePath != "" {
+			routes[i].Path = strings.TrimSuffix(c.basePath+r.Path, "/")
+		}
+	}
+	return routes
 }
 
 // nextApps finds the directories whose package.json depends on next.
@@ -180,7 +195,12 @@ func appRouter(ctx context.Context, fsys fs.FS, dir string) ([]analysis.Route, e
 		}
 
 		folders := strings.Split(strings.Trim(strings.TrimPrefix(path.Dir(p), dir), "/"), "/")
-		r := analysis.Route{Path: appAddress(folders), File: p, Kind: kind}
+		address, intercepts := appAddress(folders)
+		r := analysis.Route{Path: address, File: p, Kind: kind}
+		if intercepts {
+			r.Doubts = []analysis.Doubt{{Confidence: analysis.Likely,
+				Reason: "an intercepting route: it shows when the app navigates here from another page; opening the address directly shows the page it intercepts"}}
+		}
 		if slices.ContainsFunc(folders, func(f string) bool { return strings.HasPrefix(f, "@") }) {
 			slotted = append(slotted, r)
 		} else {
@@ -211,7 +231,7 @@ func appRouter(ctx context.Context, fsys fs.FS, dir string) ([]analysis.Route, e
 
 // appAddress turns the folders between app/ and a page into the address
 // the page answers at.
-func appAddress(folders []string) string {
+func appAddress(folders []string) (address string, intercepts bool) {
 	var segments []string
 	for _, f := range folders {
 		if f == "" {
@@ -228,6 +248,7 @@ func appAddress(folders []string) string {
 				segments = segments[:len(segments)-up]
 			}
 			f = rest
+			intercepts = true
 		}
 		switch {
 		case strings.HasPrefix(f, "(") && strings.HasSuffix(f, ")"):
@@ -243,7 +264,7 @@ func appAddress(folders []string) string {
 		}
 		segments = append(segments, segment)
 	}
-	return "/" + strings.Join(segments, "/")
+	return "/" + strings.Join(segments, "/"), intercepts
 }
 
 // interception recognises the markers of an intercepting route and says
@@ -359,7 +380,12 @@ func nearest(routes []analysis.Route, wrapped []string) []analysis.Route {
 			}
 		}
 		if best != nil {
-			out = append(out, analysis.Route{Path: best.Path, File: w, Kind: analysis.Page})
+			r := analysis.Route{Path: best.Path, File: w, Kind: analysis.Page, Doubts: slices.Clone(best.Doubts)}
+			if stem, _ := splitName(path.Base(w)); stem == "loading" {
+				r.Doubts = append(r.Doubts, analysis.Doubt{Confidence: analysis.Likely,
+					Reason: "a loading screen: it shows only while the page below it loads"})
+			}
+			out = append(out, r)
 		}
 	}
 	return out

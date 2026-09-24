@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"fmt"
 	"go/ast"
 	"go/token"
 	"io/fs"
@@ -27,9 +28,11 @@ import (
 //
 // It follows a router through the program as far as the source says:
 // into groups and sub-routers, into chi's Route and Mount, and into the
-// functions a router is handed to. A prefix it cannot read -- built at
-// run time, taken from configuration -- makes every route below it
-// unknown, and an unknown route is left out rather than guessed.
+// functions a router is handed to. A part of an address it cannot read
+// -- a prefix built at run time, taken from configuration -- is written
+// "…", and the route says what it could not read. Leaving the route out
+// would say the handler serves nothing, which is the one thing known to
+// be false.
 type Go struct{}
 
 // Name implements analysis.Analyzer.
@@ -70,9 +73,10 @@ type prefix struct {
 	// slot is what the offset is from: a parameter of the function
 	// (0 and up), the prefix the function itself is reached at
 	// (ambient), or the root of the program (absolute).
-	slot    int
-	rest    string
-	unknown bool
+	slot int
+	rest string
+	// why says what could not be read, when something could not.
+	why string
 }
 
 const (
@@ -80,13 +84,54 @@ const (
 	absolute = -2
 )
 
-func (p prefix) plus(s string, ok bool) prefix {
-	if !ok {
-		p.unknown = true
-		return p
-	}
+func (p prefix) plus(s string) prefix {
 	p.rest = join(p.rest, s)
 	return p
+}
+
+// then adds the path e names, with "…" for what cannot be read, and
+// the reason.
+func (a *goAnalysis) then(d *decl, p prefix, e ast.Expr) prefix {
+	s, ok := a.partial(d, e)
+	p.rest = join(p.rest, s)
+	if ok {
+		return p
+	}
+	if p.why == "" {
+		p.why = "mounted under " + a.text(d, e) + ", which pit cannot read"
+	}
+	return p
+}
+
+// partial reads what it can of a path: base+"/items" is "/…/items".
+// It reports whether all of it could be read.
+func (a *goAnalysis) partial(d *decl, e ast.Expr) (string, bool) {
+	if s, ok := a.str(d, e); ok {
+		return s, true
+	}
+	s := "…"
+	if b, ok := e.(*ast.BinaryExpr); ok && b.Op == token.ADD {
+		l, _ := a.partial(d, b.X)
+		r, _ := a.partial(d, b.Y)
+		s = strings.ReplaceAll(l+r, "……", "…")
+	}
+	if !strings.HasPrefix(s, "/") {
+		s = "/" + s
+	}
+	return s, false
+}
+
+// text is the source of an expression, for saying what was not read.
+func (a *goAnalysis) text(d *decl, e ast.Expr) string {
+	from, to := a.fset.Position(e.Pos()).Offset, a.fset.Position(e.End()).Offset
+	if from < 0 || to > len(d.file.src) || from >= to {
+		return "an expression"
+	}
+	t := strings.Join(strings.Fields(string(d.file.src[from:to])), " ")
+	if len(t) > 60 {
+		t = t[:57] + "..."
+	}
+	return t
 }
 
 // A registration is one call that adds a route.
@@ -96,6 +141,7 @@ type registration struct {
 	at       prefix
 	method   string
 	path     string
+	why      string // what about the path could not be read
 	call     *ast.CallExpr
 	handlers []ast.Expr
 }
@@ -112,6 +158,7 @@ type edge struct {
 type prefixes struct {
 	values  map[string]bool
 	unknown bool
+	why     string
 }
 
 type goAnalysis struct {
@@ -125,12 +172,13 @@ type goAnalysis struct {
 type scope struct {
 	vars    map[string]prefix
 	mounted map[string]prefix   // local routers mounted somewhere, which wins
+	known   map[string]bool     // receivers seen registering a path that could be read
 	fresh   map[string]bool     // routers made here: chi.NewRouter() and the like
 	results map[string]ast.Expr // variables holding what a call returned: h, err := s.Routes()
 }
 
 func (s scope) child() scope {
-	return scope{vars: maps(s.vars), mounted: s.mounted, fresh: s.fresh, results: s.results}
+	return scope{vars: maps(s.vars), mounted: s.mounted, known: s.known, fresh: s.fresh, results: s.results}
 }
 
 func maps(m map[string]prefix) map[string]prefix {
@@ -142,7 +190,7 @@ func maps(m map[string]prefix) map[string]prefix {
 }
 
 func (a *goAnalysis) function(d *decl) {
-	sc := scope{vars: map[string]prefix{}, mounted: map[string]prefix{}, fresh: map[string]bool{}, results: map[string]ast.Expr{}}
+	sc := scope{vars: map[string]prefix{}, mounted: map[string]prefix{}, known: map[string]bool{}, fresh: map[string]bool{}, results: map[string]ast.Expr{}}
 	for i, name := range params(d.node.Type) {
 		sc.vars[name] = prefix{slot: i}
 	}
@@ -255,8 +303,7 @@ func (a *goAnalysis) router(d *decl, e ast.Expr, sc scope) (prefix, bool) {
 		a.isImport(d, sel.X, "nethttp") && name == "NewServeMux":
 		return prefix{slot: ambient}, true
 	case routers["gin"] && name == "Group" && len(call.Args) > 0:
-		s, ok := a.str(d, call.Args[0])
-		return a.at(d, sel.X, sc).plus(s, ok), true
+		return a.then(d, a.at(d, sel.X, sc), call.Args[0]), true
 	case routers["chi"] && name == "With":
 		return a.at(d, sel.X, sc), true
 	case routers["gorilla"] && name == "Subrouter":
@@ -265,8 +312,7 @@ func (a *goAnalysis) router(d *decl, e ast.Expr, sc scope) (prefix, bool) {
 			return prefix{}, false
 		}
 		if s, ok := inner.Fun.(*ast.SelectorExpr); ok && s.Sel.Name == "PathPrefix" && len(inner.Args) == 1 {
-			str, ok := a.str(d, inner.Args[0])
-			return a.at(d, s.X, sc).plus(str, ok), true
+			return a.then(d, a.at(d, s.X, sc), inner.Args[0]), true
 		}
 	}
 	return prefix{}, false
@@ -343,12 +389,22 @@ func (a *goAnalysis) call(d *decl, call *ast.CallExpr, sc scope, record bool, pe
 	}
 	routers, name, args := d.pkg.routers, sel.Sel.Name, call.Args
 	reg := func(method string, pathArg ast.Expr, handlers []ast.Expr) bool {
+		p, ok := a.str(d, pathArg)
+		why := ""
+		if ok {
+			sc.known[key(sel.X)] = true
+		} else {
+			// Only on a receiver that registers readable paths too:
+			// rdb.Get(ctx, key) in a package that imports chi is not
+			// a route.
+			if !sc.known[key(sel.X)] || len(handlers) == 0 {
+				return true
+			}
+			p, _ = a.partial(d, pathArg)
+			why = "the path is " + a.text(d, pathArg) + ", which pit cannot read"
+		}
 		if !record {
 			return true
-		}
-		p, ok := a.str(d, pathArg)
-		if !ok {
-			return true // a path we cannot read is a route we do not know
 		}
 		if m, rest, ok := patternMethod(p); ok {
 			method, p = m, rest
@@ -382,10 +438,10 @@ func (a *goAnalysis) call(d *decl, call *ast.CallExpr, sc scope, record bool, pe
 		}
 		at := a.at(d, sel.X, sc)
 		a.registrations = append(a.registrations, registration{
-			fn: d, file: d.file, at: at, method: method, path: p, call: call, handlers: handlers,
+			fn: d, file: d.file, at: at, method: method, path: p, why: why, call: call, handlers: handlers,
 		})
-		if len(handlers) == 1 {
-			a.mount(d, handlers[0], at.plus(p, true), sc)
+		if len(handlers) == 1 && why == "" {
+			a.mount(d, handlers[0], at.plus(p), sc)
 		}
 		return true
 	}
@@ -413,14 +469,12 @@ func (a *goAnalysis) call(d *decl, call *ast.CallExpr, sc scope, record bool, pe
 	case (routers["nethttp"] || routers["chi"] || routers["gorilla"]) && (name == "Handle" || name == "HandleFunc") && len(args) == 2:
 		return reg("", args[0], args[1:])
 	case routers["chi"] && name == "Route" && len(args) == 2:
-		p, ok := a.str(d, args[0])
-		at := a.at(d, sel.X, sc).plus(p, ok)
+		at := a.then(d, a.at(d, sel.X, sc), args[0])
 		return a.nested(d, args[1], at, sc, record)
 	case routers["chi"] && name == "Group" && len(args) == 1:
 		return a.nested(d, args[0], a.at(d, sel.X, sc), sc, record)
 	case routers["chi"] && name == "Mount" && len(args) == 2:
-		p, ok := a.str(d, args[0])
-		at := a.at(d, sel.X, sc).plus(p, ok)
+		at := a.then(d, a.at(d, sel.X, sc), args[0])
 		if _, local := sc.vars[key(args[1])]; local {
 			sc.mounted[key(args[1])] = at
 		} else if record {
@@ -521,6 +575,7 @@ func (a *goAnalysis) propagate() {
 				a.slots[d][i].values[""] = true
 			case i == ambient && !reached[d]:
 				a.slots[d][i].unknown = true
+				a.slots[d][i].why = "the router made in " + d.name() + " is handed on, and pit cannot see where it is mounted"
 			}
 		}
 		return a.slots[d][i]
@@ -532,13 +587,18 @@ func (a *goAnalysis) propagate() {
 		changed := false
 		for _, e := range a.edges {
 			from, to := slot(e.from, e.at.slot), slot(e.to, e.slot)
-			if (from.unknown || e.at.unknown) && !to.unknown {
-				to.unknown, changed = true, true
-			}
-			if e.at.unknown {
-				continue
+			if from.unknown && !to.unknown {
+				to.unknown, to.why, changed = true, from.why, true
 			}
 			for v := range from.values {
+				if e.at.why != "" {
+					// A prefix with a part nobody can read is carried
+					// as it is, "…" and all, with the reason.
+					if !to.unknown {
+						to.unknown, to.why, changed = true, e.at.why, true
+					}
+					continue
+				}
 				full := join(v, e.at.rest)
 				if !to.values[full] && len(to.values) < 32 {
 					to.values[full], changed = true, true
@@ -557,26 +617,40 @@ func (a *goAnalysis) propagate() {
 func (a *goAnalysis) routes() []analysis.Route {
 	var out []analysis.Route
 	for _, r := range a.registrations {
-		if r.at.unknown || a.slots[r.fn][r.at.slot].unknown {
-			continue
-		}
 		s := a.slots[r.fn][r.at.slot]
-		values := make([]string, 0, len(s.values))
+		values := make([]string, 0, len(s.values)+1)
 		for v := range s.values {
 			values = append(values, v)
 		}
 		slices.Sort(values)
+		if s.unknown {
+			values = append(values, "/…")
+		}
 
-		files := a.handlerFiles(r)
+		handlers := a.handlerFiles(r)
 		for _, v := range values {
+			var doubts []analysis.Doubt
+			for _, why := range []string{r.at.why, r.why} {
+				if why != "" {
+					doubts = append(doubts, analysis.Doubt{Confidence: analysis.Uncertain, Reason: why})
+				}
+			}
+			if v == "/…" {
+				doubts = append(doubts, analysis.Doubt{Confidence: analysis.Uncertain, Reason: s.why})
+			}
 			address := placeholders(join(join(v, r.at.rest), r.path))
 			kind := kindOf(r.method, address)
 			out = append(out, analysis.Route{
-				Path: address, File: r.file.path, Kind: kind, Method: r.method, Lines: a.lines(r.call),
+				Path: address, File: r.file.path, Kind: kind, Method: r.method, Lines: a.lines(r.call), Doubts: doubts,
 			})
-			for _, h := range files {
+			for _, h := range handlers {
+				hd := slices.Clone(doubts)
+				if h.namesake > 1 {
+					hd = append(hd, analysis.Doubt{Confidence: analysis.Likely, Reason: fmt.Sprintf(
+						"%s is found by its name alone; %d methods of that name are in its package", h.decl.name(), h.namesake)})
+				}
 				out = append(out, analysis.Route{
-					Path: address, File: h.file.path, Kind: kind, Method: r.method, Lines: a.lines(h.node),
+					Path: address, File: h.decl.file.path, Kind: kind, Method: r.method, Lines: a.lines(h.decl.node), Doubts: hd,
 				})
 			}
 		}
@@ -584,18 +658,26 @@ func (a *goAnalysis) routes() []analysis.Route {
 	return out
 }
 
+// handler is a function a route leads to, and how many functions share
+// the name it was found by.
+type handler struct {
+	decl     *decl
+	namesake int
+}
+
 // handlerFiles resolves every function a registration names after the
 // path: the handler, and the middleware around it. A changed middleware
 // changes every route it wraps.
-func (a *goAnalysis) handlerFiles(r registration) []*decl {
-	var out []*decl
+func (a *goAnalysis) handlerFiles(r registration) []handler {
+	var out []handler
 	var visit func(e ast.Expr)
 	visit = func(e ast.Expr) {
 		switch e := e.(type) {
 		case *ast.Ident, *ast.SelectorExpr:
-			for _, d := range a.resolve(r.fn, e) {
-				if !slices.Contains(out, d) {
-					out = append(out, d)
+			found := a.resolve(r.fn, e)
+			for _, d := range found {
+				if !slices.ContainsFunc(out, func(h handler) bool { return h.decl == d }) {
+					out = append(out, handler{decl: d, namesake: len(found)})
 				}
 			}
 		case *ast.CallExpr:
