@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/glob"
 	"github.com/thannoz/pit/internal/hooks"
 )
 
@@ -61,6 +62,7 @@ func (c *Config) validate(node *yaml.Node, dir, file string) error {
 	p = append(p, c.checkBuild(node)...)
 	p = append(p, c.checkData(node)...)
 	p = append(p, c.checkCommands(node)...)
+	p = append(p, c.checkIgnore(node)...)
 	p = append(p, c.checkEnv(node, dir)...)
 
 	if len(p) == 0 {
@@ -324,6 +326,25 @@ func (c *Config) knownScenarios() string {
 		return "none are configured"
 	}
 	return strings.Join(names, ", ")
+}
+
+// checkIgnore makes sure every ignore pattern can match something. A
+// pattern with an unclosed bracket matches nothing and says nothing,
+// which is found out as a checklist full of files that were supposed
+// to be ignored.
+func (c *Config) checkIgnore(node *yaml.Node) []Problem {
+	var p []Problem
+	for i, pattern := range c.Review.Ignore {
+		if err := glob.Valid(pattern); err != nil {
+			p = append(p, Problem{
+				Line: lineOfIndex(node, i, "review", "ignore"),
+				Path: fmt.Sprintf("review.ignore[%d]", i),
+				Msg:  fmt.Sprintf("is %q, which is not a pattern that can match anything", pattern),
+				Hint: "check the brackets; ** stands for any number of directories",
+			})
+		}
+	}
+	return p
 }
 
 // checkCommands makes sure every configured command can be run.

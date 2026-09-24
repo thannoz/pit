@@ -1,0 +1,51 @@
+# The files of dubinc/dub#4534, a real pull request, and what each one is.
+# Each line was reviewed when it was frozen here, against what the file is
+# in that project. A change to the rules that moves one is a change to that
+# judgement, and should be made on purpose.
+endpoint	apps/web/app/(ee)/api/cron/cleanup/orphaned-rewards/route.ts
+endpoint	apps/web/app/(ee)/api/cron/cleanup/orphaned/route.ts
+endpoint	apps/web/app/(ee)/api/cron/discount-codes/create/queue-batches/route.ts
+endpoint	apps/web/app/(ee)/api/cron/groups/remap-default-links/route.ts
+endpoint	apps/web/app/(ee)/api/cron/groups/remap-discount-codes/route.ts
+endpoint	apps/web/app/(ee)/api/cron/links/invalidate-for-discounts/route.ts
+endpoint	apps/web/app/(ee)/api/cron/programs/reactivate/route.ts
+endpoint	apps/web/app/(ee)/api/cron/rewards/process/route.ts
+endpoint	apps/web/app/(ee)/api/discount-codes/route.ts
+endpoint	apps/web/app/(ee)/api/groups/[groupIdOrSlug]/partners/route.ts
+endpoint	apps/web/app/(ee)/api/groups/[groupIdOrSlug]/route.ts
+code	apps/web/app/(ee)/api/stripe/integration/webhook/coupon-deleted.ts
+endpoint	apps/web/app/(ee)/api/workflows/detach-discount/route.ts
+component	apps/web/app/app.dub.co/(dashboard)/[slug]/(ee)/program/groups/groups-table.tsx
+code	apps/web/lib/actions/partners/create-discount.ts
+code	apps/web/lib/actions/partners/delete-discount.ts
+code	apps/web/lib/actions/partners/update-discount.ts
+code	apps/web/lib/actions/partners/update-partner-enrollment.ts
+code	apps/web/lib/api/activity-log/track-activity-log.ts
+code	apps/web/lib/api/groups/delete-group.ts
+code	apps/web/lib/api/groups/delete-orphaned-default-links.ts
+code	apps/web/lib/api/groups/move-partners-to-group.ts
+code	apps/web/lib/api/partners/notify-partner-group-change.ts
+code	apps/web/lib/api/partners/update-partner-link.ts
+code	apps/web/lib/bounty/api/trigger-draft-bounty-submissions.ts
+code	apps/web/lib/discounts/attach-discount.ts
+code	apps/web/lib/discounts/create-discount-code.ts
+code	apps/web/lib/discounts/delete-orphaned-discounts.ts
+code	apps/web/lib/discounts/detach-discount.ts
+code	apps/web/lib/discounts/get-partners-by-discount-ids.ts
+code	apps/web/lib/discounts/remap-discount-code.ts
+code	apps/web/lib/discounts/remap-discount-codes.ts
+code	apps/web/lib/discounts/sync-discount-codes.ts
+code	apps/web/lib/jobs/handlers/attach-discount-job.ts
+code	apps/web/lib/jobs/handlers/delete-discount-job.ts
+code	apps/web/lib/jobs/handlers/invalidate-links-for-discounts-job.ts
+code	apps/web/lib/jobs/handlers/process-partner-group-change-job.ts
+code	apps/web/lib/jobs/handlers/publish-discount-codes-creation-job.ts
+code	apps/web/lib/jobs/handlers/remap-discount-code-job.ts
+code	apps/web/lib/jobs/handlers/remap-discount-codes-for-partner-job.ts
+code	apps/web/lib/jobs/registry.ts
+code	apps/web/lib/jobs/send-workflows.ts
+code	apps/web/lib/rewards/delete-empty-link-rewards.ts
+code	apps/web/lib/rewards/delete-orphaned-rewards.ts
+migration	apps/web/prisma/schema/discount.prisma
+test	apps/web/tests/partner-groups/index.test.ts
+component	apps/web/ui/modals/delete-group-modal.tsx

@@ -308,3 +308,19 @@ func TestExtendsThatIsNotACycleIsAccepted(t *testing.T) {
 		t.Errorf("a three-level chain was rejected: %v", err)
 	}
 }
+
+func TestABrokenIgnorePatternIsRejected(t *testing.T) {
+	err := loadBroken(t, "web:\n  service: web\n  port: 3000\n"+
+		"review:\n  ignore:\n    - \"docs/**\"\n    - \"src/[abc.go\"\n", nil)
+
+	msg := err.Error()
+	if !strings.Contains(msg, "review.ignore[1]") {
+		t.Errorf("message does not name the broken pattern:\n%s", msg)
+	}
+	if strings.Contains(msg, "review.ignore[0]") {
+		t.Errorf("a valid pattern is reported as broken:\n%s", msg)
+	}
+	if !hasLineNumber.MatchString(msg) {
+		t.Errorf("message does not point at a line:\n%s", msg)
+	}
+}

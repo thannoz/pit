@@ -1,0 +1,38 @@
+# The files of documenso/documenso#3362, a real pull request, and what each one is.
+# Each line was reviewed when it was frozen here, against what the file is
+# in that project. A change to the rules that moves one is a change to that
+# judgement, and should be made on purpose.
+docs	apps/docs/content/docs/developers/embedding/editor/v2.mdx
+docs	apps/docs/content/docs/developers/embedding/iframe.mdx
+component	apps/remix/app/components/dialogs/document-preferences-reset-dialog.tsx
+component	apps/remix/app/components/embed/embed-document-signing-page-v1.tsx
+component	apps/remix/app/components/embed/multisign/multi-sign-document-signing-view.tsx
+component	apps/remix/app/components/forms/document-preferences-form.tsx
+component	apps/remix/app/components/general/admin-global-settings-section.tsx
+component	apps/remix/app/components/general/document-signing/document-signing-page-view-v1.tsx
+component	apps/remix/app/components/general/document-signing/document-signing-page-view-v2.tsx
+component	apps/remix/app/components/general/envelope-editor/envelope-editor-settings-dialog.tsx
+component	apps/remix/app/components/general/envelope-signing/envelope-signer-header.tsx
+page	apps/remix/app/routes/_authenticated+/o.$orgUrl.settings.document.tsx
+page	apps/remix/app/routes/_authenticated+/t.$teamUrl+/settings.document.tsx
+test	packages/app-tests/e2e/envelope-editor-v2/envelope-settings.spec.ts
+test	packages/app-tests/e2e/organisations/organisation-team-preferences.spec.ts
+code	packages/lib/server-only/document/reject-document-with-token.ts
+code	packages/lib/server-only/envelope/get-envelope-for-recipient-signing.ts
+code	packages/lib/server-only/template/create-document-from-template.ts
+code	packages/lib/types/document-meta.ts
+code	packages/lib/types/document.ts
+code	packages/lib/types/envelope-editor.ts
+code	packages/lib/types/envelope.ts
+code	packages/lib/types/template.ts
+code	packages/lib/utils/document.ts
+code	packages/lib/utils/organisations.ts
+code	packages/lib/utils/teams.ts
+migration	packages/prisma/migrations/20260910120000_add_allow_document_rejection_setting/migration.sql
+migration	packages/prisma/schema.prisma
+code	packages/trpc/server/embedding-router/get-multi-sign-document.types.ts
+code	packages/trpc/server/envelope-router/use-envelope.types.ts
+code	packages/trpc/server/organisation-router/update-organisation-settings.ts
+code	packages/trpc/server/organisation-router/update-organisation-settings.types.ts
+code	packages/trpc/server/team-router/update-team-settings.ts
+code	packages/trpc/server/team-router/update-team-settings.types.ts

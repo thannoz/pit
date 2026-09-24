@@ -1,0 +1,28 @@
+# The files of charmbracelet/lipgloss#672, a real pull request, and what each one is.
+# Each line was reviewed when it was frozen here, against what the file is
+# in that project. A change to the rules that moves one is a change to that
+# judgement, and should be made on purpose.
+tooling	.github/CODEOWNERS
+tooling	.golangci.yml
+docs	README.md
+docs	UPGRADE_GUIDE_V2.md
+test	border_size_bug_test.go
+code	borders.go
+test	borders_test.go
+dependency	examples/go.mod
+dependency	examples/go.sum
+code	get.go
+dependency	go.mod
+dependency	go.sum
+code	position.go
+code	query.go
+test	style_test.go
+code	table/resizing.go
+code	table/table.go
+test	table/table_test.go
+test	table/testdata/TestContentWrapping_WithHeight/LongHeaderContentLongAndShortRows/HeightOf05.golden
+test	table/testdata/TestContentWrapping_WithHeight/LongHeaderContentLongAndShortRows/HeightOf15.golden
+test	table/testdata/TestContentWrapping_WithHeight/LongHeaderContentLongAndShortRows/HeightOf25.golden
+test	table/testdata/TestContentWrapping_WithHeight/LongHeaderContentLongAndShortRows/HeightOf35.golden
+code	terminal.go
+code	tree/tree.go
