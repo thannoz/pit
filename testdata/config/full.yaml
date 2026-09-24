@@ -61,7 +61,7 @@ data:
 
 review:
   routes:
-    framework: nextjs            # auto | nextjs | sveltekit | go-chi | …
+    framework: nextjs            # auto | nextjs | go
   ignore:
     - "**/*.test.ts"
     - "docs/**"

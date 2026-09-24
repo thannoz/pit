@@ -22,6 +22,7 @@ var registry = []struct {
 	analyzer analysis.Analyzer
 }{
 	{"nextjs", NextJS{}},
+	{"go", Go{}},
 }
 
 // All returns every heuristic, in order of precedence.

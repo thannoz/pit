@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"slices"
 
+	"github.com/thannoz/pit/internal/diff"
 	"github.com/thannoz/pit/internal/errs"
 )
 
@@ -45,6 +46,14 @@ type Route struct {
 	File string
 	// Kind is Page or Endpoint.
 	Kind Kind
+	// Method is the HTTP method, where the route is registered for
+	// one. Empty means any, or that the framework does not say.
+	Method string
+	// Lines narrows the route to part of File: the function that
+	// handles it, the call that registers it. A file that registers
+	// forty routes has changed for one of them when the change is on
+	// its line, not for all forty. Zero means the whole file.
+	Lines diff.Range
 }
 
 // Entrypoint is an address a reviewer should visit, and why.
@@ -53,6 +62,9 @@ type Entrypoint struct {
 	Path string
 	// Kind is Page or Endpoint.
 	Kind Kind
+	// Methods are the HTTP methods the changes reach, sorted; empty
+	// when no route said.
+	Methods []string
 	// Files are the changed files that lead here, sorted.
 	Files []string
 	// Analyzer is the heuristic that found it.
@@ -83,10 +95,10 @@ type Guide struct {
 // one framework's pages looks exactly like a pull request that does not
 // touch them.
 func Entrypoints(ctx context.Context, fsys fs.FS, files []File, analyzers []Analyzer) (Guide, error) {
-	changed := map[string]bool{}
+	changed := map[string]File{}
 	for _, f := range files {
 		if f.OnChecklist() {
-			changed[f.Path] = true
+			changed[f.Path] = f
 		}
 	}
 
@@ -99,7 +111,8 @@ func Entrypoints(ctx context.Context, fsys fs.FS, files []File, analyzers []Anal
 			return Guide{}, errs.Wrap(err, "finding %s routes", a.Name())
 		}
 		for _, r := range routes {
-			if !changed[r.File] {
+			f, ok := changed[r.File]
+			if !ok || !touches(f.File, r.Lines) {
 				continue
 			}
 			placed[r.File] = true
@@ -112,17 +125,40 @@ func Entrypoints(ctx context.Context, fsys fs.FS, files []File, analyzers []Anal
 			if !slices.Contains(g.Entrypoints[i].Files, r.File) {
 				g.Entrypoints[i].Files = append(g.Entrypoints[i].Files, r.File)
 			}
+			if r.Method != "" && !slices.Contains(g.Entrypoints[i].Methods, r.Method) {
+				g.Entrypoints[i].Methods = append(g.Entrypoints[i].Methods, r.Method)
+			}
 		}
 	}
 
 	for _, f := range files {
-		if changed[f.Path] && !placed[f.Path] {
+		if _, ok := changed[f.Path]; ok && !placed[f.Path] {
 			g.Unplaced = append(g.Unplaced, f)
 		}
 	}
 	for i := range g.Entrypoints {
 		slices.Sort(g.Entrypoints[i].Files)
+		slices.Sort(g.Entrypoints[i].Methods)
 	}
 	slices.SortStableFunc(g.Entrypoints, func(a, b Entrypoint) int { return cmp.Compare(a.Path, b.Path) })
 	return g, nil
+}
+
+// touches reports whether a change to f reaches lines. A pure deletion
+// has no new lines, only the place where they were: it touches the
+// lines on either side of that place.
+func touches(f diff.File, lines diff.Range) bool {
+	if lines == (diff.Range{}) {
+		return true
+	}
+	for _, h := range f.Hunks {
+		start, end := h.New.Start, h.New.End()
+		if h.New.Count == 0 {
+			end = start + 1
+		}
+		if start <= lines.End() && end >= lines.Start {
+			return true
+		}
+	}
+	return false
 }

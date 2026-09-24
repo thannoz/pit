@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -233,5 +234,54 @@ func TestAFailingHeuristicFailsTheGuide(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Next.js") {
 		t.Errorf("error does not say which heuristic failed: %v", err)
+	}
+}
+
+// hunked is a changed file with its changes at the given new lines.
+func hunked(path string, hunks ...diff.Hunk) analysis.File {
+	return analysis.Classify(diff.Diff{Files: []diff.File{{Path: path, Change: diff.Modified, Hunks: hunks}}}, nil)[0]
+}
+
+func at(start, count int) diff.Hunk { return diff.Hunk{New: diff.Range{Start: start, Count: count}} }
+
+// A file that registers forty routes has changed for the ones whose
+// lines changed, not for all forty. The criterion came from ollama's
+// server/routes.go.
+func TestARouteWithLinesCountsOnlyWhenTheyChanged(t *testing.T) {
+	routes := analysistest.New("Fake",
+		analysis.Route{Path: "/api/pull", File: "server/routes.go", Kind: analysis.Endpoint, Method: "POST", Lines: diff.Range{Start: 10, Count: 1}},
+		analysis.Route{Path: "/api/push", File: "server/routes.go", Kind: analysis.Endpoint, Method: "POST", Lines: diff.Range{Start: 11, Count: 1}},
+		analysis.Route{Path: "/api/push", File: "server/push.go", Kind: analysis.Endpoint, Method: "POST", Lines: diff.Range{Start: 20, Count: 15}},
+		analysis.Route{Path: "/api/tags", File: "server/routes.go", Kind: analysis.Endpoint, Method: "GET", Lines: diff.Range{Start: 12, Count: 1}},
+		analysis.Route{Path: "/api/tags", File: "server/routes.go", Kind: analysis.Endpoint, Method: "HEAD", Lines: diff.Range{Start: 13, Count: 1}},
+	)
+	for _, tc := range []struct {
+		name  string
+		files []analysis.File
+		want  []string
+	}{
+		{"one line of the registrations", []analysis.File{hunked("server/routes.go", at(11, 1))}, []string{"/api/push"}},
+		{"inside a handler", []analysis.File{hunked("server/push.go", at(30, 2))}, []string{"/api/push"}},
+		{"next to a handler", []analysis.File{hunked("server/push.go", at(40, 2), at(1, 3))}, nil},
+		// A deletion has no new lines, only a place: between line 11
+		// and 12, which touches both.
+		{"a deletion between two", []analysis.File{hunked("server/routes.go", at(11, 0))}, []string{"/api/push", "/api/tags"}},
+		{"a deletion at the top", []analysis.File{hunked("server/routes.go", at(0, 0))}, nil},
+	} {
+		g := guide(t, tc.files, routes)
+		if got := paths(g); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: entrypoints %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	// Methods meet at one address.
+	g := guide(t, []analysis.File{hunked("server/routes.go", at(12, 2))}, routes)
+	if len(g.Entrypoints) != 1 || !slices.Equal(g.Entrypoints[0].Methods, []string{"GET", "HEAD"}) {
+		t.Errorf("entrypoints %+v, want /api/tags with GET and HEAD", g.Entrypoints)
+	}
+	// A route without lines is the whole file, as before.
+	whole := analysistest.New("Fake", analysis.Route{Path: "/orders", File: "app/orders/page.tsx", Kind: analysis.Page})
+	if got := paths(guide(t, []analysis.File{hunked("app/orders/page.tsx", at(500, 1))}, whole)); !slices.Equal(got, []string{"/orders"}) {
+		t.Errorf("a route without lines: %v", got)
 	}
 }
