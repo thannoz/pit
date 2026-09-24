@@ -81,18 +81,20 @@ func ResolveRef(ctx context.Context, r Runner, dir, ref string) (string, error) 
 // is not an error to delete one that was never fetched, so cleanup can
 // run without first checking.
 func DeleteRef(ctx context.Context, r Runner, repo Repo, pr int) error {
-	ref := LocalRef(pr)
+	// The base goes too: a sandbox that is gone should not leave the
+	// branch it was compared against lying around under pit's name.
+	for _, ref := range []string{LocalRef(pr), BaseRef(pr)} {
+		if _, err := ResolveRef(ctx, r, repo.Root, ref); err != nil {
+			continue // nothing to remove
+		}
 
-	if _, err := ResolveRef(ctx, r, repo.Root, ref); err != nil {
-		return nil // nothing to remove
-	}
-
-	if _, err := r.Output(ctx, proc.Command{
-		Name: "git",
-		Args: []string{"update-ref", "-d", ref},
-		Dir:  repo.Root,
-	}); err != nil {
-		return errs.Wrap(err, "cannot remove %s", ref)
+		if _, err := r.Output(ctx, proc.Command{
+			Name: "git",
+			Args: []string{"update-ref", "-d", ref},
+			Dir:  repo.Root,
+		}); err != nil {
+			return errs.Wrap(err, "cannot remove %s", ref)
+		}
 	}
 	return nil
 }
