@@ -1,0 +1,22 @@
+version: 1
+
+web:
+  service: web
+  port: 8080
+
+data:
+  migrate:
+    - "compose exec -T db sh -c 'until pg_isready -U shop -q; do sleep 1; done; for f in /migrations/*.sql; do psql -q -U shop -d shop -f $f; done'"
+  scenarios:
+    - name: empty
+      description: "Only the schema, no orders"
+    - name: standard
+      description: "Three orders"
+      apply: ["compose exec -T db psql -q -U shop -d shop -f /fixtures/standard.sql"]
+      params:
+        id: "1001"
+    - name: bulk
+      description: "The three orders and forty large ones"
+      extends: standard
+      apply: ["compose exec -T db psql -q -U shop -d shop -f /fixtures/bulk.sql"]
+  default: standard

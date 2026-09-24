@@ -3,6 +3,28 @@
 Files to copy into a project that pit reviews. They are examples, not
 libraries: read them, change the names to yours, check them in.
 
+## `demo/`
+
+The Teashop: a Go web service and a Postgres database, with a
+`.pit.yaml` that migrates the schema and offers three data scenarios.
+`setup.sh` turns it into a git repository of its own with one pull
+request, #7, which adds refunds, a migration and a scenario to show
+them:
+
+```bash
+examples/demo/setup.sh ~/pit-demo
+cd ~/pit-demo/teashop
+pit 7
+```
+
+The repository's remote is a directory next to it, so nothing leaves
+your machine. The walk-through is in the
+[README](../README.md#try-it-on-the-demo).
+
+`demo.tape` records the GIF at the top of the README with
+[vhs](https://github.com/charmbracelet/vhs): `vhs examples/demo/demo.tape`
+from the repository's root.
+
 ## `github-actions/prebuild-images.yml`
 
 Builds an image per service for every pull request and pushes it to the

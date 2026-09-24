@@ -1,0 +1,86 @@
+diff --git a/.pit.yaml b/.pit.yaml
+index fc272a6..016cff2 100644
+--- a/.pit.yaml
++++ b/.pit.yaml
+@@ -19,4 +19,10 @@ data:
+       description: "The three orders and forty large ones"
+       extends: standard
+       apply: ["compose exec -T db psql -q -U shop -d shop -f /fixtures/bulk.sql"]
++    - name: refunded
++      description: "Three orders, one of them partly refunded"
++      extends: standard
++      apply: ["compose exec -T db psql -q -U shop -d shop -f /fixtures/refunded.sql"]
++      params:
++        id: "1002"               # the refunded one
+   default: standard
+diff --git a/fixtures/refunded.sql b/fixtures/refunded.sql
+new file mode 100644
+index 0000000..9dfc964
+--- /dev/null
++++ b/fixtures/refunded.sql
+@@ -0,0 +1 @@
++UPDATE orders SET refunded_cents = 1500 WHERE id = 1002;
+diff --git a/main.go b/main.go
+index c07b070..ae002f7 100644
+--- a/main.go
++++ b/main.go
+@@ -14,9 +14,10 @@ import (
+ )
+ 
+ type order struct {
+-	ID    int
+-	Item  string
+-	Cents int
++	ID       int
++	Item     string
++	Cents    int
++	Refunded int
+ }
+ 
+ func main() {
+@@ -65,12 +66,13 @@ func (s *shop) orders(w http.ResponseWriter, r *http.Request) {
+ func (s *shop) order(w http.ResponseWriter, r *http.Request) {
+ 	id, _ := strconv.Atoi(r.PathValue("id"))
+ 	var o order
+-	err := s.db.QueryRowContext(r.Context(), "SELECT id, item, cents FROM orders WHERE id = $1", id).Scan(&o.ID, &o.Item, &o.Cents)
++	err := s.db.QueryRowContext(r.Context(), "SELECT id, item, cents, refunded_cents FROM orders WHERE id = $1", id).
++		Scan(&o.ID, &o.Item, &o.Cents, &o.Refunded)
+ 	if err != nil {
+ 		http.NotFound(w, r)
+ 		return
+ 	}
+-	render(w, `<h1>Order #{{.ID}}</h1><p>{{.Item}}: {{price .Cents}}</p>`, o)
++	render(w, `<h1>Order #{{.ID}}</h1><p>{{.Item}}: {{price .Cents}}</p>{{if .Refunded}}<p>Refunded: {{price .Refunded}}</p>{{end}}`, o)
+ }
+ 
+ func render(w http.ResponseWriter, page string, data any) {
+diff --git a/migrations/002_refunds.sql b/migrations/002_refunds.sql
+new file mode 100644
+index 0000000..b34edc5
+--- /dev/null
++++ b/migrations/002_refunds.sql
+@@ -0,0 +1 @@
++ALTER TABLE orders ADD COLUMN IF NOT EXISTS refunded_cents integer NOT NULL DEFAULT 0;
+diff --git a/money.go b/money.go
+index 89e2fe6..ffac227 100644
+--- a/money.go
++++ b/money.go
+@@ -1,8 +1,15 @@
+ package main
+ 
+-import "fmt"
++import (
++	"fmt"
++	"strconv"
++)
+ 
+-// price shows an amount in cents the way the shop prints it.
++// price shows an amount in cents the way the shop prints it: €4,950.00.
+ func price(cents int) string {
+-	return fmt.Sprintf("%d.%02d EUR", cents/100, cents%100)
++	euros := strconv.Itoa(cents / 100)
++	for i := len(euros) - 3; i > 0; i -= 3 {
++		euros = euros[:i] + "," + euros[i:]
++	}
++	return fmt.Sprintf("€%s.%02d", euros, cents%100)
+ }

@@ -1,8 +1,5 @@
-# ── Not published yet ─────────────────────────────────────────────────
-# The repository is public (for job applications), the planning stays
-# local. docs/ gets published at P6 — drop the line below then.
-# One file stays private permanently: docs/06-strategie.md, which holds
-# licensing and monetization strategy not meant for outside readers.
+# ── Kept private ──────────────────────────────────────────────────────
+# The planning stays local; the README is the documentation.
 docs/
 
 # Outside contributions are not being accepted at this time.
