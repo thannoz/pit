@@ -45,6 +45,9 @@ type Item struct {
 	Mark         Mark
 	CheckedAt    string
 	ChangedSince []string
+	// Visited says the mark comes from a request in the web service's
+	// log rather than from the reviewer.
+	Visited bool
 }
 
 // Checklist is everything a reviewer of one sandbox is shown.

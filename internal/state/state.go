@@ -80,6 +80,9 @@ type Sandbox struct {
 	// than the steps add up to: reserving a port, writing the
 	// override and recording the result all happen between them.
 	SetupMillis int64 `json:"setupMs,omitempty"`
+	// ProbedAt is when pit last asked the sandbox whether it answers.
+	// Its own requests are not a reviewer's visits.
+	ProbedAt time.Time `json:"probedAt,omitempty"`
 	// Checked are the addresses of `pit what` the reviewer has looked
 	// at. Kept across updates of the sandbox: a new commit makes a
 	// check stale only where it touches what led to the address.
@@ -96,6 +99,12 @@ type Check struct {
 	SHA string `json:"sha"`
 	// At is when.
 	At time.Time `json:"at"`
+	// Visited says pit saw the request in the web service's log,
+	// rather than being told.
+	Visited bool `json:"visited,omitempty"`
+	// Undone marks a check taken back: a visit before it does not
+	// count again.
+	Undone bool `json:"undone,omitempty"`
 }
 
 // Step is one part of a setup and how long it took.

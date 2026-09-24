@@ -51,6 +51,20 @@ func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario
 	st.begin("reuse", quiet)
 	st.done(ctx, "already running, %s old", shortAge(box.Age()))
 
+	// pit just asked the sandbox whether it answers. That request is in
+	// the web service's log like any other, and pit what must not take
+	// it for the reviewer's.
+	box.ProbedAt = time.Now()
+	if err := m.Store.Update(func(f *state.File) error {
+		if current, ok := f.Find(box.RepoRef, box.PR); ok {
+			current.ProbedAt = box.ProbedAt
+			f.Put(current)
+		}
+		return nil
+	}); err != nil {
+		return state.Sandbox{}, err
+	}
+
 	if sc.Empty() || sc.Name == box.Scenario {
 		return box, nil
 	}

@@ -10,6 +10,7 @@ import (
 	"io"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/thannoz/pit/internal/runtime"
 )
@@ -39,6 +40,9 @@ type Fake struct {
 	Published map[string]int
 	// Tail is what Logs returns.
 	Tail string
+	// Lines are what LogsSince returns, from the moment it is asked
+	// for.
+	Lines []runtime.LogLine
 	// ReadyAfter is how many WaitReady calls fail before one succeeds.
 	ReadyAfter int
 	// Fail maps a method name to the error it should return.
@@ -198,6 +202,21 @@ func (f *Fake) Logs(_ context.Context, s runtime.Sandbox, service string, _ int)
 		return nil, err
 	}
 	return []byte(f.Tail), nil
+}
+
+// LogsSince returns the Lines written after since.
+func (f *Fake) LogsSince(_ context.Context, s runtime.Sandbox, service string, since time.Time) ([]runtime.LogLine, error) {
+	f.record("LogsSince", s.Project, service)
+	if err := f.failure("LogsSince"); err != nil {
+		return nil, err
+	}
+	var out []runtime.LogLine
+	for _, l := range f.Lines {
+		if l.At.After(since) {
+			out = append(out, l)
+		}
+	}
+	return out, nil
 }
 
 // Status reports what the containers of a project are doing, and

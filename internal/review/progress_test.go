@@ -123,9 +123,15 @@ func TestRecordKeepsMarksWithTheSandbox(t *testing.T) {
 	stored, _ := f.Find("shop-1234", 7)
 	var got []string
 	for _, c := range stored.Checked {
-		got = append(got, c.Address+"@"+c.SHA)
+		entry := c.Address + "@" + c.SHA
+		if c.Undone {
+			entry += " undone"
+		}
+		got = append(got, entry)
 	}
-	if want := []string{"/a@abc"}; !slices.Equal(got, want) {
+	// Taking /c back is remembered, so that a visit from before does
+	// not put the mark back.
+	if want := []string{"/c@abc undone", "/a@abc"}; !slices.Equal(got, want) {
 		t.Errorf("checked = %v, want %v", got, want)
 	}
 

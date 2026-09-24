@@ -3,12 +3,16 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thannoz/pit/internal/analysis"
 	"github.com/thannoz/pit/internal/diff"
 	"github.com/thannoz/pit/internal/review"
+	"github.com/thannoz/pit/internal/runtime"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
 )
@@ -122,4 +126,50 @@ func TestWhatJSON(t *testing.T) {
 	if u := doc["unplaced"].([]any); len(u) != 2 {
 		t.Errorf("unplaced = %v", u)
 	}
+}
+
+// What the log says is marked; what it cannot say is said.
+func TestVisitsAreReadFromTheLog(t *testing.T) {
+	up := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	box := state.Sandbox{PR: 1, RepoRef: "shop-1", WebService: "web", CreatedAt: up, ProbedAt: up}
+	list := review.Checklist{Head: "abc", Items: []review.Item{{Number: 1, Kind: analysis.Page, Path: "/orders"}}}
+
+	t.Run("a visit", func(t *testing.T) {
+		m, fake := withManager(t, box)
+		fake.Lines = []runtime.LogLine{
+			{At: up.Add(-time.Second), Text: "GET /"}, // pit, before the sandbox was recorded
+			{At: up.Add(time.Minute), Text: "2026/09/24 12:01:00 GET /orders"},
+		}
+		var errOut bytes.Buffer
+		got, err := recordVisits(t.Context(), ui.New(io.Discard, &errOut), m, box, list)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Checked) != 1 || got.Checked[0].Address != "/orders" || !got.Checked[0].Visited {
+			t.Errorf("checked = %+v", got.Checked)
+		}
+		if errOut.Len() != 0 {
+			t.Errorf("said something: %s", errOut.String())
+		}
+	})
+	t.Run("a service that logs no requests", func(t *testing.T) {
+		m, fake := withManager(t, box)
+		fake.Lines = []runtime.LogLine{{At: up.Add(time.Minute), Text: "listening on :8080"}}
+		var errOut bytes.Buffer
+		got, _ := recordVisits(t.Context(), ui.New(io.Discard, &errOut), m, box, list)
+		if len(got.Checked) != 0 || !strings.Contains(errOut.String(), "web logs no requests pit can read") {
+			t.Errorf("checked %v, said %q", got.Checked, errOut.String())
+		}
+	})
+	t.Run("a log that cannot be read", func(t *testing.T) {
+		m, fake := withManager(t, box)
+		fake.Fail["LogsSince"] = errors.New("docker is not running")
+		var errOut bytes.Buffer
+		if _, err := recordVisits(t.Context(), ui.New(io.Discard, &errOut), m, box, list); err != nil {
+			t.Errorf("a log pit cannot read failed the command: %v", err)
+		}
+		if !strings.Contains(errOut.String(), "visits are not checked off: docker is not running") {
+			t.Errorf("said %q", errOut.String())
+		}
+	})
 }

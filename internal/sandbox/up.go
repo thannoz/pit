@@ -335,6 +335,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		Author:       req.PR.Author,
 		Scenario:     loaded,
 		CreatedAt:    time.Now(),
+		ProbedAt:     time.Now(),
 		Steps:        st.taken,
 		SetupMillis:  state.Millis(time.Since(started)),
 	}

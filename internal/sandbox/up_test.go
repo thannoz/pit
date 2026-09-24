@@ -1440,3 +1440,35 @@ func TestUpKeepsWhatWasLookedAt(t *testing.T) {
 		t.Errorf("checked after the update = %+v, want %+v", box.Checked, checked)
 	}
 }
+
+// Reusing a running sandbox asks it whether it answers, and that request
+// lands in the web service's log. The time is kept so that pit what does
+// not take it for the reviewer's.
+func TestReuseNotesItsOwnRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	first, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+	if first.ProbedAt.IsZero() {
+		t.Error("the setup's own request was not noted")
+	}
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+	if !slices.Contains(rep.begun, "reuse") {
+		t.Fatalf("the second Up did not reuse; the test proves nothing: %v", rep.begun)
+	}
+	f, err := m.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, _ := f.Find(first.RepoRef, first.PR)
+	if !box.ProbedAt.After(first.ProbedAt) {
+		t.Errorf("ProbedAt = %v, not after the first %v", box.ProbedAt, first.ProbedAt)
+	}
+}

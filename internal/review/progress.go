@@ -67,11 +67,11 @@ func Record(store *state.Store, box state.Sandbox, list Checklist, numbers []int
 		current.Checked = slices.DeleteFunc(current.Checked, func(c state.Check) bool {
 			return slices.Contains(addresses, c.Address)
 		})
-		if done {
-			now := time.Now()
-			for _, a := range addresses {
-				current.Checked = append(current.Checked, state.Check{Address: a, SHA: list.Head, At: now})
-			}
+		// Taking a mark back is kept too, so that a visit from before
+		// does not put it back on the next pit what.
+		now := time.Now()
+		for _, a := range addresses {
+			current.Checked = append(current.Checked, state.Check{Address: a, SHA: list.Head, At: now, Undone: !done})
 		}
 		f.Put(current)
 		box = current
@@ -109,7 +109,10 @@ func Progress(ctx context.Context, git workspace.Runner, repoRoot string, checks
 			continue
 		}
 		c := checks[at]
-		it.CheckedAt = c.SHA
+		if c.Undone {
+			continue
+		}
+		it.CheckedAt, it.Visited = c.SHA, c.Visited
 		if c.SHA == list.Head {
 			it.Mark = Looked
 			continue

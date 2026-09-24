@@ -16,6 +16,7 @@ import (
 	"github.com/thannoz/pit/internal/analysis"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/review"
+	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
 )
@@ -30,6 +31,11 @@ its running sandbox, and what clicking through them will not show:
 migrations, removed endpoints, permission checks, error handling.
 
 Addresses pit is sure of come first. The others say why it is not.
+
+An address is marked as looked at when the web service's log shows a
+request for it, made after the sandbox came up with this commit. That
+needs a service that logs its requests, as most development servers do;
+pit says so when it finds none.
 
 --done marks addresses as looked at, by their number on the list, and
 --undone takes the mark back. The marks are kept with the sandbox. When
@@ -52,11 +58,15 @@ file that leads to it has changed; then it asks to be looked at again.`,
 			if err != nil {
 				return err
 			}
+			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
+			m, err := manager()
+			if err != nil {
+				return err
+			}
+			if box, err = recordVisits(c.Context(), out, m, box, list); err != nil {
+				return err
+			}
 			if len(done) > 0 || len(undone) > 0 {
-				m, err := manager()
-				if err != nil {
-					return err
-				}
 				if box, err = review.Record(m.Store, box, list, undone, false); err != nil {
 					return err
 				}
@@ -66,7 +76,6 @@ file that leads to it has changed; then it asks to be looked at again.`,
 			}
 			review.Progress(c.Context(), proc.Exec{}, box.RepoRoot, box.Checked, &list)
 
-			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
 			if opts.jsonOutput {
 				return writeWhatJSON(out.Out(), box, list)
 			}
@@ -80,6 +89,25 @@ file that leads to it has changed; then it asks to be looked at again.`,
 	cmd.Flags().IntSliceVar(&done, "done", nil, "mark these numbers as looked at")
 	cmd.Flags().IntSliceVar(&undone, "undone", nil, "take the mark back from these numbers")
 	return cmd
+}
+
+// recordVisits checks off what the web service's log shows the reviewer
+// has opened. Not being able to read the log is worth a warning, not a
+// failed command: the list is the answer, the marks are a convenience.
+func recordVisits(ctx context.Context, out *ui.Printer, m *sandbox.Manager, box state.Sandbox, list review.Checklist) (state.Sandbox, error) {
+	lines, err := m.Runtime.LogsSince(ctx, sandbox.RuntimeSandbox(box), box.WebService, time.Time{})
+	if err != nil {
+		out.Warnf("could not read what %s logged, so visits are not checked off: %v", box.WebService, err)
+		return box, nil
+	}
+	visits := review.Visits(lines)
+	if len(visits) == 0 {
+		// pit's own request when the sandbox came up is in the log of
+		// any service that logs requests at all.
+		out.Notef("%s logs no requests pit can read, so visits are not checked off; --done marks them by hand", box.WebService)
+		return box, nil
+	}
+	return review.RecordVisits(m.Store, box, list, review.Covered(list, visits, box.CreatedAt, box.ProbedAt))
 }
 
 // answers reports whether something listens on the sandbox's port. A
@@ -171,6 +199,9 @@ func writeItem(out *ui.Printer, item review.Item, width int, scenario string) {
 	if item.Confidence != analysis.Certain {
 		line += "  " + item.Confidence.String()
 	}
+	if item.Mark == review.Looked && item.Visited {
+		line += "  visited"
+	}
 	out.Println(line)
 
 	indent := strings.Repeat(" ", width+8)
@@ -250,6 +281,7 @@ type (
 		// Progress is "open", "looked" or "again".
 		Progress     string   `json:"progress"`
 		CheckedAt    string   `json:"checkedAt,omitempty"`
+		Visited      bool     `json:"visited,omitempty"`
 		ChangedSince []string `json:"changedSince,omitempty"`
 	}
 	whatWarning struct {
@@ -275,7 +307,7 @@ func writeWhatJSON(w io.Writer, box state.Sandbox, list review.Checklist) error 
 		doc.Items = append(doc.Items, whatItem{
 			Number: it.Number, Kind: string(it.Kind), Methods: it.Methods, Path: it.Path, URL: it.URL,
 			Missing: it.Missing, Files: it.Files, Via: via, Confidence: it.Confidence.String(), Doubts: it.Doubts,
-			Progress: []string{"open", "looked", "again"}[it.Mark], CheckedAt: it.CheckedAt, ChangedSince: it.ChangedSince,
+			Progress: []string{"open", "looked", "again"}[it.Mark], CheckedAt: it.CheckedAt, Visited: it.Visited, ChangedSince: it.ChangedSince,
 		})
 	}
 	for _, x := range list.Warnings {

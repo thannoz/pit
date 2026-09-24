@@ -9,6 +9,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/proc"
@@ -188,6 +189,35 @@ func (c Compose) Logs(ctx context.Context, s Sandbox, service string, tail int) 
 		return nil, errs.Wrap(err, "cannot read the logs of %s", service)
 	}
 	return out, nil
+}
+
+// LogsSince implements Runtime. Docker stamps each line itself, so the
+// time is when the line was written whether or not the service prints
+// one.
+func (c Compose) LogsSince(ctx context.Context, s Sandbox, service string, since time.Time) ([]LogLine, error) {
+	args := []string{"logs", "--no-color", "--no-log-prefix", "--timestamps"}
+	if !since.IsZero() {
+		args = append(args, "--since", since.UTC().Format(time.RFC3339Nano))
+	}
+	args = append(args, service)
+
+	out, err := c.Runner.Output(ctx, c.command(s, args...))
+	if err != nil {
+		return nil, errs.Wrap(err, "cannot read the logs of %s", service)
+	}
+	var lines []LogLine
+	for _, raw := range strings.Split(string(out), "\n") {
+		stamp, text, ok := strings.Cut(raw, " ")
+		if !ok {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, stamp)
+		if err != nil {
+			continue
+		}
+		lines = append(lines, LogLine{At: at, Text: text})
+	}
+	return lines, nil
 }
 
 // composePS mirrors the shape of `docker compose ps --format json`,

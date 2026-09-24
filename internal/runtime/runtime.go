@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"io"
+	"time"
 )
 
 // Status is what one service is doing.
@@ -59,6 +60,10 @@ type Runtime interface {
 	Port(ctx context.Context, s Sandbox, service string, containerPort int) (string, error)
 	// Logs returns the tail of a service's output.
 	Logs(ctx context.Context, s Sandbox, service string, tail int) ([]byte, error)
+	// LogsSince returns what a service has written since a moment --
+	// all of it for the zero time -- each line with when it was
+	// written. pit what reads the requests a reviewer made from it.
+	LogsSince(ctx context.Context, s Sandbox, service string, since time.Time) ([]LogLine, error)
 	// Status reports what each service is doing.
 	Status(ctx context.Context, s Sandbox) ([]Status, error)
 	// WaitReady polls until the sandbox answers as expected.
@@ -68,3 +73,9 @@ type Runtime interface {
 // Compose satisfies Runtime. The assertion is here so that a change to
 // either side fails at build time rather than at the call site.
 var _ Runtime = Compose{}
+
+// LogLine is one line of a service's output, and when it was written.
+type LogLine struct {
+	At   time.Time
+	Text string
+}
