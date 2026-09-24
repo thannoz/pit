@@ -95,7 +95,7 @@ func TestSuggestedSnapshotRoundTrips(t *testing.T) {
 				// Everything after sh -c is one argument: the script
 				// the container's shell runs, variables and all.
 				args := cmd.Args
-				if len(args) < 2 || args[len(args)-2] != "-c" || !strings.HasPrefix(args[len(args)-1], "exec ") && !strings.HasPrefix(args[len(args)-1], "export ") {
+				if len(args) < 2 || args[len(args)-2] != "-c" || !strings.Contains(line, "'"+args[len(args)-1]+"'") {
 					t.Errorf("%q expands to %q", line, args)
 				}
 			}
@@ -207,6 +207,37 @@ func TestSuggestedCommandsFallBackToTheImageDefaults(t *testing.T) {
 		// where the dump names its own.
 		if !strings.Contains(s.Restore, want[0]) {
 			t.Errorf("%s: restore %q lacks %s", e, s.Restore, want[0])
+		}
+	}
+}
+
+// Restoring has to arrive at the saved state and nothing else: a table
+// or collection made after the snapshot must be gone afterwards. With
+// the first commands it was not, on any of the four databases -- the
+// dumps replace what they name and leave the rest. Checked against
+// real containers after the change: postgres 16 and 17, mysql 8.4 and
+// 9, mariadb 10.11 and 11, mongo 8 with and without a root user.
+func TestSuggestedRestoresReplaceTheWholeDatabase(t *testing.T) {
+	for e, want := range map[Engine]string{
+		Postgres: `DROP SCHEMA %I CASCADE`,
+		MySQL:    `--add-drop-database`,
+		MariaDB:  `--add-drop-database`,
+		MongoDB:  `dropDatabase()`,
+	} {
+		s := SuggestSnapshot("db", e)
+		if !strings.Contains(s.Save+s.Restore, want) {
+			t.Errorf("%s: %q lacks %s", e, s, want)
+		}
+	}
+	// pg_dump does not create the public schema, so once the restore
+	// has dropped it, it has to make it again (postgres 16, 17, postgis).
+	if r := SuggestSnapshot("db", Postgres).Restore; !strings.Contains(r, `-c "CREATE SCHEMA public"`) {
+		t.Errorf("PostgreSQL restore does not make public again: %q", r)
+	}
+	// What goes with a dropped MySQL database has to be in the dump.
+	for _, e := range []Engine{MySQL, MariaDB} {
+		if s := SuggestSnapshot("db", e).Save; !strings.Contains(s, "--routines") || !strings.Contains(s, "--events") {
+			t.Errorf("%s: %q leaves routines or events out", e, s)
 		}
 	}
 }

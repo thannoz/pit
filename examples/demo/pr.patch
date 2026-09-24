@@ -1,5 +1,5 @@
 diff --git a/.pit.yaml b/.pit.yaml
-index 97727d6..581bea8 100644
+index 777830a..6978607 100644
 --- a/.pit.yaml
 +++ b/.pit.yaml
 @@ -19,6 +19,12 @@ data:

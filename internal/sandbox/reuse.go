@@ -65,14 +65,16 @@ func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario
 		return state.Sandbox{}, err
 	}
 
-	if sc.Empty() || sc.Name == box.Scenario {
+	// A restored snapshot is not the scenario it was taken on, even
+	// though the scenario's name is still recorded.
+	if sc.Empty() || (sc.Name == box.Scenario && box.Snapshot == "") {
 		return box, nil
 	}
 
 	if err := m.ResetData(ctx, box, sc, st.rep); err != nil {
 		return state.Sandbox{}, err
 	}
-	box.Scenario = sc.Name
+	box.Scenario, box.Snapshot = sc.Name, ""
 	return box, nil
 }
 

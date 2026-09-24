@@ -108,3 +108,73 @@ func composeDatabases(files []string) []config.Database {
 	}
 	return out
 }
+
+// RestoreSnapshot puts a sandbox's data back into a saved state: the
+// snapshot goes to the restore command's stdin.
+//
+// A snapshot taken at another commit has that commit's schema. The
+// migrations of this one run after it, as they would after a scenario,
+// so that the code under review meets the tables it expects.
+func (m *Manager) RestoreSnapshot(ctx context.Context, box state.Sandbox, snap snapshot.Snapshot, rep Reporter) error {
+	_, commands, err := snapshotCommands(box)
+	if err != nil {
+		return err
+	}
+	data, err := m.Snapshots(box).Open(snap)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = data.Close() }()
+
+	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	cmd, err := hooks.Expand(commands.Restore, target)
+	if err != nil {
+		return errs.Wrap(err, "cannot run data.snapshot.restore")
+	}
+	cmd.Stdin = data
+
+	rep.Begin("restore", streaming)
+	if err := m.Proc.Stream(ctx, cmd, rep.Stdout(), rep.Stderr()); err != nil {
+		return errs.Wrap(err, "restoring %s into #%d failed", snap.Label(), box.PR).
+			WithHint("the data of #%d may be half replaced; restoring again, or `pit data reset %d`, puts it into a known state", box.PR, box.PR)
+	}
+	rep.Done("%s", snap.Label())
+
+	if snap.SHA != box.SHA {
+		cfg, err := ownConfig(box)
+		if err != nil {
+			return err
+		}
+		if migrations := hooks.Migrations(cfg.Data.Migrate); !migrations.Empty() {
+			rep.Begin("migrate", streaming)
+			if err := hooks.Run(ctx, m.Proc, migrations, target, rep.Stdout(), rep.Stderr()); err != nil {
+				return err
+			}
+			rep.Done("%s, as the snapshot is from %s", plural(len(migrations.Lines), "migration", "migrations"), short(snap.SHA))
+		}
+	}
+
+	// Recorded only now: a record written before would describe a
+	// state the sandbox is not in.
+	return m.Store.Update(func(f *state.File) error {
+		current, ok := f.Find(box.RepoRef, box.PR)
+		if !ok {
+			return errs.New("#%d is no longer recorded", box.PR)
+		}
+		current.Scenario, current.Snapshot = snap.Scenario, snap.ID
+		f.Put(current)
+		return nil
+	})
+}
+
+// ownConfig is the configuration a sandbox was built with: the pull
+// request's, or the reviewer's when it carries none.
+func ownConfig(box state.Sandbox) (*config.Config, error) {
+	for _, dir := range []string{box.Worktree, box.RepoRoot} {
+		if cfg, _, err := config.LoadFrom(dir); err == nil {
+			return cfg, nil
+		}
+	}
+	return nil, errs.New("cannot read the configuration of #%d", box.PR).
+		WithHint("the sandbox was created from %s, which has to still be there", box.RepoRoot)
+}

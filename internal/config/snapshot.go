@@ -65,18 +65,33 @@ func SuggestSnapshot(service string, e Engine) Snapshot {
 	}
 	switch e {
 	case Postgres:
+		// Restoring empties the database before the dump goes in, so
+		// that a table added since the snapshot is gone afterwards: every
+		// schema that is not PostgreSQL's own is dropped, public made
+		// again. The database itself stays, and with it the application's
+		// connections; dropping it would end them, and the first request
+		// after a restore would fail. -o /dev/null drops what the dump's
+		// own SELECTs print, client_min_messages the notices of the drop;
+		// errors still go to stderr.
 		const user, db = `"${POSTGRES_USER:-postgres}"`, `"${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"`
+		const empty = `DO \$\$ DECLARE s name; BEGIN FOR s IN SELECT nspname FROM pg_namespace ` +
+			`WHERE nspname NOT LIKE \$p\$pg\_%\$p\$ AND nspname <> \$p\$information_schema\$p\$ ` +
+			`LOOP EXECUTE format(\$f\$DROP SCHEMA %I CASCADE\$f\$, s); END LOOP; END \$\$`
 		return Snapshot{
-			Save:    inside("exec pg_dump -U " + user + " --clean --if-exists " + db),
-			Restore: inside("exec psql -q -v ON_ERROR_STOP=1 -U " + user + " -d " + db),
+			Save: inside("exec pg_dump -U " + user + " --clean --if-exists " + db),
+			Restore: inside(`U=` + user + `; D="${POSTGRES_DB:-$U}"; ` +
+				`psql -q -v ON_ERROR_STOP=1 -U "$U" -d "$D" -c "SET client_min_messages TO warning" -c "` + empty + `" -c "CREATE SCHEMA public" && ` +
+				`exec psql -q -o /dev/null -v ON_ERROR_STOP=1 -U "$U" -d "$D"`),
 		}
 	case MySQL:
 		// Without --set-gtid-purged=OFF, a server that records GTIDs --
 		// MySQL 9 does by default -- writes a dump it refuses to read
-		// back into itself.
+		// back into itself. --add-drop-database makes the dump replace
+		// the whole database, routines and events included, and not
+		// only the tables it names.
 		const login = `export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec `
 		return Snapshot{
-			Save:    inside(login + `mysqldump -uroot --set-gtid-purged=OFF --databases "$MYSQL_DATABASE"`),
+			Save:    inside(login + `mysqldump -uroot --set-gtid-purged=OFF --add-drop-database --routines --events --databases "$MYSQL_DATABASE"`),
 			Restore: inside(login + `mysql -uroot`),
 		}
 	case MariaDB:
@@ -84,14 +99,19 @@ func SuggestSnapshot(service string, e Engine) Snapshot {
 		// from 11 on ship only the mariadb names of the tools.
 		const login = `export MYSQL_PWD="${MARIADB_ROOT_PASSWORD:-$MYSQL_ROOT_PASSWORD}"; exec `
 		return Snapshot{
-			Save:    inside(login + `mariadb-dump -uroot --databases "${MARIADB_DATABASE:-$MYSQL_DATABASE}"`),
+			Save:    inside(login + `mariadb-dump -uroot --add-drop-database --routines --events --databases "${MARIADB_DATABASE:-$MYSQL_DATABASE}"`),
 			Restore: inside(login + `mariadb -uroot`),
 		}
 	case MongoDB:
+		// mongorestore --drop replaces the collections the archive
+		// holds; the databases are dropped first so that one added
+		// since the snapshot goes too. MongoDB's own are left alone.
 		const auth = `${MONGO_INITDB_ROOT_USERNAME:+--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin}`
 		return Snapshot{
-			Save:    inside("exec mongodump --archive --quiet " + auth),
-			Restore: inside("exec mongorestore --archive --drop --quiet " + auth),
+			Save: inside("exec mongodump --archive --quiet " + auth),
+			Restore: inside("mongosh --quiet " + auth +
+				` --eval "db.adminCommand({listDatabases: 1}).databases.forEach(d => /^(admin|config|local)$/.test(d.name) || db.getSiblingDB(d.name).dropDatabase())" && ` +
+				"exec mongorestore --archive --drop --quiet " + auth),
 		}
 	}
 	return Snapshot{}

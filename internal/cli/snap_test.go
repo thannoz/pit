@@ -22,14 +22,27 @@ import (
 type dumper struct {
 	mu   sync.Mutex
 	ran  []proc.Command
+	fed  []string // what each command got on stdin
 	dump string
 	fail error
 }
 
 func (d *dumper) Stream(_ context.Context, c proc.Command, stdout, _ io.Writer) error {
+	var fed string
+	if c.Stdin != nil {
+		data, err := io.ReadAll(c.Stdin)
+		if err != nil {
+			return err
+		}
+		fed = string(data)
+	}
 	d.mu.Lock()
 	d.ran = append(d.ran, c)
+	d.fed = append(d.fed, fed)
 	d.mu.Unlock()
+	if fed != "" {
+		return d.fail
+	}
 	if d.fail != nil {
 		return d.fail
 	}
@@ -236,5 +249,179 @@ func TestSnapSaveThatFailsSaysWhereToLook(t *testing.T) {
 	}
 	if list, _ := m.Snapshots(box).List(); len(list) != 0 {
 		t.Errorf("a failed save left %v", list)
+	}
+}
+
+const withMigrations = `version: 1
+web:
+  service: web
+  port: 80
+data:
+  migrate:
+    - "compose exec -T db migrate-up"
+  snapshot:
+    save: "compose exec -T db pg_dump -U app app"
+    restore: "compose exec -T db psql -U app -d app"
+`
+
+// saved makes a snapshot of box the way pit snap save does, and returns
+// its ID.
+func saved(t *testing.T, m *sandbox.Manager, box state.Sandbox, name string) string {
+	t.Helper()
+	snap, err := m.SaveSnapshot(t.Context(), box, name, io.Discard)
+	if err != nil {
+		t.Fatalf("SaveSnapshot: %v", err)
+	}
+	return snap.ID
+}
+
+func lastLine(d *dumper) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return strings.Join(d.ran[len(d.ran)-1].Args, " ")
+}
+
+// TestSnapRestoreFeedsTheSnapshotBack is the acceptance criterion for
+// T-703 as far as pit's side goes: the restore command gets the saved
+// state, all of it, and the sandbox records that its data is the
+// snapshot. That the databases arrive at exactly that state was checked
+// against real containers for each command pit suggests.
+func TestSnapRestoreFeedsTheSnapshotBack(t *testing.T) {
+	box := snapBox(t, withMigrations, "")
+	m, d := snapManager(t, box, true)
+	id := saved(t, m, box, "cart")
+	d.ran, d.fed = nil, nil
+
+	_, stderr, err := run(t, "snap", "restore", "482", "cart", "--yes")
+	if err != nil {
+		t.Fatalf("pit snap restore: %v\n%s", err, stderr)
+	}
+	if len(d.ran) != 1 {
+		t.Fatalf("ran %d commands, want the restore alone: the snapshot is from this commit", len(d.ran))
+	}
+	if !strings.HasSuffix(lastLine(d), "exec -T db psql -U app -d app") || d.fed[0] != d.dump {
+		t.Errorf("ran %q with %q on stdin, want the restore command with the snapshot", lastLine(d), d.fed[0])
+	}
+	if !strings.Contains(stderr, "✓ restore") || !strings.Contains(stderr, "cart ("+id+")") {
+		t.Errorf("stderr:\n%s", stderr)
+	}
+
+	f, err := m.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := f.Find(box.RepoRef, box.PR)
+	if got.Snapshot != id || got.Scenario != "standard" {
+		t.Errorf("recorded snapshot %q, scenario %q; want %s taken on standard", got.Snapshot, got.Scenario, id)
+	}
+}
+
+// A snapshot from another commit has that commit's schema; this one's
+// migrations run after it.
+func TestSnapRestoreMigratesASnapshotFromAnotherCommit(t *testing.T) {
+	box := snapBox(t, withMigrations, "")
+	m, d := snapManager(t, box, true)
+	id := saved(t, m, box, "")
+	advanced := box
+	advanced.SHA = "b4c5d6e7f809"
+	if err := m.Store.Update(func(f *state.File) error { f.Put(advanced); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	d.ran, d.fed = nil, nil
+
+	_, stderr, err := run(t, "snap", "restore", "482", id, "--yes")
+	if err != nil {
+		t.Fatalf("pit snap restore: %v\n%s", err, stderr)
+	}
+	if len(d.ran) != 2 || !strings.HasSuffix(lastLine(d), "exec -T db migrate-up") {
+		t.Errorf("ran %v, want the restore and then the migration", d.ran)
+	}
+	if !strings.Contains(stderr, "as the snapshot is from a3f91c2") {
+		t.Errorf("stderr does not say why it migrated:\n%s", stderr)
+	}
+}
+
+func TestSnapRestoreAsksFirst(t *testing.T) {
+	box := snapBox(t, withSnapshot, "")
+	m, d := snapManager(t, box, true)
+	saved(t, m, box, "cart")
+	d.ran = nil
+
+	stdout, stderr, err := run(t, "snap", "restore", "482", "cart")
+	if err != nil {
+		t.Fatalf("pit snap restore: %v", err)
+	}
+	if len(d.ran) != 0 {
+		t.Errorf("restored without an answer: %v", d.ran)
+	}
+	all := stdout + stderr
+	for _, want := range []string{"replaces the data of #482", "Anything entered since is lost", "pass --yes", "left alone"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("output lacks %q:\n%s", want, all)
+		}
+	}
+}
+
+func TestSnapRestoreOfAnUnknownSnapshot(t *testing.T) {
+	box := snapBox(t, withSnapshot, "")
+	m, _ := snapManager(t, box, true)
+	id := saved(t, m, box, "cart")
+
+	_, _, err := run(t, "snap", "restore", "482", "carts", "--yes")
+	if err == nil || !strings.Contains(errs.Hint(err), id) {
+		t.Errorf("err = %v, hint %q; want the ones there are named", err, errs.Hint(err))
+	}
+}
+
+// A restore that fails part-way can leave the database half replaced,
+// and the reviewer needs to know that more than anything else.
+func TestSnapRestoreThatFailsSaysTheDataMayBeHalfReplaced(t *testing.T) {
+	box := snapBox(t, withSnapshot, "")
+	m, d := snapManager(t, box, true)
+	saved(t, m, box, "cart")
+	d.fail = errors.New("psql: ERROR:  relation already exists")
+
+	_, _, err := run(t, "snap", "restore", "482", "cart", "--yes")
+	if err == nil || !strings.Contains(errs.Hint(err), "half replaced") {
+		t.Errorf("err = %v, hint %q", err, errs.Hint(err))
+	}
+	f, _ := m.Store.Load()
+	if got, _ := f.Find(box.RepoRef, box.PR); got.Snapshot != "" {
+		t.Errorf("recorded snapshot %q after a failed restore", got.Snapshot)
+	}
+}
+
+// pit ls says where a sandbox's data came from: a restored snapshot
+// rather than the scenario it was taken on.
+func TestLsShowsARestoredSnapshot(t *testing.T) {
+	box := recorded(482, "github.com/acme/shop", "acme-shop-c56680", "refunds", time.Minute)
+	box.Scenario, box.Snapshot = "standard", "sn_7f3a1b"
+	withManager(t, box)
+
+	out, err := runCLI(t, "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "sn_7f3a1b") || strings.Contains(out, "standard") {
+		t.Errorf("ls:\n%s", out)
+	}
+	out, err = runCLI(t, "ls", "--json")
+	if err != nil || !strings.Contains(out, `"snapshot": "sn_7f3a1b"`) || !strings.Contains(out, `"scenario": "standard"`) {
+		t.Errorf("ls --json: %v\n%s", err, out)
+	}
+}
+
+func TestSnapRestoreNeedsARunningSandbox(t *testing.T) {
+	box := snapBox(t, withSnapshot, "")
+	m, d := snapManager(t, box, false)
+	saved(t, m, box, "cart")
+	d.ran = nil
+
+	_, _, err := run(t, "snap", "restore", "482", "cart", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "nothing is running") {
+		t.Errorf("err = %v", err)
+	}
+	if len(d.ran) != 0 {
+		t.Errorf("ran %v", d.ran)
 	}
 }

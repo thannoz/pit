@@ -221,3 +221,58 @@ func TestLabel(t *testing.T) {
 		t.Errorf("unnamed: %q", got)
 	}
 }
+
+func TestFindByIDOrName(t *testing.T) {
+	s := store(t)
+	if _, err := s.Find("cart"); err == nil || !strings.Contains(errs.Hint(err), "pit snap save") {
+		t.Errorf("none yet: %v, hint %q", err, errs.Hint(err))
+	}
+	named, err := s.Save(t.Context(), Snapshot{Name: "cart"}, writes("a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := s.Save(t.Context(), Snapshot{}, writes("b\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ref, want := range map[string]string{"cart": named.ID, named.ID: named.ID, plain.ID: plain.ID} {
+		if got, err := s.Find(ref); err != nil || got.ID != want {
+			t.Errorf("Find(%q) = %v, %v; want %s", ref, got.ID, err, want)
+		}
+	}
+	// An unnamed snapshot is not found by the empty name.
+	if _, err := s.Find(""); err == nil {
+		t.Error(`Find("") found something`)
+	}
+	_, err = s.Find("carts")
+	if err == nil || !strings.Contains(errs.Hint(err), "cart ("+named.ID+")") {
+		t.Errorf("missing: %v, hint %q; it should name the ones there are", err, errs.Hint(err))
+	}
+}
+
+func TestOpenGivesBackWhatWasSaved(t *testing.T) {
+	s := store(t)
+	dump := "-- dump\nCOPY orders FROM stdin;\n1001\tSencha\n\\.\n"
+	snap, err := s.Save(t.Context(), Snapshot{}, writes(dump))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Open(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(r)
+	if err != nil || string(got) != dump {
+		t.Errorf("read %q, %v; want %q", got, err, dump)
+	}
+	if err := r.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+
+	if err := os.Remove(s.DataPath(snap)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Open(snap); err == nil || errs.Hint(err) == "" {
+		t.Errorf("data gone: %v", err)
+	}
+}

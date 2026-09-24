@@ -176,3 +176,29 @@ func TestDataResetOfASandboxThatIsNotRunning(t *testing.T) {
 		t.Errorf("data was loaded into nothing: %+v", store.Calls())
 	}
 }
+
+// Loading a scenario replaces a restored snapshot, even one taken on
+// the same scenario: the record says the data is the scenario again.
+func TestDataResetReplacesARestoredSnapshot(t *testing.T) {
+	box := recordedWithConfig(t, 482, "standard", withScenarios)
+	box.Snapshot = "sn_7f3a1b"
+	store := dataFake(t, box)
+
+	if out, _, err := run(t, "data", "reset", "482", "--yes"); err != nil {
+		t.Fatalf("pit data reset: %v\n%s", err, out)
+	}
+	if calls := store.Calls(); len(calls) != 1 {
+		t.Fatalf("applied %d scenarios", len(calls))
+	}
+	m, err := manager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := m.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.Find(box.RepoRef, box.PR); got.Snapshot != "" || got.Scenario != "standard" {
+		t.Errorf("recorded snapshot %q, scenario %q", got.Snapshot, got.Scenario)
+	}
+}

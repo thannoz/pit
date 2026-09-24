@@ -136,7 +136,9 @@ func writeWhat(out *ui.Printer, box state.Sandbox, list review.Checklist) {
 		into = "the default branch"
 	}
 	context = append(context, fmt.Sprintf("%s into %s", short(list.Head), into))
-	if list.Scenario != "" {
+	if box.Snapshot != "" {
+		context = append(context, "snapshot "+box.Snapshot)
+	} else if list.Scenario != "" {
 		context = append(context, "scenario "+list.Scenario)
 	}
 	out.Println(strings.Join(context, " · "))

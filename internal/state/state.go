@@ -70,6 +70,10 @@ type Sandbox struct {
 	// Scenario records where the data came from, so two people can
 	// talk about the same thing. See docs/03-datenkonzept.md.
 	Scenario string `json:"scenario,omitempty"`
+	// Snapshot is the snapshot the data was restored from, when it
+	// was. Scenario then names the one that snapshot was taken on,
+	// which is where example values for addresses still come from.
+	Snapshot string `json:"snapshot,omitempty"`
 	// CreatedAt is when the sandbox was set up.
 	CreatedAt time.Time `json:"createdAt"`
 	// Steps is how long each part of the setup took, in the order it

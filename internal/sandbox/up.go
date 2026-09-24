@@ -282,14 +282,14 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// that loads before the table it fills exists fails in a way that
 	// is tedious to diagnose. Before the healthcheck, so that the
 	// moment pit says the sandbox answers, it answers with data.
-	loaded := scenario.Name
+	loaded, restored := scenario.Name, ""
 	switch {
 	case scenario.Empty():
 		// Nothing configured, so nothing to say about it.
 	case updating && !wants(req, scenario, previous):
 		// The data survived the update. Replacing it would throw away
 		// whatever the reviewer had done in the sandbox so far.
-		loaded = previous.Scenario
+		loaded, restored = previous.Scenario, previous.Snapshot
 		st.begin("data", quiet)
 		st.done(ctx, "kept as it was")
 	default:
@@ -334,6 +334,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		Title:        req.PR.Title,
 		Author:       req.PR.Author,
 		Scenario:     loaded,
+		Snapshot:     restored,
 		CreatedAt:    time.Now(),
 		ProbedAt:     time.Now(),
 		Steps:        st.taken,

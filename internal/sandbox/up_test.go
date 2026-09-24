@@ -1472,3 +1472,77 @@ func TestReuseNotesItsOwnRequest(t *testing.T) {
 		t.Errorf("ProbedAt = %v, not after the first %v", box.ProbedAt, first.ProbedAt)
 	}
 }
+
+// restored marks the recorded sandbox of req as holding a snapshot, as
+// pit snap restore leaves it.
+func restored(t *testing.T, m *sandbox.Manager, req sandbox.UpRequest, id string) {
+	t.Helper()
+	err := m.Store.Update(func(f *state.File) error {
+		for i := range f.Sandboxes {
+			if f.Sandboxes[i].PR == req.PR.Number {
+				f.Sandboxes[i].Snapshot = id
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpKeepsARestoredSnapshotWhenItUpdates(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, store := updated(t)
+	restored(t, m, req, "sn_7f3a1b")
+
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+	if len(store.Applied()) != 1 {
+		t.Errorf("applied %v; the data was the reviewer's and should have stayed", store.Applied())
+	}
+	if record.Snapshot != "sn_7f3a1b" {
+		t.Errorf("Snapshot = %q; the data kept is still the snapshot", record.Snapshot)
+	}
+}
+
+// A restored snapshot keeps the name of the scenario it was taken on,
+// for the example values in addresses. Asking for that scenario is
+// still asking for different data than the snapshot.
+func TestUpReplacesARestoredSnapshotWithTheScenarioOfTheSameName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	for name, advance := range map[string]bool{"running": false, "updating": true} {
+		t.Run(name, func(t *testing.T) {
+			m, req, _ := upFixture(t)
+			store := scenario(t, m, req)
+			if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+				t.Fatalf("first Up: %v", err)
+			}
+			restored(t, m, req, "sn_7f3a1b")
+			if advance {
+				advancePullRequest(t, req.Repo.Root, req.PR.Number)
+			}
+			req.Scenario = "standard"
+			req.Confirm = func(string) bool {
+				t.Error("asked, although --scenario had said what was wanted")
+				return false
+			}
+
+			record, err := m.Up(t.Context(), req, &quietReporter{})
+			if err != nil {
+				t.Fatalf("second Up: %v", err)
+			}
+			if applied := store.Applied(); len(applied) != 2 {
+				t.Errorf("applied %v, want standard loaded over the snapshot", applied)
+			}
+			if record.Snapshot != "" || record.Scenario != "standard" {
+				t.Errorf("recorded %q / %q, want the scenario and no snapshot", record.Scenario, record.Snapshot)
+			}
+		})
+	}
+}

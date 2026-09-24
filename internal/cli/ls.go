@@ -13,6 +13,7 @@ import (
 
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/sandbox"
+	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
 )
 
@@ -62,6 +63,7 @@ type lsRow struct {
 	URL       string   `json:"url,omitempty"`
 	Port      int      `json:"port,omitempty"`
 	Scenario  string   `json:"scenario,omitempty"`
+	Snapshot  string   `json:"snapshot,omitempty"`
 	CreatedAt string   `json:"createdAt"`
 	Services  []string `json:"services,omitempty"`
 }
@@ -82,6 +84,7 @@ func writeLsJSON(out *ui.Printer, entries []sandbox.Entry) error {
 			URL:       e.URL,
 			Port:      e.Port,
 			Scenario:  e.Scenario,
+			Snapshot:  e.Snapshot,
 			CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
 			Services:  services,
 		})
@@ -128,7 +131,7 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 			shortDuration(time.Since(e.CreatedAt)),
 		}
 		if showScenario {
-			row = slices.Insert(row, 3, orDash(truncate(e.Scenario, maxScenario)))
+			row = slices.Insert(row, 3, orDash(truncate(dataOrigin(e.Sandbox), maxScenario)))
 		}
 		if showRepo {
 			row = append([]string{truncate(e.ShortRepo(), maxRepo)}, row...)
@@ -159,9 +162,19 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 	return nil
 }
 
+// dataOrigin is where a sandbox's data came from: the snapshot it was
+// restored from, which is more than the scenario that snapshot was
+// taken on, or else the scenario.
+func dataOrigin(box state.Sandbox) string {
+	if box.Snapshot != "" {
+		return box.Snapshot
+	}
+	return box.Scenario
+}
+
 func anyScenario(entries []sandbox.Entry) bool {
 	for _, e := range entries {
-		if e.Scenario != "" {
+		if dataOrigin(e.Sandbox) != "" {
 			return true
 		}
 	}

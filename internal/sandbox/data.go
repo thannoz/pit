@@ -28,7 +28,7 @@ func (m *Manager) ResetData(ctx context.Context, box state.Sandbox, sc data.Scen
 	}
 	rep.Done("scenario %s", sc.Describe())
 
-	if box.Scenario == sc.Name {
+	if box.Scenario == sc.Name && box.Snapshot == "" {
 		return nil
 	}
 	// Recorded only now, because a record written before the commands
@@ -38,7 +38,7 @@ func (m *Manager) ResetData(ctx context.Context, box state.Sandbox, sc data.Scen
 		if !ok {
 			return errs.New("#%d is no longer recorded", box.PR)
 		}
-		current.Scenario = sc.Name
+		current.Scenario, current.Snapshot = sc.Name, ""
 		f.Put(current)
 		return nil
 	})

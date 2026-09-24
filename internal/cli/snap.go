@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,7 +27,7 @@ Snapshots are made by the repository's own commands, data.snapshot in
 .pit.yaml: one writes a dump to stdout, the other reads it back. pit
 says which to add when there are none.`,
 	}
-	cmd.AddCommand(newSnapSaveCmd(opts))
+	cmd.AddCommand(newSnapSaveCmd(opts), newSnapRestoreCmd(opts))
 	return cmd
 }
 
@@ -86,6 +87,66 @@ The ID is printed on stdout, so a script can hold on to it.`,
 			return out.Err()
 		},
 	}
+}
+
+func newSnapRestoreCmd(_ *globalOptions) *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "restore <pull request number> <snapshot>",
+		Short: "Put a sandbox's data back into a saved state",
+		Long: `Feed a snapshot to data.snapshot.restore in a running sandbox. The
+snapshot is named by its ID or its name, and may come from the sandbox
+of another pull request of the same repository.
+
+Whatever the sandbox's data is now is replaced, so pit asks first.
+A snapshot taken at another commit has that commit's schema; the
+migrations of this one run after it.`,
+		Example: `  pit snap restore 482 cart-with-voucher
+  pit snap restore 519 sn_7f3a1b --yes`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(c *cobra.Command, args []string) error {
+			box, err := sandboxFor(c, args[0])
+			if err != nil {
+				return err
+			}
+			m, err := manager()
+			if err != nil {
+				return err
+			}
+			snap, err := m.Snapshots(box).Find(args[1])
+			if err != nil {
+				return err
+			}
+			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
+
+			entry, err := m.Find(c.Context(), box.RepoRef, box.PR)
+			if err != nil {
+				return err
+			}
+			if entry.Unreachable != nil {
+				return errs.Wrap(entry.Unreachable, "cannot tell whether #%d is running", box.PR)
+			}
+			if !entry.AnyRunning() {
+				return errs.New("nothing is running for #%d to restore into", box.PR).
+					WithHint("`pit %d` brings the sandbox up again; `pit ls` shows what exists", box.PR)
+			}
+
+			if !yes {
+				from := fmt.Sprintf("#%d at %s", snap.PR, short(snap.SHA))
+				out.Printf("This replaces the data of #%d with %s, saved %s ago from %s. Anything entered since is lost.\n",
+					box.PR, snap.Label(), shortDuration(time.Since(snap.CreatedAt)), from)
+				if !confirm(c, out, "Restore it?") {
+					out.Println("The data was left alone.")
+					return nil
+				}
+			}
+
+			rep := newStepReporter(out, c.ErrOrStderr())
+			return m.RestoreSnapshot(c.Context(), box, snap, rep)
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
+	return cmd
 }
 
 // snapJSON is the shape `--json` promises, apart from the internal

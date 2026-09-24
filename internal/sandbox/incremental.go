@@ -199,7 +199,7 @@ func (m *Manager) recordCommit(box state.Sandbox, sha string) error {
 // types --scenario has said what they want the sandbox to contain.
 // Otherwise the reviewer is asked, and silence keeps what is there.
 func wants(req UpRequest, sc data.Scenario, previous state.Sandbox) bool {
-	if req.Scenario != "" && req.Scenario != previous.Scenario {
+	if req.Scenario != "" && (req.Scenario != previous.Scenario || previous.Snapshot != "") {
 		return true
 	}
 	if req.Confirm == nil {

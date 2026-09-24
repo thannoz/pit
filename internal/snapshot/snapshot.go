@@ -195,6 +195,50 @@ func (s Store) Save(ctx context.Context, meta Snapshot, dump func(ctx context.Co
 	return meta, nil
 }
 
+// Find looks a snapshot up by its ID or its name.
+func (s Store) Find(ref string) (Snapshot, error) {
+	all, err := s.List()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	for _, snap := range all {
+		if snap.ID == ref || (snap.Name != "" && snap.Name == ref) {
+			return snap, nil
+		}
+	}
+	err = errs.New("there is no snapshot %q", ref)
+	if len(all) == 0 {
+		return Snapshot{}, errs.Hinted(err, "this repository has none yet; `pit snap save <pull request number>` makes one")
+	}
+	var known []string
+	for _, snap := range all[max(0, len(all)-5):] {
+		known = append(known, snap.Label())
+	}
+	return Snapshot{}, errs.Hinted(err, "the latest are %s", strings.Join(known, ", "))
+}
+
+// Open reads a snapshot's data back, as the save command wrote it.
+func (s Store) Open(snap Snapshot) (io.ReadCloser, error) {
+	f, err := os.Open(s.DataPath(snap))
+	if err != nil {
+		return nil, errs.Wrap(err, "cannot read snapshot %s", snap.ID).
+			WithHint("its record is there, its data is not; the snapshot cannot be restored")
+	}
+	z, err := gzip.NewReader(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, errs.Wrap(err, "snapshot %s is damaged", snap.ID)
+	}
+	return readCloser{Reader: z, close: func() error { return errors.Join(z.Close(), f.Close()) }}, nil
+}
+
+type readCloser struct {
+	io.Reader
+	close func() error
+}
+
+func (r readCloser) Close() error { return r.close() }
+
 // DataPath is where a snapshot's data is.
 func (s Store) DataPath(snap Snapshot) string {
 	return filepath.Join(s.Dir, snap.ID+dataSuffix)

@@ -159,8 +159,15 @@ pit snap save 7 refunded-order
 ```
 
 `pit` prints the snapshot's size and how long saving took, and its ID on
-stdout. Snapshots are kept when the sandbox goes. The containers, volumes,
-worktree and generated compose file go away with:
+stdout. Change something, then put it back, exactly as it was saved:
+
+```bash
+pit snap restore 7 refunded-order
+```
+
+It asks first, since whatever is in the database now is replaced.
+Snapshots are kept when the sandbox goes. The containers, volumes, worktree
+and generated compose file go away with:
 
 ```bash
 pit down 7
@@ -236,6 +243,7 @@ what changed.
 | `pit shell <n> [service] [-- cmd]` | A shell, or a command, inside a service. |
 | `pit data reset <n>` | Load a scenario into a running sandbox again. |
 | `pit snap save <n> [name]` | Save the data a sandbox is in. |
+| `pit snap restore <n> <snapshot>` | Put a sandbox's data back into a saved state, by ID or name. |
 | `pit scenarios` | List the data states this repository declares. |
 | `pit timing <n>` | Show where the time went while a sandbox was built. |
 | `pit down <n>` | Remove a sandbox: containers, volumes, worktree. `--all` removes every one. |
@@ -353,6 +361,12 @@ A scenario is a state the repository describes. A snapshot is one you made by
 using a sandbox: a cart with a voucher in it, an order half-way through a
 refund. `pit snap save 482 cart-with-voucher` saves it; the name is optional.
 
+`pit snap restore 482 cart-with-voucher` puts it back, after asking. A
+snapshot can go into the sandbox of another pull request of the same
+repository. One taken at another commit has that commit's schema, so the
+migrations of the sandbox's commit run after it. `pit ls` shows the
+snapshot as where the sandbox's data came from.
+
 `pit` knows nothing about databases. A snapshot is whatever the repository's
 save command writes to stdout, kept compressed under
 `$XDG_STATE_HOME/pit/snapshots/`, and the restore command reads it back from
@@ -364,7 +378,7 @@ data:
     save: >-
       compose exec -T db sh -c 'exec pg_dump -U "${POSTGRES_USER:-postgres}" --clean --if-exists "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
     restore: >-
-      compose exec -T db sh -c 'exec psql -q -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
+      compose exec -T db sh -c 'U="${POSTGRES_USER:-postgres}"; D="${POSTGRES_DB:-$U}"; psql -q -v ON_ERROR_STOP=1 -U "$U" -d "$D" -c "SET client_min_messages TO warning" -c "DO \$\$ DECLARE s name; BEGIN FOR s IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE \$p\$pg\_%\$p\$ AND nspname <> \$p\$information_schema\$p\$ LOOP EXECUTE format(\$f\$DROP SCHEMA %I CASCADE\$f\$, s); END LOOP; END \$\$" -c "CREATE SCHEMA public" && exec psql -q -o /dev/null -v ON_ERROR_STOP=1 -U "$U" -d "$D"'
 ```
 
 You do not have to write these yourself. Without them, `pit snap save` says
@@ -374,9 +388,16 @@ writes the same lines as a comment. They read the credentials from the
 container's environment, so no password ends up in `.pit.yaml`. The `>-` keeps
 the quotes in them as they are.
 
+These commands restore exactly what was saved. They empty the database before
+the dump goes in, not only what the dump names, so a table or collection
+created after the snapshot is gone afterwards. For PostgreSQL that means
+dropping the database's own schemas rather than the database, which keeps the
+application's connections open. Commands you write yourself restore only as
+exactly as they are written.
+
 When a pull request brings its own `.pit.yaml` without snapshot commands, the
-ones in your checkout's `.pit.yaml` are used. Restoring a snapshot, listing
-and removing them are planned; for now the files are there to look at.
+ones in your checkout's `.pit.yaml` are used. Listing and removing snapshots
+are planned; until then, they are files in that directory.
 
 ## `.pit.yaml` reference
 
@@ -411,7 +432,7 @@ machine, in the sandbox's worktree.
 | `data.default` | none | The scenario loaded when none is asked for. |
 | `data.service` | from the images | The service holding the database, for when `pit` cannot tell from the images which one it is. |
 | `data.snapshot.save` | none | A command that writes a dump of the database to stdout. See [Snapshots](#snapshots). |
-| `data.snapshot.restore` | none | A command that reads such a dump from stdin. Set together with `save`. |
+| `data.snapshot.restore` | none | A command that reads such a dump from stdin and replaces the database with it. Set together with `save`. |
 | `review.routes.framework` | `auto` | `auto`, `nextjs`, `go` or `sveltekit`. |
 | `review.ignore` | none | Glob patterns for files that never belong on the checklist, e.g. `"**/*.test.ts"`. |
 | `env.set` | none | Environment variables set on the web service, as a map: `NODE_ENV: development`. |
@@ -464,8 +485,8 @@ a pull request adds or changes one, `pit` shows it and asks before running it.
 ## Status
 
 Early, and in use. The core works: sandboxes, data scenarios and the review
-checklist. Saving snapshots works; restoring them, comments back into the
-pull request, and prebuilt binaries are planned. Interfaces and the `.pit.yaml`
+checklist, and saving and restoring snapshots. Comments back into the pull
+request and prebuilt binaries are planned. Interfaces and the `.pit.yaml`
 schema may still change before a first release.
 
 Outside contributions are not being accepted at this time.
