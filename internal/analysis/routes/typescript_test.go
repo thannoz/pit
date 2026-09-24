@@ -144,6 +144,43 @@ export async function POST() {
 	}
 }
 
+// A namespace import leads each use to what it names: api.del to del,
+// not to everything api.js declares. sveltejs/realworld imports its API
+// client this way in every route; by file, a change to del reached the
+// login form. Passing the namespace on as a whole uses the whole file.
+func TestANamespaceMemberLeadsToItsDeclaration(t *testing.T) {
+	links := tsLinks(t, map[string]string{
+		"src/lib/api.js": `export function get(path) {
+	return fetch(path);
+}
+
+export function del(path) {
+	return fetch(path, { method: 'DELETE' });
+}
+`,
+		"src/routes/login.js": `import * as api from './../lib/api.js';
+
+export const load = () => api.get('user');
+`,
+		"src/routes/article.js": `import * as api from '../lib/api.js';
+
+export const remove = () => api.del('a');
+export const either = () => api ?.get('b') ?? api?.del('c');
+export const client = () => wrap(api);
+`,
+	})
+	want := []string{
+		"src/routes/article.js:3-3 -> src/lib/api.js:5-7",
+		"src/routes/article.js:4-4 -> src/lib/api.js:1-3",
+		"src/routes/article.js:4-4 -> src/lib/api.js:5-7",
+		"src/routes/article.js:5-5 -> src/lib/api.js:*",
+		"src/routes/login.js:3-3 -> src/lib/api.js:1-3",
+	}
+	if got := edges(links); !slices.Equal(got, want) {
+		t.Errorf("links\n got %s\nwant %s", strings.Join(got, "\n     "), strings.Join(want, "\n     "))
+	}
+}
+
 // A declaration a file uses from itself is a step too: a table that
 // changed reaches the exported function that reads it.
 func TestDeclarationsOfOneFileUseEachOther(t *testing.T) {

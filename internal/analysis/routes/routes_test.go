@@ -59,12 +59,14 @@ func TestForSelectsByTheConfiguredName(t *testing.T) {
 		}
 	}
 
-	got, err := For("nextjs")
-	if err != nil {
-		t.Fatalf("For(nextjs): %v", err)
-	}
-	if len(got) != 1 || got[0].Name() != "Next.js" {
-		t.Errorf("For(nextjs) = %v", got)
+	for framework, name := range map[string]string{"nextjs": "Next.js", "go": "Go", "sveltekit": "SvelteKit"} {
+		got, err := For(framework)
+		if err != nil {
+			t.Fatalf("For(%s): %v", framework, err)
+		}
+		if len(got) != 1 || got[0].Name() != name {
+			t.Errorf("For(%s) = %v, want %s", framework, got, name)
+		}
 	}
 }
 

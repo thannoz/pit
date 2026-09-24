@@ -47,7 +47,10 @@ var (
 
 // Links implements analysis.Linker.
 func (TypeScript) Links(ctx context.Context, fsys fs.FS) ([]analysis.Link, error) {
-	p := &project{fsys: fsys, exists: map[string]bool{}, packages: map[string]string{}, configs: map[string]*tsconfig{}}
+	p := &project{
+		fsys: fsys, exists: map[string]bool{}, packages: map[string]string{}, configs: map[string]*tsconfig{},
+		imports: map[string]json.RawMessage{}, kits: map[string]*tsconfig{},
+	}
 	var sources []string
 	err := fs.WalkDir(fsys, ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -125,6 +128,10 @@ func (p *project) links(from string) []analysis.Link {
 			add(diff.Range{}, to, diff.Range{})
 			continue
 		}
+		if imp.name == "*" {
+			out = append(out, p.namespace(from, m, imp, to)...)
+			continue
+		}
 		file, target := p.exported(to, imp.name, 0)
 		if target.isType {
 			continue
@@ -152,6 +159,31 @@ func (p *project) links(from string) []analysis.Link {
 	for _, spec := range m.stars {
 		if to, ok := p.resolve(from, spec); ok {
 			add(diff.Range{}, to, diff.Range{})
+		}
+	}
+	return out
+}
+
+// namespace links the uses of a namespace import, import * as api, to
+// what they name: api.del leads to del, not to everything api.js
+// declares. A line that uses the namespace itself, to pass it on, leads
+// to the whole file.
+func (p *project) namespace(from string, m *tsModule, imp binding, to string) []analysis.Link {
+	var out []analysis.Link
+	named := map[int]bool{}
+	for _, name := range sortedNames(m.members[imp.local]) {
+		lines := m.members[imp.local][name]
+		file, target := p.exported(to, name, 0)
+		for _, line := range lines {
+			named[line] = true
+			if !target.isType {
+				out = append(out, analysis.Link{From: from, At: diff.Range{Start: line, Count: 1}, To: file, Target: target.lines})
+			}
+		}
+	}
+	for _, line := range m.uses[imp.local] {
+		if !named[line] {
+			out = append(out, analysis.Link{From: from, At: diff.Range{Start: line, Count: 1}, To: to})
 		}
 	}
 	return out
@@ -196,6 +228,9 @@ type tsModule struct {
 	stars     []string            // export * from "./x"
 	imports   []binding
 	uses      map[string][]int // identifier -> the lines it is used on, outside imports
+	// members are the lines a name is used on as ns.name, by ns: what
+	// a namespace import leads to.
+	members map[string]map[string][]int
 }
 
 type declared struct {
@@ -228,10 +263,11 @@ var (
 	exportList      = regexp.MustCompile(`(?m)^export\s*\{([^}]*)\}\s*;?\s*$`)
 	dynamicImport   = regexp.MustCompile(`\b(?:require|import)\s*\(\s*["']([^"'\n]+)["']\s*\)`)
 	identifier      = regexp.MustCompile(`[A-Za-z_$][\w$]*`)
+	member          = regexp.MustCompile(`([A-Za-z_$][\w$]*)\s*\??\.\s*([A-Za-z_$][\w$]*)`)
 )
 
 func parseModule(src string, script bool) *tsModule {
-	m := &tsModule{exports: map[string]declared{}, reexports: map[string]reexport{}, uses: map[string][]int{}}
+	m := &tsModule{exports: map[string]declared{}, reexports: map[string]reexport{}, uses: map[string][]int{}, members: map[string]map[string][]int{}}
 	lines := strings.Split(src, "\n")
 	lineAt := lineIndex(src)
 	imported := map[int]bool{} // lines that belong to import statements
@@ -289,6 +325,14 @@ func parseModule(src string, script bool) *tsModule {
 		for _, id := range identifier.FindAllString(line, -1) {
 			if u := m.uses[id]; len(u) == 0 || u[len(u)-1] != i+1 {
 				m.uses[id] = append(m.uses[id], i+1)
+			}
+		}
+		for _, q := range member.FindAllStringSubmatch(line, -1) {
+			if m.members[q[1]] == nil {
+				m.members[q[1]] = map[string][]int{}
+			}
+			if u := m.members[q[1]][q[2]]; len(u) == 0 || u[len(u)-1] != i+1 {
+				m.members[q[1]][q[2]] = append(u, i+1)
 			}
 		}
 	}
@@ -438,6 +482,13 @@ type project struct {
 	exists   map[string]bool
 	packages map[string]string    // package name -> its package.json
 	configs  map[string]*tsconfig // directory -> the tsconfig that governs it
+	// imports are the "imports" of each package.json, by its
+	// directory: #lib/format.js is the package's own alias.
+	imports map[string]json.RawMessage
+	// kits are the directories of SvelteKit applications, with the
+	// aliases SvelteKit sets up for them in a tsconfig it generates and
+	// nobody commits.
+	kits map[string]*tsconfig
 }
 
 func (p *project) manifest(name string) {
@@ -446,10 +497,24 @@ func (p *project) manifest(name string) {
 		return
 	}
 	var m struct {
-		Name string `json:"name"`
+		Name            string            `json:"name"`
+		Imports         json.RawMessage   `json:"imports"`
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
 	}
-	if json.Unmarshal(data, &m) == nil && m.Name != "" {
+	if json.Unmarshal(data, &m) != nil {
+		return
+	}
+	if m.Name != "" {
 		p.packages[m.Name] = name
+	}
+	if len(m.Imports) > 0 {
+		p.imports[path.Dir(name)] = m.Imports
+	}
+	_, kit := m.Dependencies["@sveltejs/kit"]
+	_, devKit := m.DevDependencies["@sveltejs/kit"]
+	if kit || devKit {
+		p.kits[path.Dir(name)] = &tsconfig{paths: readKitConfig(p.fsys, path.Dir(name)).aliases}
 	}
 }
 
@@ -463,9 +528,15 @@ func (p *project) resolve(from, spec string) (string, bool) {
 	if spec == "." || spec == ".." || strings.HasPrefix(spec, "./") || strings.HasPrefix(spec, "../") {
 		return p.file(path.Join(path.Dir(from), spec))
 	}
+	if strings.HasPrefix(spec, "#") {
+		return p.subpath(from, spec)
+	}
 	cfg := p.config(path.Dir(from))
-	if cfg != nil {
-		for _, candidate := range cfg.alias(spec) {
+	for _, c := range []*tsconfig{cfg, p.kit(from)} {
+		if c == nil {
+			continue
+		}
+		for _, candidate := range c.alias(spec) {
 			if f, ok := p.file(candidate); ok {
 				return f, true
 			}
@@ -511,6 +582,40 @@ func (p *project) file(base string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// subpath resolves an import the package itself maps, in the "imports"
+// of the package.json nearest above: #lib/format.js. SvelteKit sets up
+// #lib this way from 3.0 on.
+func (p *project) subpath(from, spec string) (string, bool) {
+	dir := path.Dir(from)
+	for !p.exists[path.Join(dir, "package.json")] {
+		if dir == "." {
+			return "", false
+		}
+		dir = path.Dir(dir)
+	}
+	for _, t := range exported(p.imports[dir], spec) {
+		if strings.HasPrefix(t, "./") {
+			if f, ok := p.built(path.Join(dir, t)); ok {
+				return f, true
+			}
+		}
+	}
+	return "", false
+}
+
+// kit is the SvelteKit application a file belongs to, if any: the
+// nearest one above it.
+func (p *project) kit(from string) *tsconfig {
+	for dir := path.Dir(from); ; dir = path.Dir(dir) {
+		if c, ok := p.kits[dir]; ok {
+			return c
+		}
+		if dir == "." {
+			return nil
+		}
+	}
 }
 
 // workspace resolves an import of another package of the repository:
@@ -586,7 +691,8 @@ func (p *project) built(target string) (string, bool) {
 
 // exported reads a package.json "exports" for one subpath: a string, a
 // map of subpaths, or a map of conditions, nested as deep as authors
-// nest them.
+// nest them. Its "imports" are read the same way, with #name for
+// ./name.
 func exported(raw json.RawMessage, key string) []string {
 	if len(raw) == 0 {
 		return nil
@@ -604,7 +710,7 @@ func exported(raw json.RawMessage, key string) []string {
 	}
 	subpaths := false
 	for k := range m {
-		subpaths = subpaths || strings.HasPrefix(k, ".")
+		subpaths = subpaths || strings.HasPrefix(k, ".") || strings.HasPrefix(k, "#")
 	}
 	if !subpaths {
 		if key != "." {

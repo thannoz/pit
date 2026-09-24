@@ -23,6 +23,7 @@ var registry = []struct {
 }{
 	{"nextjs", NextJS{}},
 	{"go", Go{}},
+	{"sveltekit", SvelteKit{}},
 }
 
 // All returns every heuristic, in order of precedence.

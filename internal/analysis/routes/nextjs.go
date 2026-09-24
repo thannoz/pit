@@ -33,7 +33,7 @@ func (NextJS) Name() string { return "Next.js" }
 // package.json that depends on next is an application; a monorepo has
 // several, and each has its own app/ and pages/.
 func (NextJS) Routes(ctx context.Context, fsys fs.FS) ([]analysis.Route, error) {
-	apps, err := nextApps(ctx, fsys)
+	apps, err := appsUsing(ctx, fsys, "next")
 	if err != nil {
 		return nil, err
 	}
@@ -73,12 +73,13 @@ func (c nextConfig) apply(routes []analysis.Route, pagesRouter bool) []analysis.
 	return routes
 }
 
-// nextApps finds the directories whose package.json depends on next.
+// appsUsing finds the directories whose package.json depends on a
+// framework: next, @sveltejs/kit.
 //
 // A package.json that cannot be read as JSON is passed over rather than
 // failing the search: it is as likely to be a test fixture as an
-// application, and next itself could not start from it either.
-func nextApps(ctx context.Context, fsys fs.FS) ([]string, error) {
+// application, and the framework could not start from it either.
+func appsUsing(ctx context.Context, fsys fs.FS, framework string) ([]string, error) {
 	var apps []string
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -107,9 +108,9 @@ func nextApps(ctx context.Context, fsys fs.FS) ([]string, error) {
 		if json.Unmarshal(data, &manifest) != nil {
 			return nil
 		}
-		if _, ok := manifest.Dependencies["next"]; ok {
+		if _, ok := manifest.Dependencies[framework]; ok {
 			apps = append(apps, path.Dir(p))
-		} else if _, ok := manifest.DevDependencies["next"]; ok {
+		} else if _, ok := manifest.DevDependencies[framework]; ok {
 			apps = append(apps, path.Dir(p))
 		}
 		return nil
