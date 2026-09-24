@@ -3,6 +3,7 @@ package analysis_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"path"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/thannoz/pit/internal/analysis"
 	"github.com/thannoz/pit/internal/analysis/analysistest"
@@ -27,7 +29,7 @@ func changed(ignore []string, paths ...string) []analysis.File {
 
 func guide(t *testing.T, files []analysis.File, analyzers ...analysis.Analyzer) analysis.Guide {
 	t.Helper()
-	g, err := analysis.Entrypoints(context.Background(), fstest.MapFS{}, files, analyzers)
+	g, err := analysis.Entrypoints(context.Background(), fstest.MapFS{}, files, analyzers, nil)
 	if err != nil {
 		t.Fatalf("Entrypoints: %v", err)
 	}
@@ -92,7 +94,7 @@ func TestAHeuristicIsExchangeable(t *testing.T) {
 		{fake, []string{"/about-us"}},
 		{htmlPages{}, []string{"/about", "/contact"}},
 	} {
-		g, err := analysis.Entrypoints(context.Background(), fsys, files, []analysis.Analyzer{tc.analyzer})
+		g, err := analysis.Entrypoints(context.Background(), fsys, files, []analysis.Analyzer{tc.analyzer}, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.analyzer.Name(), err)
 		}
@@ -225,7 +227,7 @@ func TestAFailingHeuristicFailsTheGuide(t *testing.T) {
 	working := analysistest.New("Fake", analysis.Route{Path: "/orders", File: "app/orders/page.tsx", Kind: analysis.Page})
 
 	_, err := analysis.Entrypoints(context.Background(), fstest.MapFS{}, changed(nil, "app/orders/page.tsx"),
-		[]analysis.Analyzer{working, broken})
+		[]analysis.Analyzer{working, broken}, nil)
 	if err == nil {
 		t.Fatal("no error from a heuristic that failed")
 	}
@@ -283,5 +285,218 @@ func TestARouteWithLinesCountsOnlyWhenTheyChanged(t *testing.T) {
 	whole := analysistest.New("Fake", analysis.Route{Path: "/orders", File: "app/orders/page.tsx", Kind: analysis.Page})
 	if got := paths(guide(t, []analysis.File{hunked("app/orders/page.tsx", at(500, 1))}, whole)); !slices.Equal(got, []string{"/orders"}) {
 		t.Errorf("a route without lines: %v", got)
+	}
+}
+
+func use(from, to string) analysis.Link { return analysis.Link{From: from, To: to} }
+
+func guideWith(t *testing.T, files []analysis.File, a analysis.Analyzer, links ...analysis.Link) analysis.Guide {
+	t.Helper()
+	g, err := analysis.Entrypoints(context.Background(), fstest.MapFS{}, files,
+		[]analysis.Analyzer{a}, []analysis.Linker{analysistest.Links("Fake", links...)})
+	if err != nil {
+		t.Fatalf("Entrypoints: %v", err)
+	}
+	return g
+}
+
+func pages(paths ...string) *analysistest.Fake {
+	var routes []analysis.Route
+	for _, p := range paths {
+		routes = append(routes, analysis.Route{Path: "/" + p, File: "app/" + p + "/page.tsx", Kind: analysis.Page})
+	}
+	return analysistest.New("Fake", routes...)
+}
+
+// The criterion of T-606: a changed leaf component leads to the three
+// pages that render it, however deep it sits in each.
+func TestALeafComponentLeadsToThePagesThatRenderIt(t *testing.T) {
+	g := guideWith(t, changed(nil, "components/Price.tsx"),
+		pages("cart", "checkout", "orders", "settings"),
+		use("app/cart/page.tsx", "components/Price.tsx"),
+		use("components/Summary.tsx", "components/Price.tsx"),
+		use("app/checkout/page.tsx", "components/Summary.tsx"),
+		use("components/OrderRow.tsx", "components/Summary.tsx"),
+		use("components/OrderTable.tsx", "components/OrderRow.tsx"),
+		use("app/orders/page.tsx", "components/OrderTable.tsx"),
+		use("app/settings/page.tsx", "components/Avatar.tsx"),
+	)
+	if got, want := paths(g), []string{"/cart", "/checkout", "/orders"}; !slices.Equal(got, want) {
+		t.Errorf("entrypoints %v, want %v", got, want)
+	}
+	if len(g.Unplaced) != 0 {
+		t.Errorf("unplaced %v", unplaced(g))
+	}
+	// Each says how.
+	want := map[string]analysis.Trail{
+		"/cart":     {"components/Price.tsx", "app/cart/page.tsx"},
+		"/checkout": {"components/Price.tsx", "components/Summary.tsx", "app/checkout/page.tsx"},
+		"/orders":   {"components/Price.tsx", "components/Summary.tsx", "components/OrderRow.tsx", "components/OrderTable.tsx", "app/orders/page.tsx"},
+	}
+	for _, e := range g.Entrypoints {
+		if len(e.Via) != 1 || !slices.Equal(e.Via[0], want[e.Path]) {
+			t.Errorf("%s via %v, want %v", e.Path, e.Via, want[e.Path])
+		}
+		if !slices.Equal(e.Files, []string{"components/Price.tsx"}) {
+			t.Errorf("%s files %v: the changed file, not the page", e.Path, e.Files)
+		}
+	}
+}
+
+// Imports go round in circles in real projects. The walk ends anyway,
+// and still finds what is beyond the circle.
+func TestACycleEnds(t *testing.T) {
+	g := guideWith(t, changed(nil, "lib/a.ts"), pages("orders"),
+		use("lib/b.ts", "lib/a.ts"),
+		use("lib/a.ts", "lib/b.ts"),
+		use("lib/c.ts", "lib/b.ts"),
+		use("lib/b.ts", "lib/c.ts"),
+		use("app/orders/page.tsx", "lib/c.ts"),
+	)
+	if got := paths(g); !slices.Equal(got, []string{"/orders"}) {
+		t.Errorf("entrypoints %v", got)
+	}
+}
+
+// Past a page lie the pages that link to it, which is not what the
+// change touched.
+func TestTheWalkStopsAtTheFirstAddress(t *testing.T) {
+	g := guideWith(t, changed(nil, "components/Price.tsx"), pages("cart", "home"),
+		use("app/cart/page.tsx", "components/Price.tsx"),
+		use("app/home/page.tsx", "app/cart/page.tsx"),
+	)
+	if got := paths(g); !slices.Equal(got, []string{"/cart"}) {
+		t.Errorf("entrypoints %v, want only /cart", got)
+	}
+}
+
+func TestTheWalkIsBounded(t *testing.T) {
+	chain := []analysis.Link{}
+	prev := "lib/0.ts"
+	for i := 1; i <= analysis.MaxDepth+2; i++ {
+		next := fmt.Sprintf("lib/%d.ts", i)
+		chain = append(chain, use(next, prev))
+		prev = next
+	}
+	chain = append(chain, use("app/far/page.tsx", prev))
+	g := guideWith(t, changed(nil, "lib/0.ts"), pages("far"), chain...)
+	if len(g.Entrypoints) != 0 {
+		t.Errorf("found %v %d files away; MaxDepth is %d", paths(g), analysis.MaxDepth+3, analysis.MaxDepth)
+	}
+	if got := unplaced(g); !slices.Equal(got, []string{"lib/0.ts"}) {
+		t.Errorf("unplaced %v", got)
+	}
+}
+
+// A file every page uses lists the nearest few, and says how many there
+// are in all.
+func TestAFileUsedEverywhereListsTheNearest(t *testing.T) {
+	var names []string
+	var links []analysis.Link
+	for i := range analysis.MaxReach + 5 {
+		name := fmt.Sprintf("p%02d", i)
+		names = append(names, name)
+		if i%2 == 0 {
+			links = append(links, use("app/"+name+"/page.tsx", "lib/cn.ts"))
+		} else {
+			links = append(links, use("components/"+name+".tsx", "lib/cn.ts"), use("app/"+name+"/page.tsx", "components/"+name+".tsx"))
+		}
+	}
+	g := guideWith(t, changed(nil, "lib/cn.ts"), pages(names...), links...)
+
+	if len(g.Entrypoints) != analysis.MaxReach {
+		t.Fatalf("%d entrypoints, want %d", len(g.Entrypoints), analysis.MaxReach)
+	}
+	if want := []analysis.Reach{{File: "lib/cn.ts", Addresses: analysis.MaxReach + 5}}; !slices.Equal(g.Wide, want) {
+		t.Errorf("wide %v, want %v", g.Wide, want)
+	}
+	// The eight direct users come first; two of the indirect ones fill
+	// the list.
+	direct := 0
+	for _, e := range g.Entrypoints {
+		if len(e.Via[0]) == 2 {
+			direct++
+		}
+	}
+	if direct != 8 {
+		t.Errorf("%d direct users listed, want all 8", direct)
+	}
+}
+
+// In Go a link is a line using a declaration. The walk goes from the
+// lines that changed to the declarations they are in, to the lines that
+// use those, and so on -- not to every line of every file.
+func TestLinksNarrowedToLines(t *testing.T) {
+	handlers := analysistest.New("Fake",
+		analysis.Route{Path: "/api/chat", File: "server/routes.go", Method: "POST", Kind: analysis.Endpoint, Lines: diff.Range{Start: 10, Count: 1}},
+		analysis.Route{Path: "/api/chat", File: "server/chat.go", Method: "POST", Kind: analysis.Endpoint, Lines: diff.Range{Start: 5, Count: 20}},
+		analysis.Route{Path: "/api/tags", File: "server/tags.go", Method: "GET", Kind: analysis.Endpoint, Lines: diff.Range{Start: 5, Count: 20}},
+	)
+	links := []analysis.Link{
+		// chat.go line 12 calls openai.ToChat (openai/chat.go 1-30).
+		{From: "server/chat.go", At: diff.Range{Start: 12, Count: 1}, To: "openai/chat.go", Target: diff.Range{Start: 1, Count: 30}},
+		// tags.go line 9 calls openai.ToList (openai/chat.go 40-60).
+		{From: "server/tags.go", At: diff.Range{Start: 9, Count: 1}, To: "openai/chat.go", Target: diff.Range{Start: 40, Count: 21}},
+	}
+	for _, tc := range []struct {
+		change diff.Hunk
+		want   []string
+	}{
+		{at(20, 3), []string{"/api/chat"}},
+		{at(45, 1), []string{"/api/tags"}},
+		{at(35, 1), nil}, // between the two: nothing uses it
+	} {
+		g := guideWith(t, []analysis.File{hunked("openai/chat.go", tc.change)}, handlers, links...)
+		if got := paths(g); !slices.Equal(got, tc.want) {
+			t.Errorf("change at %d: entrypoints %v, want %v", tc.change.New.Start, got, tc.want)
+		}
+	}
+}
+
+// One function calling another in the same file is a step of the walk,
+// not a file of the trail.
+func TestATrailNamesEachFileOnce(t *testing.T) {
+	handlers := analysistest.New("Fake",
+		analysis.Route{Path: "/api/chat", File: "server/chat.go", Kind: analysis.Endpoint, Lines: diff.Range{Start: 5, Count: 10}})
+	g := guideWith(t, []analysis.File{hunked("lib/log.go", at(3, 1))}, handlers,
+		analysis.Link{From: "server/chat.go", At: diff.Range{Start: 30, Count: 1}, To: "lib/log.go", Target: diff.Range{Start: 1, Count: 10}},
+		analysis.Link{From: "server/chat.go", At: diff.Range{Start: 8, Count: 1}, To: "server/chat.go", Target: diff.Range{Start: 25, Count: 10}},
+	)
+	if len(g.Entrypoints) != 1 || !slices.Equal(g.Entrypoints[0].Via[0], analysis.Trail{"lib/log.go", "server/chat.go"}) {
+		t.Errorf("entrypoints %+v", g.Entrypoints)
+	}
+}
+
+func TestAFailingLinkerFailsTheGuide(t *testing.T) {
+	broken := analysistest.Links("TypeScript")
+	broken.Err = errors.New("tsconfig.json: unexpected end")
+	_, err := analysis.Entrypoints(context.Background(), fstest.MapFS{}, changed(nil, "lib/a.ts"),
+		[]analysis.Analyzer{pages("orders")}, []analysis.Linker{broken})
+	if !errors.Is(err, broken.Err) || !strings.Contains(err.Error(), "TypeScript") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// Two functions of one file calling each other: a step inside a file
+// does not lengthen the trail, so only the visited set ends this walk.
+func TestMutualRecursionInOneFileEnds(t *testing.T) {
+	handlers := analysistest.New("Fake",
+		analysis.Route{Path: "/api/chat", File: "server/chat.go", Kind: analysis.Endpoint, Lines: diff.Range{Start: 1, Count: 5}})
+	done := make(chan analysis.Guide, 1)
+	go func() {
+		done <- guideWith(t, []analysis.File{hunked("lib/walk.go", at(3, 1))}, handlers,
+			// even (1-10) and odd (20-30) call each other.
+			analysis.Link{From: "lib/walk.go", At: diff.Range{Start: 5, Count: 1}, To: "lib/walk.go", Target: diff.Range{Start: 20, Count: 11}},
+			analysis.Link{From: "lib/walk.go", At: diff.Range{Start: 25, Count: 1}, To: "lib/walk.go", Target: diff.Range{Start: 1, Count: 10}},
+			analysis.Link{From: "server/chat.go", At: diff.Range{Start: 3, Count: 1}, To: "lib/walk.go", Target: diff.Range{Start: 20, Count: 11}},
+		)
+	}()
+	select {
+	case g := <-done:
+		if got := paths(g); !slices.Equal(got, []string{"/api/chat"}) {
+			t.Errorf("entrypoints %v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the walk did not end")
 	}
 }

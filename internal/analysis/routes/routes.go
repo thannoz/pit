@@ -34,6 +34,13 @@ func All() []analysis.Analyzer {
 	return out
 }
 
+// Linkers returns every language pit can follow from one file to the
+// files that use it. They do not depend on the framework: a TypeScript
+// import is the same in every one.
+func Linkers() []analysis.Linker {
+	return []analysis.Linker{TypeScript{}, GoLinks{}}
+}
+
 // Frameworks returns what review.routes.framework accepts.
 func Frameworks() []string {
 	out := []string{Auto}

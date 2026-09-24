@@ -54,3 +54,31 @@ func (f *Fake) Seen() []fs.FS {
 	defer f.mu.Unlock()
 	return append([]fs.FS(nil), f.seen...)
 }
+
+// Linker is a Linker that reports whatever links it was given.
+type Linker struct {
+	// Language is what Name returns.
+	Language string
+	// Found is what Links returns.
+	Found []analysis.Link
+	// Err is what Links fails with.
+	Err error
+}
+
+// Links returns a Linker for a language with the given links.
+func Links(language string, links ...analysis.Link) *Linker {
+	return &Linker{Language: language, Found: links}
+}
+
+var _ analysis.Linker = (*Linker)(nil)
+
+// Name returns the language the Linker stands in for.
+func (l *Linker) Name() string { return l.Language }
+
+// Links returns Found, or Err.
+func (l *Linker) Links(context.Context, fs.FS) ([]analysis.Link, error) {
+	if l.Err != nil {
+		return nil, l.Err
+	}
+	return append([]analysis.Link(nil), l.Found...), nil
+}

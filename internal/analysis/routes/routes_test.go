@@ -91,3 +91,27 @@ func TestAnUnknownFrameworkIsNamedWithASuggestion(t *testing.T) {
 		t.Errorf("hint does not list what is known: %+v", e)
 	}
 }
+
+// The same contract for the linkers: a name, and a project in their
+// language may simply not be there.
+func TestLinkersHoldToTheContract(t *testing.T) {
+	seen := map[string]bool{}
+	for _, l := range Linkers() {
+		if l.Name() == "" {
+			t.Errorf("%T has no name", l)
+		}
+		if seen[l.Name()] {
+			t.Errorf("two linkers are called %q", l.Name())
+		}
+		seen[l.Name()] = true
+		for name, fsys := range map[string]fstest.MapFS{
+			"empty":     {},
+			"docs only": {"README.md": {Data: []byte("# nothing\n")}},
+		} {
+			links, err := l.Links(context.Background(), fsys)
+			if err != nil || len(links) != 0 {
+				t.Errorf("%s on %s: %v, %v", l.Name(), name, links, err)
+			}
+		}
+	}
+}
