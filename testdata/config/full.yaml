@@ -43,10 +43,15 @@ data:
     - name: standard
       description: "3 Nutzer, 20 Produkte, 5 Bestellungen"
       apply: ["compose exec -T db psql -U app -d app -f /fixtures/standard.sql"]
+      params:                    # example values for /orders/{id} and the like
+        id: "1001"
+        slug: acme
     - name: teilerstattung
       description: "Bestellung mit Teilerstattung aus zwei Lagern"
       extends: standard
       apply: ["compose exec -T db psql -U app -d app -f /fixtures/teilerstattung.sql"]
+      params:
+        id: "1042"               # the refunded order
 
   default: standard
 

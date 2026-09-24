@@ -169,6 +169,10 @@ data:
     #   description: "Enough data to see the usual screens"
     #   apply:
     #     - "compose exec -T {{ .DBExample }} psql -U app -d app -f /fixtures/standard.sql"
+    #   # Values from this data for the placeholders in addresses, so
+    #   # that /orders/{id} becomes a link that opens an order.
+    #   params:
+    #     id: "1001"
 
   # What a review loads when no --scenario is given. The command
   # "pit scenarios" lists what this file offers.

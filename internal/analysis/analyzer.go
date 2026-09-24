@@ -34,8 +34,11 @@ type Analyzer interface {
 
 // Route is one address a project serves.
 type Route struct {
-	// Path is the address as the framework writes it, dynamic
-	// segments and all: /orders/[id].
+	// Path is the address, with the parts that change from one
+	// request to the next as placeholders: {id} for one segment,
+	// {path...} for the rest of the address. Every heuristic writes
+	// them this way, whatever its framework calls them, so that Fill
+	// works on all of them. It is the syntax of Go's own router.
 	Path string
 	// File is the file that serves it, relative to the repository's
 	// root, the way a diff names it.

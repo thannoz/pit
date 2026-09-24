@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -221,6 +223,26 @@ func (c *Config) checkData(node *yaml.Node) []Problem {
 			})
 		}
 		seen[s.Name] = true
+
+		for _, key := range slices.Sorted(maps.Keys(s.Params)) {
+			var msg, hint string
+			switch {
+			case key == "" || strings.ContainsAny(key, "/{}[] \t"):
+				msg = fmt.Sprintf("has %q, which cannot be the name of a placeholder", key)
+				hint = "use the name alone: slug for /partners/{slug} or /partners/[slug]"
+			case s.Params[key] == "":
+				msg = fmt.Sprintf("gives %s no value, which fills nothing", key)
+				hint = "set a value that exists in this scenario's data, or remove the entry"
+			default:
+				continue
+			}
+			p = append(p, Problem{
+				Line: lineOfIndex(node, i, "data", "scenarios"),
+				Path: fmt.Sprintf("data.scenarios[%d].params", i),
+				Msg:  msg,
+				Hint: hint,
+			})
+		}
 
 		if s.Extends != "" {
 			if _, ok := c.Scenario(s.Extends); !ok {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -67,6 +68,22 @@ func (c *Config) Chain(name string) ([]Scenario, error) {
 
 	slices.Reverse(chain)
 	return chain, nil
+}
+
+// Params returns the example values of the named scenario, including
+// those of the scenarios it extends. A scenario that refines another
+// may give a placeholder a different value, and its own wins: the
+// order it adds is the one a reviewer of the refund wants to see.
+func (c *Config) Params(name string) (map[string]string, error) {
+	chain, err := c.Chain(name)
+	if err != nil {
+		return nil, err
+	}
+	params := map[string]string{}
+	for _, s := range chain {
+		maps.Copy(params, s.Params)
+	}
+	return params, nil
 }
 
 // CycleError is an extends chain that never reaches a base.

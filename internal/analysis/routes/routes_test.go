@@ -2,8 +2,12 @@ package routes
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/thannoz/pit/internal/errs"
 )
 
 // Every heuristic registered here has to hold to the contract the core
@@ -44,5 +48,46 @@ func TestAProjectWithoutTheFrameworkHasNoRoutes(t *testing.T) {
 				t.Errorf("%s on %s found %v", a.Name(), name, routes)
 			}
 		}
+	}
+}
+
+func TestForSelectsByTheConfiguredName(t *testing.T) {
+	for _, framework := range []string{"", Auto} {
+		got, err := For(framework)
+		if err != nil || len(got) != len(All()) {
+			t.Errorf("For(%q) = %d heuristics, %v; want all %d", framework, len(got), err, len(All()))
+		}
+	}
+
+	got, err := For("nextjs")
+	if err != nil {
+		t.Fatalf("For(nextjs): %v", err)
+	}
+	if len(got) != 1 || got[0].Name() != "Next.js" {
+		t.Errorf("For(nextjs) = %v", got)
+	}
+}
+
+func TestEveryFrameworkCanBeSelected(t *testing.T) {
+	for _, framework := range Frameworks() {
+		if _, err := For(framework); err != nil {
+			t.Errorf("For(%q): %v", framework, err)
+		}
+	}
+}
+
+func TestAnUnknownFrameworkIsNamedWithASuggestion(t *testing.T) {
+	_, err := For("next")
+	if err == nil {
+		t.Fatal("no error for a framework pit has no heuristic for")
+	}
+	var e *errs.Error
+	if !errors.As(err, &e) || !strings.Contains(e.Hint, `"nextjs"`) {
+		t.Errorf("hint does not suggest nextjs: %v (%+v)", err, e)
+	}
+
+	_, err = For("rails")
+	if !errors.As(err, &e) || !strings.Contains(e.Hint, "auto, nextjs") {
+		t.Errorf("hint does not list what is known: %+v", e)
 	}
 }

@@ -127,6 +127,11 @@ type Scenario struct {
 	Extends string `yaml:"extends"`
 	// Apply are the commands that produce this state.
 	Apply []string `yaml:"apply"`
+	// Params are example values for the placeholders in the addresses
+	// a review leads to: the slug in /partners/{slug}. They belong to a
+	// scenario because they name data it loads -- an order that exists
+	// in this state and not in the empty one.
+	Params map[string]string `yaml:"params"`
 }
 
 // ProductionLike fetches a dump from a pipeline the team already has.

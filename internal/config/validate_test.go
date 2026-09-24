@@ -324,3 +324,33 @@ func TestABrokenIgnorePatternIsRejected(t *testing.T) {
 		t.Errorf("message does not point at a line:\n%s", msg)
 	}
 }
+
+func TestAParamHasToBeANameWithAValue(t *testing.T) {
+	// Writing the whole address, or the framework's own brackets, is
+	// the natural mistake; it would never match a placeholder and fill
+	// nothing, silently.
+	err := loadBroken(t, "web:\n  service: web\n  port: 3000\n"+
+		"data:\n  scenarios:\n    - name: standard\n      params:\n"+
+		"        \"[slug]\": acme\n        id: \"\"\n", nil)
+
+	msg := err.Error()
+	for _, want := range []string{"data.scenarios[0].params", `"[slug]"`, "id no value"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message does not mention %s:\n%s", want, msg)
+		}
+	}
+	if !hasLineNumber.MatchString(msg) {
+		t.Errorf("message does not point at a line:\n%s", msg)
+	}
+}
+
+func TestParamsWithNamesAndValuesAreAccepted(t *testing.T) {
+	root := project(t, map[string]string{
+		FileName: "web:\n  service: web\n  port: 3000\n" +
+			"data:\n  scenarios:\n    - name: standard\n      params:\n" +
+			"        slug: acme\n        groupIdOrSlug: default\n        path-with-dash: a/b\n",
+	})
+	if _, err := Load(filepath.Join(root, FileName)); err != nil {
+		t.Fatalf("usable params were rejected: %v", err)
+	}
+}

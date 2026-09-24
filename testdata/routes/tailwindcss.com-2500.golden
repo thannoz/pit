@@ -1,0 +1,50 @@
+# The routes the Next.js heuristic finds in tailwindcss.com-2500.tree:
+# kind, address, file. Each line was reviewed when it was frozen here,
+# against the rules of Next.js 16.2 and, where the site still has the
+# page, against tailwindcss.com itself.
+#
+# Not here, on purpose: not-found.tsx and @breadcrumb/default.tsx,
+# which opening a page does not show; @breadcrumb pages with no page
+# beside them, whose address shows the not-found page (checked on the
+# live site for /installation/using-vite).
+endpoint	/api/og	src/app/api/og/route.tsx
+endpoint	/feeds/{format}	src/app/feeds/[format]/route.tsx
+page	/	src/app/layout.tsx
+page	/	src/app/page.tsx
+page	/blog	src/app/blog/layout.tsx
+page	/blog	src/app/blog/page.tsx
+page	/blog/{slug}	src/app/blog/[slug]/page.tsx
+page	/brand	src/app/(docs)/@breadcrumb/brand/page.tsx
+page	/brand	src/app/(docs)/brand/layout.tsx
+page	/brand	src/app/(docs)/brand/page.mdx
+page	/brand	src/app/(docs)/layout.tsx
+page	/build-uis-that-dont-suck	src/app/build-uis-that-dont-suck/layout.tsx
+page	/build-uis-that-dont-suck	src/app/build-uis-that-dont-suck/page.tsx
+page	/build-uis-that-dont-suck/confirmed	src/app/build-uis-that-dont-suck/confirmed/page.tsx
+page	/build-uis-that-dont-suck/subscribed	src/app/build-uis-that-dont-suck/subscribed/page.tsx
+page	/course	src/app/course/layout.tsx
+page	/course	src/app/course/page.tsx
+page	/course/confirmed	src/app/course/confirmed/page.tsx
+page	/course/subscribed	src/app/course/subscribed/page.tsx
+page	/docs/installation/framework-guides	src/app/(docs)/@breadcrumb/docs/installation/framework-guides/page.tsx
+page	/docs/installation/framework-guides	src/app/(docs)/docs/installation/(tabs)/framework-guides/page.tsx
+page	/docs/installation/framework-guides	src/app/(docs)/docs/installation/(tabs)/layout.tsx
+page	/docs/installation/framework-guides/{slug...}	src/app/(docs)/@breadcrumb/docs/installation/framework-guides/[...slug]/page.tsx
+page	/docs/installation/framework-guides/{slug...}	src/app/(docs)/docs/installation/framework-guides/[...slug]/page.tsx
+page	/docs/installation/play-cdn	src/app/(docs)/@breadcrumb/docs/installation/play-cdn/page.tsx
+page	/docs/installation/play-cdn	src/app/(docs)/docs/installation/(tabs)/play-cdn/page.tsx
+page	/docs/installation/tailwind-cli	src/app/(docs)/@breadcrumb/docs/installation/tailwind-cli/page.tsx
+page	/docs/installation/tailwind-cli	src/app/(docs)/docs/installation/(tabs)/tailwind-cli/page.tsx
+page	/docs/installation/using-postcss	src/app/(docs)/@breadcrumb/docs/installation/using-postcss/page.tsx
+page	/docs/installation/using-postcss	src/app/(docs)/docs/installation/(tabs)/using-postcss/page.tsx
+page	/docs/installation/using-vite	src/app/(docs)/@breadcrumb/docs/installation/using-vite/page.tsx
+page	/docs/installation/using-vite	src/app/(docs)/docs/installation/(tabs)/using-vite/page.tsx
+page	/docs/{slug}	src/app/(docs)/@breadcrumb/docs/[slug]/page.tsx
+page	/docs/{slug}	src/app/(docs)/docs/[slug]/page.tsx
+page	/insiders	src/app/insiders/layout.tsx
+page	/insiders	src/app/insiders/page.tsx
+page	/partners	src/app/partners/layout.tsx
+page	/partners	src/app/partners/page.tsx
+page	/partners/{slug}	src/app/partners/[slug]/page.tsx
+page	/showcase	src/app/showcase/layout.tsx
+page	/showcase	src/app/showcase/page.tsx

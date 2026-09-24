@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -122,5 +123,57 @@ func TestChainReportsAParentThatIsNotConfigured(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "gone") {
 		t.Errorf("error = %q, want it to name the missing parent", err)
+	}
+}
+
+func TestParamsOfARefinementOverrideItsBase(t *testing.T) {
+	c, err := config.Parse([]byte(`
+web:
+  service: web
+  port: 3000
+data:
+  scenarios:
+    - name: teilerstattung
+      extends: standard
+      params:
+        id: "1042"
+    - name: standard
+      extends: leer
+      params:
+        id: "1001"
+        slug: acme
+    - name: leer
+      params:
+        locale: de
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	got, err := c.Params("teilerstattung")
+	if err != nil {
+		t.Fatalf("Params: %v", err)
+	}
+	if want := map[string]string{"id": "1042", "slug": "acme", "locale": "de"}; !maps.Equal(got, want) {
+		t.Errorf("Params(teilerstattung) = %v, want %v", got, want)
+	}
+
+	// Resolving the refinement must not have written into its base.
+	base, err := c.Params("standard")
+	if err != nil {
+		t.Fatalf("Params: %v", err)
+	}
+	if want := map[string]string{"id": "1001", "slug": "acme", "locale": "de"}; !maps.Equal(base, want) {
+		t.Errorf("Params(standard) = %v, want %v", base, want)
+	}
+}
+
+func TestParamsOfAnUnknownScenario(t *testing.T) {
+	c, err := config.Parse([]byte(threeLevels))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if _, err := c.Params("nope"); err == nil {
+		t.Error("no error for a scenario that does not exist")
 	}
 }

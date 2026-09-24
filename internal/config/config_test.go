@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -114,6 +115,13 @@ func TestCanonicalExampleParses(t *testing.T) {
 		}
 		if len(s.Apply) != 1 {
 			t.Errorf("Apply = %v, want one command", s.Apply)
+		}
+		params, err := c.Params("teilerstattung")
+		if err != nil {
+			t.Fatalf("Params: %v", err)
+		}
+		if want := map[string]string{"id": "1042", "slug": "acme"}; !maps.Equal(params, want) {
+			t.Errorf("Params = %v, want %v", params, want)
 		}
 	})
 
