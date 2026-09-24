@@ -102,7 +102,7 @@ func runDataReset(c *cobra.Command, o *dataResetOptions, arg string) error {
 		}
 	}
 
-	rep := newStepReporter(c.ErrOrStderr())
+	rep := newStepReporter(out, c.ErrOrStderr())
 	return m.ResetData(c.Context(), box, scenario, rep)
 }
 

@@ -7,7 +7,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thannoz/pit/internal/config"
-	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/proc"
@@ -44,14 +43,6 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 		return err
 	}
 
-	// A misspelled --scenario is answerable from the configuration
-	// alone. Up resolves it again for every caller, but doing it here
-	// too means the answer comes before GitHub is asked anything,
-	// which is the difference between instant and a round trip.
-	if _, err := data.Select(cfg, o.scenario); err != nil {
-		return err
-	}
-
 	// Everything that can be checked before anything is created gets
 	// checked first: finding out that gh is missing after a worktree
 	// exists is a worse experience than finding out now.
@@ -83,7 +74,7 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 		return err
 	}
 
-	rep := newStepReporter(c.ErrOrStderr())
+	rep := newStepReporter(out, c.ErrOrStderr())
 	record, err := m.Up(ctx, sandbox.UpRequest{
 		Repo:     repo,
 		PR:       pull,
@@ -145,15 +136,20 @@ func cannotRead(host string) string {
 // `pit 482 | read url`.
 type stepReporter struct {
 	progress *ui.Progress
+	out      *ui.Printer
 	err      io.Writer
 }
 
-func newStepReporter(err io.Writer) *stepReporter {
-	return &stepReporter{progress: ui.NewProgress(err), err: err}
+func newStepReporter(out *ui.Printer, err io.Writer) *stepReporter {
+	return &stepReporter{progress: ui.NewProgress(err), out: out, err: err}
 }
 
 func (r *stepReporter) Begin(name string, streams bool) { r.progress.Begin(name, streams) }
 func (r *stepReporter) Done(format string, args ...any) { r.progress.Done(format, args...) }
+
+// Note goes to stderr like the steps do, and without a prefix: it is
+// part of the narration, not a warning about it.
+func (r *stepReporter) Note(format string, args ...any) { r.out.Notef(format, args...) }
 func (r *stepReporter) Blank()                          { r.progress.Blank() }
 func (r *stepReporter) Stdout() io.Writer               { return r.err }
 func (r *stepReporter) Stderr() io.Writer               { return r.err }

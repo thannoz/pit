@@ -334,39 +334,8 @@ func (c *Config) knownScenarios() string {
 func (c *Config) checkCommands(node *yaml.Node) []Problem {
 	var p []Problem
 
-	for i, line := range c.Hooks.AfterUp {
-		if problem, bad := commandProblem(line, fmt.Sprintf("hooks.after_up[%d]", i),
-			lineOfIndex(node, i, "hooks", "after_up")); bad {
-			p = append(p, problem)
-		}
-	}
-
-	for i, line := range c.Data.Migrate {
-		if problem, bad := commandProblem(line, fmt.Sprintf("data.migrate[%d]", i),
-			lineOfIndex(node, i, "data", "migrate")); bad {
-			p = append(p, problem)
-		}
-	}
-
-	for si, s := range c.Data.Scenarios {
-		for i, line := range s.Apply {
-			path := fmt.Sprintf("data.scenarios[%d].apply[%d]", si, i)
-			if problem, bad := commandProblem(line, path,
-				lineOfIndex(node, si, "data", "scenarios")); bad {
-				p = append(p, problem)
-			}
-		}
-	}
-
-	for _, pair := range []struct{ name, line string }{
-		{"data.snapshot.save", c.Data.Snapshot.Save},
-		{"data.snapshot.restore", c.Data.Snapshot.Restore},
-		{"data.production_like.fetch", c.Data.ProductionLike.Fetch},
-	} {
-		if pair.line == "" {
-			continue
-		}
-		if problem, bad := commandProblem(pair.line, pair.name, lineOf(node, strings.Split(pair.name, ".")...)); bad {
+	for _, cmd := range c.commands() {
+		if problem, bad := commandProblem(cmd.Line, cmd.Path, cmd.at(node)); bad {
 			p = append(p, problem)
 		}
 	}

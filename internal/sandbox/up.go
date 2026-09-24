@@ -34,6 +34,10 @@ type Reporter interface {
 	Begin(name string, streams bool)
 	// Done reports that the step begun last has finished.
 	Done(format string, args ...any)
+	// Note says something that is not a step: what pit noticed, or
+	// decided, on the way. Steps are things that take time; this is
+	// for things the reviewer has to know about them.
+	Note(format string, args ...any)
 	// Stdout and Stderr are where a step's own output goes.
 	Stdout() io.Writer
 	Stderr() io.Writer
@@ -80,14 +84,6 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	id := req.Repo.Identity
 	pr := req.PR.Number
 
-	// Before anything is built: a misspelled --scenario is a typo, and
-	// finding it after a five-minute build is an insult. Selecting is
-	// pure configuration work and costs nothing here.
-	scenario, err := data.Select(req.Config, req.Scenario)
-	if err != nil {
-		return state.Sandbox{}, err
-	}
-
 	st := newSteps(rep)
 	started := time.Now()
 
@@ -101,8 +97,25 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// Before anything is created, and before the ref is registered for
 	// cleanup: a sandbox that is already running is the answer, and
 	// undoing the fetch would take the ref the running one is on.
+	// The probe below uses the reviewer's healthcheck settings, not
+	// the pull request's: reading the branch's file first would cost a
+	// note and a question for a sandbox pit may not even keep. Being
+	// wrong here means building again, which is safe.
 	previous, updating := m.updating(ctx, req)
 	if updating && previous.SHA == sha && m.answers(ctx, previous, req.Config) {
+		// The worktree of the running sandbox is this same commit, so
+		// its configuration is the one that governs here too.
+		adopted, err := m.adopt(req, previous.Worktree, rep)
+		if err != nil {
+			return state.Sandbox{}, err
+		}
+		req.Config = adopted
+
+		scenario, err := data.Select(req.Config, req.Scenario)
+		if err != nil {
+			return state.Sandbox{}, err
+		}
+
 		undo.disarm()
 		return m.reuse(ctx, previous, scenario, st)
 	}
@@ -125,6 +138,24 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		undo.push(func(c context.Context) { _ = workspace.RemoveWorktree(c, m.Git, req.Repo, wt.Path) })
 	}
 	st.done(ctx, "%s", wt.Path)
+
+	// From here on the pull request's own configuration governs. It is
+	// read after the worktree exists because that is where it lives,
+	// and before anything is built or started.
+	adopted, err := m.adopt(req, wt.Path, rep)
+	if err != nil {
+		return state.Sandbox{}, err
+	}
+	req.Config = adopted
+
+	// The scenario is selected against the adopted file, not the
+	// reviewer's: a pull request that adds the scenario someone asked
+	// for is exactly the case the reviewer's file cannot answer. Still
+	// long before anything is built, which is what the check is for.
+	scenario, err := data.Select(req.Config, req.Scenario)
+	if err != nil {
+		return state.Sandbox{}, err
+	}
 
 	project, err := runtime.ProjectName(id.Ref(), pr)
 	if err != nil {
@@ -169,10 +200,13 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	}
 	work = work.within(chosen)
 
-	if work.nothing() {
-		// The override that is already there describes this sandbox
-		// correctly. Rewriting it would change the configuration of
-		// containers this setup is deliberately leaving alone.
+	// Only for a sandbox that already exists: the override that is
+	// already there describes it correctly, and rewriting it would
+	// change the configuration of containers this setup is
+	// deliberately leaving alone. For a new one there is no file yet,
+	// and every compose command below is given it -- including the
+	// ones for a project that builds nothing at all.
+	if updating && work.nothing() {
 		st.begin("build", quiet)
 		st.done(ctx, "nothing to rebuild")
 	} else {
