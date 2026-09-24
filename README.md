@@ -70,7 +70,7 @@ builds and starts the services; those lines are left out here.
 - **macOS or Linux.**
 - **git.**
 - **Docker** with **Compose v2** (`docker compose`, not `docker-compose`),
-  and the daemon running. Docker Desktop, OrbStack and Colima all work.
+  and the daemon running.
 - **Go 1.27 or newer**, to install `pit`. There are no prebuilt binaries yet.
 - **The GitHub CLI** (`gh`), logged in with `gh auth login`, for
   repositories on GitHub. Not needed for anything else — see
@@ -161,7 +161,7 @@ Docker built (`docker image ls 'pit-*'`).
 
 ## Use it on your project
 
-In your repository, next to `docker-compose.yml`:
+In your repository, next to the compose file:
 
 ```bash
 pit init
@@ -169,28 +169,49 @@ pit init
 
 It asks which service a reviewer opens in a browser, and on which port that
 service listens inside its container, then writes `.pit.yaml`. Pass
-`--service web --port 3000` to skip the questions, and `--compose-file` when
-the compose file is not `docker-compose.yml`. The file it writes explains
-every setting in comments; read it once.
+`--service web --port 3000` to skip the questions. `pit` reads
+`docker-compose.yml` unless told otherwise; for a `compose.yaml`, or several
+files, pass `--compose-file` (once per file). The file `pit init` writes
+explains every setting in comments, with commented-out examples for
+migrations and scenarios; read it once.
 
-Check `.pit.yaml` in. Every reviewer uses the same file, and a pull request
-that changes it is reviewed with its own version. Then review a pull request by
-its number:
+Before the first review, check three things in your compose file, because a
+sandbox runs next to your own stack and next to other sandboxes:
+
+- **Published ports.** `pit` replaces the web service's published port with
+  one of its own. Ports other services publish, like `"5432:5432"` for the
+  database, are kept, and a second sandbox, or your own running stack, would
+  collide on them. A service that only other containers talk to does not need
+  a published port.
+- **`container_name`.** A fixed container name exists only once. Leave it out.
+- **Untracked files.** The sandbox is a fresh checkout. A `.env` file that is
+  not committed is not in it, and an `env_file:` that points at one fails.
+  Set what the services need in the compose file, or for the web service under
+  `env.set` in `.pit.yaml`.
+
+Then add what makes a review useful, both described in
+[Data scenarios](#data-scenarios):
+
+- **Migrations**, under `data.migrate`, so the schema matches the pull
+  request.
+- **A scenario**, under `data.scenarios`, so the screens have something on
+  them.
+
+Check `.pit.yaml` in, and review a pull request by its number:
 
 ```bash
 pit 482
 ```
 
+A pull request is reviewed with its own `.pit.yaml` when it has one. It can
+add a service or a scenario, and the review uses it. When a pull request
+adds or changes a command that would run on your machine rather than in a
+container, `pit` shows it and asks first. A pull request without the file,
+such as one opened before `.pit.yaml` was merged, is reviewed with yours.
+
 Running `pit 482` again later reuses the running sandbox. When the pull
 request has a new commit, `pit` updates the sandbox in place and rebuilds only
 what changed.
-
-Most projects need two more things before a review is useful:
-
-- **Migrations**, under `data.migrate`, so the schema matches the pull
-  request.
-- **A scenario**, under `data.scenarios`, so the screens have something on
-  them. See [Data scenarios](#data-scenarios).
 
 ## Commands
 
@@ -222,7 +243,7 @@ serves, and, for a changed helper or component, the ones that use it. It
 follows the code by declaration, not by file. A new function next to an old one
 does not make every page that imports the file "affected".
 
-Each address comes with a certainty:
+Each address comes with a certainty; an address without a label is certain:
 
 - **certain:** the changed file serves it.
 - **likely:** the change reaches it through other files, or the address has a
@@ -242,10 +263,12 @@ scenario gives a value for them. See `params` under
 
 **Frameworks.** Addresses are found for:
 
-- **Next.js**: App Router and Pages Router, including `next.config` and
-  middleware.
+- **Next.js**: App Router and Pages Router. `next.config` and middleware are
+  read for what they do to addresses: a `basePath` is added, and an address a
+  rewrite or middleware can change is marked uncertain.
 - **Go**: `net/http`, chi, gin and gorilla/mux.
-- **SvelteKit**: 2.x and 3.0, including form actions and `+server` methods.
+- **SvelteKit**: 2.x and the 3.0 prereleases, including form actions and
+  `+server` methods.
 
 Imports are followed in TypeScript and JavaScript, including Svelte, Vue and
 Astro files, and in Go. `review.routes.framework` in `.pit.yaml` picks one
@@ -275,17 +298,17 @@ data:
         - "compose exec -T db psql -U app -d app -f /fixtures/standard.sql"
       params:
         id: "1001"          # /orders/{id} becomes /orders/1001
-    - name: refunds
+    - name: split-refund
       description: "An order refunded from two warehouses"
       extends: standard     # standard is loaded first
       apply:
-        - "compose exec -T db psql -U app -d app -f /fixtures/refunds.sql"
+        - "compose exec -T db psql -U app -d app -f /fixtures/split-refund.sql"
       params:
         id: "1042"
   default: standard
 ```
 
-`pit 482 --scenario refunds` loads one other than the default, also into a
+`pit 482 --scenario split-refund` loads one other than the default, also into a
 sandbox that is already running: asking for a scenario is asking for its data,
 so it replaces what is there without a question. When a pull request gets a
 new commit, the sandbox keeps its data, and `pit` asks whether to load the
@@ -306,7 +329,11 @@ services:
 ```
 
 Migrations run when the sandbox is set up and again for every new commit, so
-they have to be safe to run twice, as most migration tools are.
+they have to be safe to run twice, as most migration tools are. They run as
+soon as the containers have started, which is not the same as the database
+accepting connections. Give the database a compose `healthcheck` and the
+service that migrates a `depends_on` with `condition: service_healthy`, or
+wait in the command itself, as the demo's `.pit.yaml` does with `pg_isready`.
 
 ## `.pit.yaml` reference
 
@@ -327,7 +354,7 @@ machine, in the sandbox's worktree.
 | `web.service` | *required* | The service a reviewer opens in a browser. |
 | `web.port` | *required* | The port it listens on **inside** its container. `pit` picks the published port itself, one per sandbox, from 40000–49999. |
 | `healthcheck.url` | `http://{host}:{port}/` | Polled until it answers. `{host}` becomes `localhost`, `{port}` the sandbox's published port. |
-| `healthcheck.expect_status` | `200` | The status that means ready. |
+| `healthcheck.expect_status` | `200` | The status that means ready. Redirects are followed, so `/` sending you to `/login` counts as the login page's status. |
 | `healthcheck.timeout` | `120s` | How long to keep trying. |
 | `healthcheck.interval` | `2s` | How long to wait between tries. |
 | `hooks.after_up` | none | Commands run once the services are up, before migrations and data. For installing dependencies and the like. |
@@ -386,7 +413,7 @@ review.
 
 Commands in `.pit.yaml` that go through the `compose` shorthand run inside the
 sandbox's own containers. A command without it runs on your machine, as you; when
-a pull request adds one, `pit` shows it and asks before running it.
+a pull request adds or changes one, `pit` shows it and asks before running it.
 
 ## Status
 
