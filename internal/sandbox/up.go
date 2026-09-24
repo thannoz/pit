@@ -177,7 +177,10 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		st.done(ctx, "nothing to rebuild")
 	} else {
 		st.begin("build", streaming)
-		ready := m.prepare(ctx, req, box, work, wt.Path, sha, rep)
+		ready, err := m.prepare(ctx, req, box, work, wt.Path, sha, rep)
+		if err != nil {
+			return state.Sandbox{}, err
+		}
 
 		if err := runtime.WriteOverride(overridePath, overrideFor(req.Config, port, ready.images)); err != nil {
 			return state.Sandbox{}, err

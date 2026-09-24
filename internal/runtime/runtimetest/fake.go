@@ -46,6 +46,10 @@ type Fake struct {
 	// Prebuilt names the images a registry would hand over. Anything
 	// not in it has to be built, which is the ordinary case.
 	Prebuilt map[string]bool
+	// OnPull is called as a pull starts, before anything else. It is
+	// how a test gets in between: a real registry is where a reviewer
+	// presses Ctrl+C, because it is where the waiting happens.
+	OnPull func(image string)
 
 	// running holds the projects whose containers exist, and whether
 	// they are up. A project that is absent has no containers at all,
@@ -111,8 +115,19 @@ func (f *Fake) Build(_ context.Context, s runtime.Sandbox, services []string, _,
 
 // Pull succeeds for the images named in Prebuilt and fails for the
 // rest, the way a registry answers for an image nobody pushed.
-func (f *Fake) Pull(_ context.Context, s runtime.Sandbox, image string, _, _ io.Writer) error {
+func (f *Fake) Pull(ctx context.Context, s runtime.Sandbox, image string, _, _ io.Writer) error {
 	f.record("Pull", s.Project, image)
+
+	f.mu.Lock()
+	hook := f.OnPull
+	f.mu.Unlock()
+	if hook != nil {
+		hook(image)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := f.failure("Pull"); err != nil {
 		return err
 	}

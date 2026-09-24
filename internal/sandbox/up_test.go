@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1130,4 +1131,37 @@ func TestUpRejectsASelectionWithoutTheServiceUnderReview(t *testing.T) {
 	if !strings.Contains(err.Error(), "which is the service a reviewer opens") {
 		t.Errorf("error = %q", err)
 	}
+}
+
+func TestUpUndoesEverythingWhenAPullIsInterrupted(t *testing.T) {
+	// Ctrl+C lands in the pull more often than anywhere else, because
+	// that is where the waiting is. The other pulls have to stop with
+	// it, and what has been created has to go.
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	fake.Declared = []string{"web", "api", "db", "cache"}
+	atEightServices(t, req)
+	req.Config.Compose.Services = []string{"web"}
+	req.Config.Build.Prebuilt = "ghcr.io/acme/shop-{service}:{sha}"
+
+	ctx, cancel := context.WithCancel(t.Context())
+	var once sync.Once
+	fake.OnPull = func(string) { once.Do(cancel) }
+
+	_, err := m.Up(ctx, req, &quietReporter{})
+	if err == nil {
+		t.Fatal("want an error after the interruption")
+	}
+
+	// Not built after all: carrying on would turn a Ctrl+C during a
+	// pull into the longest wait of the day.
+	if builds := callsTo(fake, "Build"); len(builds) != 0 {
+		t.Errorf("built %+v after the pull was interrupted", builds)
+	}
+	if slices.Contains(fake.Methods(), "Up") {
+		t.Error("the services were started although the setup was interrupted")
+	}
+	assertNothingLeftBehind(t, m, req)
 }
