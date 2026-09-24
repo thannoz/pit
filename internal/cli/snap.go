@@ -27,7 +27,7 @@ Snapshots are made by the repository's own commands, data.snapshot in
 .pit.yaml: one writes a dump to stdout, the other reads it back. pit
 says which to add when there are none.`,
 	}
-	cmd.AddCommand(newSnapSaveCmd(opts), newSnapRestoreCmd(opts))
+	cmd.AddCommand(newSnapSaveCmd(opts), newSnapRestoreCmd(opts), newSnapLsCmd(opts), newSnapRmCmd(opts))
 	return cmd
 }
 
@@ -154,6 +154,7 @@ migrations of this one run after it.`,
 type snapJSON struct {
 	ID        string `json:"id"`
 	Name      string `json:"name,omitempty"`
+	Repo      string `json:"repo,omitempty"`
 	PR        int    `json:"pr"`
 	SHA       string `json:"sha"`
 	Scenario  string `json:"scenario,omitempty"`
@@ -167,8 +168,5 @@ type snapJSON struct {
 func writeSnapJSON(out *ui.Printer, s snapshot.Snapshot) error {
 	enc := json.NewEncoder(out.Out())
 	enc.SetIndent("", "  ")
-	return enc.Encode(snapJSON{
-		ID: s.ID, Name: s.Name, PR: s.PR, SHA: s.SHA, Scenario: s.Scenario, Service: s.Service,
-		Size: s.Size, Raw: s.Raw, TookMS: s.Took.Milliseconds(), CreatedAt: s.CreatedAt.Format(time.RFC3339),
-	})
+	return enc.Encode(toSnapJSON(s))
 }

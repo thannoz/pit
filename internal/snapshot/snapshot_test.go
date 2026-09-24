@@ -276,3 +276,66 @@ func TestOpenGivesBackWhatWasSaved(t *testing.T) {
 		t.Errorf("data gone: %v", err)
 	}
 }
+
+func TestRemove(t *testing.T) {
+	s := store(t)
+	keep, err := s.Save(t.Context(), Snapshot{Name: "keep"}, writes("a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, err := s.Save(t.Context(), Snapshot{Name: "gone"}, writes("b\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Remove(gone); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if want := []string{keep.ID + ".gz", keep.ID + ".json"}; !slices.Equal(files(t, s), want) {
+		t.Errorf("files = %v, want only %v", files(t, s), want)
+	}
+
+	// Data already gone is not a reason to keep the record.
+	if err := os.Remove(s.DataPath(keep)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Remove(keep); err != nil {
+		t.Errorf("Remove without data: %v", err)
+	}
+	if list, _ := s.List(); len(list) != 0 {
+		t.Errorf("List = %v", list)
+	}
+	if err := s.Remove(keep); err == nil {
+		t.Error("removing a snapshot twice succeeded")
+	}
+}
+
+func TestStores(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "snapshots")
+	if stores, err := Stores(root); err != nil || len(stores) != 0 {
+		t.Errorf("before any: %v, %v", stores, err)
+	}
+	for _, repo := range []string{"acme-shop-c56680", "acme-blog-0a1b2c"} {
+		mkdirAll(t, filepath.Join(root, repo))
+	}
+	if err := os.WriteFile(filepath.Join(root, "stray"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stores, err := Stores(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirs []string
+	for _, s := range stores {
+		dirs = append(dirs, filepath.Base(s.Dir))
+	}
+	if want := []string{"acme-blog-0a1b2c", "acme-shop-c56680"}; !slices.Equal(dirs, want) {
+		t.Errorf("stores = %v, want %v", dirs, want)
+	}
+}
+
+func mkdirAll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+}

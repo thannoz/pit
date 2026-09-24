@@ -18,8 +18,16 @@ import (
 // snapshot outlives the sandbox it was taken from. Saving one before
 // `pit down` is the point of having them.
 func (m *Manager) Snapshots(box state.Sandbox) snapshot.Store {
-	return snapshot.Store{Dir: filepath.Join(m.StateDir, "snapshots", box.RepoRef)}
+	return snapshot.Store{Dir: filepath.Join(m.snapshotRoot(), box.RepoRef)}
 }
+
+// SnapshotStores are the snapshot stores of every repository, for
+// commands that, like pit ls, look at all of them.
+func (m *Manager) SnapshotStores() ([]snapshot.Store, error) {
+	return snapshot.Stores(m.snapshotRoot())
+}
+
+func (m *Manager) snapshotRoot() string { return filepath.Join(m.StateDir, "snapshots") }
 
 // SaveSnapshot runs the repository's save command in a sandbox and
 // keeps what it writes. What the command says on stderr goes to
@@ -43,7 +51,7 @@ func (m *Manager) SaveSnapshot(ctx context.Context, box state.Sandbox, name stri
 	save := hooks.List{Path: "data.snapshot.save", Lines: []string{commands.Save}}
 
 	snap, err := m.Snapshots(box).Save(ctx, snapshot.Snapshot{
-		Name: name, PR: box.PR, SHA: box.SHA, Scenario: box.Scenario, Service: db.Service,
+		Name: name, Repo: box.Repo, PR: box.PR, SHA: box.SHA, Scenario: box.Scenario, Service: db.Service,
 	}, func(ctx context.Context, w io.Writer) error {
 		return hooks.Run(ctx, m.Proc, save, target, w, stderr)
 	})

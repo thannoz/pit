@@ -30,6 +30,10 @@ import (
 type Snapshot struct {
 	// ID is how pit names it: sn_7f3a1b.
 	ID string `json:"id"`
+	// Repo is the repository it belongs to, as pit ls names it:
+	// github.com/acme/shop. Empty for snapshots saved before pit
+	// recorded it; the directory they are in says the same.
+	Repo string `json:"repo,omitempty"`
 	// Name is the reviewer's own, optional.
 	Name string `json:"name,omitempty"`
 	// PR, SHA and Scenario say which sandbox it was taken from, and
@@ -238,6 +242,38 @@ type readCloser struct {
 }
 
 func (r readCloser) Close() error { return r.close() }
+
+// Remove deletes a snapshot. The record goes first: from then on the
+// snapshot is not listed, and data left behind by a failure is not
+// mistaken for one.
+func (s Store) Remove(snap Snapshot) error {
+	if err := os.Remove(filepath.Join(s.Dir, snap.ID+recordSuffix)); err != nil {
+		return errs.Wrap(err, "cannot remove snapshot %s", snap.ID)
+	}
+	if err := os.Remove(s.DataPath(snap)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return errs.Wrap(err, "cannot remove the data of snapshot %s", snap.ID).
+			WithHint("it is no longer listed; the file %s can be deleted by hand", s.DataPath(snap))
+	}
+	return nil
+}
+
+// Stores are the snapshot stores under root, one per repository.
+func Stores(root string) ([]Store, error) {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errs.Wrap(err, "cannot read %s", root)
+	}
+	var out []Store
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, Store{Dir: filepath.Join(root, e.Name())})
+		}
+	}
+	return out, nil
+}
 
 // DataPath is where a snapshot's data is.
 func (s Store) DataPath(snap Snapshot) string {

@@ -248,6 +248,8 @@ old. `pit down 482` and `pit 482` start that service afresh.
 | `pit data reset <n>` | Load a scenario into a running sandbox again. |
 | `pit snap save <n> [name]` | Save the data a sandbox is in. |
 | `pit snap restore <n> <snapshot>` | Put a sandbox's data back into a saved state, by ID or name. |
+| `pit snap ls` | List the snapshots of every repository: name, pull request, size, age. |
+| `pit snap rm <snapshot>...` | Remove snapshots by ID or name. `--older-than=30d` removes every one older than that, after asking. |
 | `pit scenarios` | List the data states this repository declares. |
 | `pit timing <n>` | Show where the time went while a sandbox was built. |
 | `pit down <n>` | Remove a sandbox: containers, volumes, worktree. `--all` removes every one. |
@@ -255,9 +257,9 @@ old. `pit down 482` and `pit 482` start that service afresh.
 | `pit doctor` | Check whether this machine can run `pit`. |
 | `pit version` | Print the version. |
 
-`what`, `ls`, `scenarios`, `timing`, `doctor` and `version` print
-JSON with `--json`, for scripts. `-v` adds diagnostic logging to any command,
-and `pit <command> --help` explains each one.
+`what`, `ls`, `scenarios`, `timing`, `doctor`, `version`, `snap save` and
+`snap ls` print JSON with `--json`, for scripts. `-v` adds diagnostic logging
+to any command, and `pit <command> --help` explains each one.
 
 ## What to look at: `pit what`
 
@@ -400,8 +402,11 @@ application's connections open. Commands you write yourself restore only as
 exactly as they are written.
 
 When a pull request brings its own `.pit.yaml` without snapshot commands, the
-ones in your checkout's `.pit.yaml` are used. Listing and removing snapshots
-are planned; until then, they are files in that directory.
+ones in your checkout's `.pit.yaml` are used.
+
+`pit snap ls` lists the snapshots, newest first, and `pit snap rm` removes
+them, by ID or name. `pit snap rm --older-than=30d` clears out old ones; it
+lists them and asks first.
 
 ## `.pit.yaml` reference
 
