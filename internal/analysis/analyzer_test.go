@@ -71,6 +71,9 @@ func (htmlPages) Routes(_ context.Context, fsys fs.FS) ([]analysis.Route, error)
 		})
 		return nil
 	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil // no site/, no pages: not an error
+	}
 	return out, err
 }
 
