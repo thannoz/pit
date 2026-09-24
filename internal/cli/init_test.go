@@ -328,3 +328,56 @@ func TestInitLeavesOutADatabaseThatIsNotThere(t *testing.T) {
 		t.Errorf("Default = %q; the scenario is useful with or without a database", c.Data.Default)
 	}
 }
+
+// A database is recognised by its image, whatever the service is
+// called, and the snapshot commands in the comments are the ones for
+// that database: uncommented, they are what .pit.yaml then holds.
+func TestInitWritesSnapshotCommandsForTheDatabase(t *testing.T) {
+	dir := inProject(t, "services:\n  store:\n    image: mariadb:11\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n")
+	if _, err := runInitCmd(t, "", "--service", "web", "--port", "80"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	path := filepath.Join(dir, config.FileName)
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), "These are for store, which runs MariaDB") {
+		t.Errorf("no word of MariaDB:\n%s", written)
+	}
+
+	// Uncomment the snapshot block, as someone setting it up would.
+	lines := strings.Split(string(written), "\n")
+	for i, l := range lines {
+		if strings.HasPrefix(l, "  # snapshot:") {
+			for j := i; j < i+5; j++ {
+				lines[j] = "  " + strings.TrimPrefix(lines[j], "  # ")
+			}
+			break
+		}
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("uncommented, the file does not validate: %v", err)
+	}
+	if c.Data.Service != "store" {
+		t.Errorf("Service = %q, want store", c.Data.Service)
+	}
+	if want := config.SuggestSnapshot("store", config.MariaDB); c.Data.Snapshot != want {
+		t.Errorf("Snapshot\n got %#v\nwant %#v", c.Data.Snapshot, want)
+	}
+}
+
+func TestInitSnapshotExampleWithoutADatabase(t *testing.T) {
+	dir := inProject(t, "services:\n  app:\n    image: nginx\n    ports: [\"8080:80\"]\n")
+	if _, err := runInitCmd(t, "", "--service", "app", "--port", "80"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	written, _ := os.ReadFile(filepath.Join(dir, config.FileName))
+	if !strings.Contains(string(written), "An example for PostgreSQL") || strings.Contains(string(written), "which runs") {
+		t.Errorf("the example claims to know the database:\n%s", written)
+	}
+}

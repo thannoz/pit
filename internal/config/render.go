@@ -21,6 +21,9 @@ type InitOptions struct {
 	// Services are the other services found, used to write useful
 	// commented-out examples rather than generic ones.
 	Services []string
+	// Databases are the services with the image each runs, so that a
+	// database is recognised by what it is and not only by its name.
+	Databases []Database
 }
 
 // Render writes a .pit.yaml for a project that has none.
@@ -42,11 +45,22 @@ func Render(o InitOptions) ([]byte, error) {
 
 	var b bytes.Buffer
 	db := guessDatabase(o.Services)
+	found, ok := FindDatabase("", o.Databases)
+	if ok {
+		db = found.Service
+	}
+	engine, known := EngineOf(found.Image)
+	if !known {
+		engine = Postgres
+	}
 	if err := initTemplate.Execute(&b, view{
 		InitOptions: o,
 		Version:     Version,
 		DBService:   db,
 		DBExample:   orElse(db, "db"),
+		Engine:      engine,
+		Recognised:  known,
+		Snapshot:    SuggestSnapshot(orElse(db, "db"), engine),
 	}); err != nil {
 		return nil, errs.Wrap(err, "cannot write the configuration")
 	}
@@ -62,6 +76,12 @@ type view struct {
 	// DBExample is a name for the commented examples: the real one
 	// where there is one, a plausible one otherwise.
 	DBExample string
+	// Snapshot are the snapshot commands for Engine, which is the
+	// database the image showed when Recognised, and an example
+	// otherwise.
+	Snapshot   Snapshot
+	Engine     Engine
+	Recognised bool
 }
 
 // guessDatabase picks the project's database service so the data
@@ -180,9 +200,17 @@ data:
 
   # Two commands are enough for any database: one that writes a dump
   # to stdout, one that reads it back from stdin.
+{{- if .Recognised }}
+  # These are for {{ .DBExample }}, which runs {{ .Engine }}. They read
+  # the credentials from the container's own environment.
+{{- else }}
+  # An example for PostgreSQL.
+{{- end }}
   # snapshot:
-  #   save:    "compose exec -T {{ .DBExample }} pg_dump -U app --clean --if-exists app"
-  #   restore: "compose exec -T {{ .DBExample }} psql -U app -d app"
+  #   save: >-
+  #     {{ .Snapshot.Save }}
+  #   restore: >-
+  #     {{ .Snapshot.Restore }}
 
 # Environment for the sandbox's services. from_file points at a template
 # checked into the repository -- never a real .env, and never a secret.

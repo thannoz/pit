@@ -85,6 +85,7 @@ func runInit(c *cobra.Command, o *initOptions) error {
 		WebService:   service,
 		WebPort:      port,
 		Services:     names(services),
+		Databases:    databases(services),
 	}
 	data, err := config.Render(opts)
 	if err != nil {
@@ -262,6 +263,14 @@ func names(services []runtime.Service) []string {
 	out := make([]string, 0, len(services))
 	for _, s := range services {
 		out = append(out, s.Name)
+	}
+	return out
+}
+
+func databases(services []runtime.Service) []config.Database {
+	out := make([]config.Database, 0, len(services))
+	for _, s := range services {
+		out = append(out, config.Database{Service: s.Name, Image: s.Image})
 	}
 	return out
 }
