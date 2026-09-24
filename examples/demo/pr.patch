@@ -1,8 +1,8 @@
 diff --git a/.pit.yaml b/.pit.yaml
-index fc272a6..016cff2 100644
+index 97727d6..581bea8 100644
 --- a/.pit.yaml
 +++ b/.pit.yaml
-@@ -19,4 +19,10 @@ data:
+@@ -19,6 +19,12 @@ data:
        description: "The three orders and forty large ones"
        extends: standard
        apply: ["compose exec -T db psql -q -U shop -d shop -f /fixtures/bulk.sql"]
@@ -13,6 +13,8 @@ index fc272a6..016cff2 100644
 +      params:
 +        id: "1002"               # the refunded one
    default: standard
+ 
+   # pit snap save writes what save prints; restore reads it back.
 diff --git a/fixtures/refunded.sql b/fixtures/refunded.sql
 new file mode 100644
 index 0000000..9dfc964

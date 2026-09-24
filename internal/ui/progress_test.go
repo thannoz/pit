@@ -226,3 +226,44 @@ func (w *syncWriter) String() string {
 	defer w.mu.Unlock()
 	return w.buf.String()
 }
+
+func TestSizeReadsAsAPersonWouldSayIt(t *testing.T) {
+	for n, want := range map[int64]string{
+		0:             "0 B",
+		999:           "999 B",
+		1000:          "1.0 kB",
+		1_234_567:     "1.2 MB",
+		7_689_307:     "7.7 MB",
+		2_100_000_000: "2.1 GB",
+	} {
+		if got := Size(n); got != want {
+			t.Errorf("Size(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+// Took is shown however short: for a snapshot the time is part of the
+// answer, not commentary.
+func TestTookIsAlwaysShown(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		0:                       "0ms",
+		164 * time.Millisecond:  "164ms",
+		1400 * time.Millisecond: "1.4s",
+		14 * time.Second:        "14s",
+	} {
+		if got := Took(d); got != want {
+			t.Errorf("Took(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestFinishLeavesTheDurationToTheDetail(t *testing.T) {
+	var b strings.Builder
+	p := NewProgress(&b)
+	p.Begin("snapshot", true)
+	time.Sleep(600 * time.Millisecond) // long enough that Done would add its own
+	p.Finish("sn_7f3a1b  1.4 MB, 600ms")
+	if got := b.String(); got != "  ✓ snapshot   sn_7f3a1b  1.4 MB, 600ms\n" {
+		t.Errorf("Finish wrote %q", got)
+	}
+}

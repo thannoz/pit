@@ -75,6 +75,46 @@ func (p *Progress) Done(format string, args ...any) {
 	_, _ = fmt.Fprintf(p.out, "  ✓ %-10s %s%s\n", name, detail, formatTook(took))
 }
 
+// Finish is Done for a step whose detail states its own duration:
+// one whose time is part of the result, and shown even when short.
+func (p *Progress) Finish(format string, args ...any) {
+	p.finishSpinner()
+
+	p.mu.Lock()
+	name := p.name
+	p.name = ""
+	p.mu.Unlock()
+
+	_, _ = fmt.Fprintf(p.out, "  ✓ %-10s %s\n", name, fmt.Sprintf(format, args...))
+}
+
+// Size renders a number of bytes as a person would say it: 340 B,
+// 1.2 MB, 2.1 GB. Decimal, like the sizes Docker and the file managers
+// show.
+func Size(n int64) string {
+	const unit = 1000
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	value, prefix := float64(n)/unit, 0
+	for value >= unit && prefix < 4 {
+		value /= unit
+		prefix++
+	}
+	return fmt.Sprintf("%.1f %cB", value, "kMGTP"[prefix])
+}
+
+// Took renders how long something took, always: 340ms, 1.2s, 14s.
+func Took(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < 10*time.Second:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%ds", int(d.Seconds()))
+}
+
 // Blank ends the narration with an empty line, so the answer that
 // follows on stdout is not crowded against the last step.
 func (p *Progress) Blank() {

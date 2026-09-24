@@ -59,6 +59,7 @@ builds and starts the services; those lines are left out here.
 - [Commands](#commands)
 - [What to look at: `pit what`](#what-to-look-at-pit-what)
 - [Data scenarios](#data-scenarios)
+- [Snapshots](#snapshots)
 - [`.pit.yaml` reference](#pityaml-reference)
 - [Where pull requests come from](#where-pull-requests-come-from)
 - [What stays where](#what-stays-where)
@@ -149,7 +150,17 @@ pit what 7
 
 The sandbox keeps running; only its data is replaced. Item 2 now links to
 order 1002, the refunded one, because the scenario says which order to use.
-The containers, volumes, worktree and generated compose file go away with:
+
+Whatever you do in the sandbox from here on changes its data. To keep a state
+worth coming back to, save it:
+
+```bash
+pit snap save 7 refunded-order
+```
+
+`pit` prints the snapshot's size and how long saving took, and its ID on
+stdout. Snapshots are kept when the sandbox goes. The containers, volumes,
+worktree and generated compose file go away with:
 
 ```bash
 pit down 7
@@ -224,6 +235,7 @@ what changed.
 | `pit logs <n> [service]` | Show what a service says. Default: the one a reviewer opens. |
 | `pit shell <n> [service] [-- cmd]` | A shell, or a command, inside a service. |
 | `pit data reset <n>` | Load a scenario into a running sandbox again. |
+| `pit snap save <n> [name]` | Save the data a sandbox is in. |
 | `pit scenarios` | List the data states this repository declares. |
 | `pit timing <n>` | Show where the time went while a sandbox was built. |
 | `pit down <n>` | Remove a sandbox: containers, volumes, worktree. `--all` removes every one. |
@@ -335,6 +347,37 @@ accepting connections. Give the database a compose `healthcheck` and the
 service that migrates a `depends_on` with `condition: service_healthy`, or
 wait in the command itself, as the demo's `.pit.yaml` does with `pg_isready`.
 
+## Snapshots
+
+A scenario is a state the repository describes. A snapshot is one you made by
+using a sandbox: a cart with a voucher in it, an order half-way through a
+refund. `pit snap save 482 cart-with-voucher` saves it; the name is optional.
+
+`pit` knows nothing about databases. A snapshot is whatever the repository's
+save command writes to stdout, kept compressed under
+`$XDG_STATE_HOME/pit/snapshots/`, and the restore command reads it back from
+stdin:
+
+```yaml
+data:
+  snapshot:
+    save: >-
+      compose exec -T db sh -c 'exec pg_dump -U "${POSTGRES_USER:-postgres}" --clean --if-exists "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
+    restore: >-
+      compose exec -T db sh -c 'exec psql -q -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
+```
+
+You do not have to write these yourself. Without them, `pit snap save` says
+which lines to add, written for the database your compose file runs:
+PostgreSQL, MySQL, MariaDB or MongoDB, recognised by the image. `pit init`
+writes the same lines as a comment. They read the credentials from the
+container's environment, so no password ends up in `.pit.yaml`. The `>-` keeps
+the quotes in them as they are.
+
+When a pull request brings its own `.pit.yaml` without snapshot commands, the
+ones in your checkout's `.pit.yaml` are used. Restoring a snapshot, listing
+and removing them are planned; for now the files are there to look at.
+
 ## `.pit.yaml` reference
 
 `pit` looks for `.pit.yaml` from the current directory upwards; `--config`
@@ -366,13 +409,16 @@ machine, in the sandbox's worktree.
 | `data.scenarios[].apply` | none | Commands that produce this state. |
 | `data.scenarios[].params` | none | Example values for placeholders in addresses: `id: "1001"` for `/orders/{id}`. |
 | `data.default` | none | The scenario loaded when none is asked for. |
+| `data.service` | from the images | The service holding the database, for when `pit` cannot tell from the images which one it is. |
+| `data.snapshot.save` | none | A command that writes a dump of the database to stdout. See [Snapshots](#snapshots). |
+| `data.snapshot.restore` | none | A command that reads such a dump from stdin. Set together with `save`. |
 | `review.routes.framework` | `auto` | `auto`, `nextjs`, `go` or `sveltekit`. |
 | `review.ignore` | none | Glob patterns for files that never belong on the checklist, e.g. `"**/*.test.ts"`. |
 | `env.set` | none | Environment variables set on the web service, as a map: `NODE_ENV: development`. |
 
-A few keys are accepted and checked but do not do anything yet. They belong to
-features that are planned, not built: `data.service`, `data.snapshot`,
-`data.production_like` and `env.from_file`.
+Two keys are accepted and checked but do not do anything yet. They belong to
+features that are planned, not built: `data.production_like` and
+`env.from_file`.
 
 ## Where pull requests come from
 
@@ -418,8 +464,8 @@ a pull request adds or changes one, `pit` shows it and asks before running it.
 ## Status
 
 Early, and in use. The core works: sandboxes, data scenarios and the review
-checklist. Snapshots of a sandbox's data, comments back into the pull
-request, and prebuilt binaries are planned. Interfaces and the `.pit.yaml`
+checklist. Saving snapshots works; restoring them, comments back into the
+pull request, and prebuilt binaries are planned. Interfaces and the `.pit.yaml`
 schema may still change before a first release.
 
 Outside contributions are not being accepted at this time.

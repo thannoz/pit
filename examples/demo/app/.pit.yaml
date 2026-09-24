@@ -20,3 +20,10 @@ data:
       extends: standard
       apply: ["compose exec -T db psql -q -U shop -d shop -f /fixtures/bulk.sql"]
   default: standard
+
+  # pit snap save writes what save prints; restore reads it back.
+  snapshot:
+    save: >-
+      compose exec -T db sh -c 'exec pg_dump -U "${POSTGRES_USER:-postgres}" --clean --if-exists "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
+    restore: >-
+      compose exec -T db sh -c 'exec psql -q -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
