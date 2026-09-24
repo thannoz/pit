@@ -229,7 +229,11 @@ such as one opened before `.pit.yaml` was merged, is reviewed with yours.
 
 Running `pit 482` again later reuses the running sandbox. When the pull
 request has a new commit, `pit` updates the sandbox in place and rebuilds only
-what changed.
+what changed. The checkout moves to the new commit where it is, so a directory
+a container mounts from it, like `./migrations` or `./src`, shows the new
+files. A single mounted file, like `./nginx.conf:/etc/nginx/nginx.conf`, does
+not: git replaces a changed file with a new one, and the container keeps the
+old. `pit down 482` and `pit 482` start that service afresh.
 
 ## Commands
 

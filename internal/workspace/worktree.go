@@ -36,12 +36,19 @@ func AddWorktree(ctx context.Context, r Runner, repo Repo, stateDir string, pr i
 	path := repo.Identity.WorktreeDir(stateDir, pr)
 
 	// An existing worktree at the same path is reused when it already
-	// holds the right commit, and replaced when it does not. Re-running
-	// pit on the same pull request is the normal case, not an error.
+	// holds the right commit, and moved to the new one when it does not.
+	// Re-running pit on the same pull request is the normal case, not an
+	// error.
 	if existing, ok := worktreeAt(ctx, r, repo, path); ok {
 		if existing == sha {
 			return Worktree{Path: path, PR: pr, SHA: sha}, nil
 		}
+		if updateInPlace(ctx, r, path, sha) == nil {
+			return Worktree{Path: path, PR: pr, SHA: sha}, nil
+		}
+		// A checkout git cannot move -- its directory deleted by hand,
+		// its index broken -- is replaced, as it was before there was
+		// anything to keep.
 		if err := RemoveWorktree(ctx, r, repo, path); err != nil {
 			return Worktree{}, err
 		}
@@ -61,6 +68,32 @@ func AddWorktree(ctx context.Context, r Runner, repo Repo, stateDir string, pr i
 	}
 
 	return Worktree{Path: path, PR: pr, SHA: sha}, nil
+}
+
+// updateInPlace moves a worktree to another commit where it is.
+//
+// Replacing it would be simpler and wrong: the sandbox's containers
+// bind-mount its directories -- ./migrations into the database, ./src
+// into the application -- and a container that is not recreated keeps
+// the directory it was given. A replaced directory is a deleted one, and
+// the container sees it empty. Checked out in place, the directories
+// stay the same ones and show the new commit's files.
+//
+// The result is the commit and nothing else: changes to tracked files
+// are discarded and files git does not know are removed, as a fresh
+// checkout would have them. What the project ignores stays -- installed
+// dependencies, build caches -- which a fresh checkout would have thrown
+// away for nothing.
+func updateInPlace(ctx context.Context, r Runner, path, sha string) error {
+	for _, args := range [][]string{
+		{"checkout", "--quiet", "--force", "--detach", sha},
+		{"clean", "--quiet", "--force", "-d"},
+	} {
+		if _, err := r.Output(ctx, proc.Command{Name: "git", Args: args, Dir: path}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RemoveWorktree deletes a worktree and forgets it. It is not an error
@@ -127,19 +160,32 @@ func worktreeAt(ctx context.Context, r Runner, repo Repo, path string) (string, 
 
 // sameDir compares two paths allowing for symlinked parents, which is
 // how macOS reports anything under /var.
+//
+// A path that no longer exists -- a worktree deleted by hand -- is
+// resolved through the nearest parent that does: git still lists it,
+// under /private/var, and pit has to recognise it to clear it away.
 func sameDir(a, b string) bool {
 	if a == b {
 		return true
 	}
-	ra, err := filepath.EvalSymlinks(a)
-	if err != nil {
-		return false
+	return resolve(a) == resolve(b)
+}
+
+// resolve follows the symlinks in the part of p that exists.
+func resolve(p string) string {
+	p = filepath.Clean(p)
+	var rest []string
+	for {
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(append([]string{real}, rest...)...)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return filepath.Join(append([]string{p}, rest...)...)
+		}
+		rest = append([]string{filepath.Base(p)}, rest...)
+		p = parent
 	}
-	rb, err := filepath.EvalSymlinks(b)
-	if err != nil {
-		return false
-	}
-	return ra == rb
 }
 
 // Remove tears down everything pit created for pull request pr: the
