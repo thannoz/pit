@@ -19,13 +19,14 @@ var whatList = review.Checklist{
 	Base: "62f34c4aaaa", Head: "d47f78ebbbb", URL: "http://localhost:48827/", Scenario: "standard",
 	Items: []review.Item{
 		{Number: 1, Kind: analysis.Page, Methods: []string{"GET"}, Path: "/orders/{id}", URL: "http://localhost:48827/orders/42",
-			Files: []string{"handlers.go", "money.go"}, Confidence: analysis.Certain},
+			Files: []string{"handlers.go", "money.go"}, Confidence: analysis.Certain, Mark: review.Looked, CheckedAt: "d47f78ebbbb"},
 		{Number: 2, Kind: analysis.Endpoint, Methods: []string{"POST"}, Path: "/api/orders", URL: "http://localhost:48827/api/orders",
 			Files: []string{"api/orders.go"}, Confidence: analysis.Certain},
 		{Number: 3, Kind: analysis.Page, Path: "/partners/{slug}", Missing: []string{"slug"},
 			Files: []string{"app/partners/[slug]/page.tsx", "lib/partners/page.tsx", "a.ts", "b.ts"}, Confidence: analysis.Certain},
 		{Number: 4, Kind: analysis.Page, Path: "/orders", URL: "http://localhost:48827/orders",
 			Files: []string{"money.go"}, Confidence: analysis.Likely,
+			Mark: review.Again, CheckedAt: "0a1b2c3dddd", ChangedSince: []string{"money.go"},
 			Doubts: []string{"money.go does not serve this address; handlers.go uses it", "second", "third"}},
 		{Number: 5, Kind: analysis.Endpoint, Methods: []string{"POST"}, Path: "/…/playlists",
 			Files: []string{"server/jellyfin/playlists.go"}, Confidence: analysis.Uncertain,
@@ -54,17 +55,18 @@ func TestWhatOutput(t *testing.T) {
 	want := `#1 Show the currency after the amount
 http://localhost:48827/ · d47f78e into main · scenario standard
 
-Affected by this pull request:
-  1. http://localhost:48827/orders/42  (handlers.go, money.go)
-  2. POST http://localhost:48827/api/orders  (orders.go)
-  3. /partners/{slug}  (app/partners/[slug]/page.tsx, lib/partners/page.tsx, a.ts and 1 more)
-       no link: slug needs a value; set it in data.scenarios[standard].params
-  4. http://localhost:48827/orders  (money.go)  likely
-       ? money.go does not serve this address; handlers.go uses it
-       ? second
-       ? and 1 more
-  5. POST /…/playlists  (playlists.go)  uncertain
-       ? the router made in (*Router).routes is handed on, and pit cannot see where it is mounted
+Affected by this pull request (1 of 5 looked at):
+  ✓ 1. http://localhost:48827/orders/42  (handlers.go, money.go)
+    2. POST http://localhost:48827/api/orders  (orders.go)
+    3. /partners/{slug}  (app/partners/[slug]/page.tsx, lib/partners/page.tsx, a.ts and 1 more)
+         no link: slug needs a value; set it in data.scenarios[standard].params
+  ↻ 4. http://localhost:48827/orders  (money.go)  likely
+         looked at in 0a1b2c3; money.go changed since, so look again
+         ? money.go does not serve this address; handlers.go uses it
+         ? second
+         ? and 1 more
+    5. POST /…/playlists  (playlists.go)  uncertain
+         ? the router made in (*Router).routes is handed on, and pit cannot see where it is mounted
   !! DELETE /api/orders/{id} no longer answers; main.go served it
   !  migrations/0002_add_vat_id.sql changes the schema (ALTER TABLE orders ADD COLUMN vat_id text); check the data that exists before it runs
 
@@ -103,6 +105,7 @@ func TestWhatJSON(t *testing.T) {
 	first := items[0].(map[string]any)
 	for key, want := range map[string]any{
 		"number": 1.0, "kind": "page", "path": "/orders/{id}", "url": "http://localhost:48827/orders/42", "confidence": "certain",
+		"progress": "looked", "checkedAt": "d47f78ebbbb",
 	} {
 		if first[key] != want {
 			t.Errorf("items[0].%s = %v, want %v", key, first[key], want)

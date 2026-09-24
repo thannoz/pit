@@ -38,6 +38,13 @@ type Item struct {
 	Via        []analysis.Trail
 	Confidence analysis.Confidence
 	Doubts     []string
+
+	// Mark is how far the reviewer has got with it, CheckedAt the
+	// commit it was looked at, and ChangedSince the files leading here
+	// that have changed from that commit to this one.
+	Mark         Mark
+	CheckedAt    string
+	ChangedSince []string
 }
 
 // Checklist is everything a reviewer of one sandbox is shown.

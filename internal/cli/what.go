@@ -21,14 +21,23 @@ import (
 )
 
 func newWhatCmd(opts *globalOptions) *cobra.Command {
-	return &cobra.Command{
+	var done, undone []int
+	cmd := &cobra.Command{
 		Use:   "what <pull request number>",
 		Short: "List what to look at in a sandbox",
 		Long: `Print the addresses a pull request's changes lead to, as links into
 its running sandbox, and what clicking through them will not show:
 migrations, removed endpoints, permission checks, error handling.
 
-Addresses pit is sure of come first. The others say why it is not.`,
+Addresses pit is sure of come first. The others say why it is not.
+
+--done marks addresses as looked at, by their number on the list, and
+--undone takes the mark back. The marks are kept with the sandbox. When
+the pull request gets a new commit, an address stays looked at unless a
+file that leads to it has changed; then it asks to be looked at again.`,
+		Example: `  pit what 482
+  pit what 482 --done 1,3
+  pit what 482 --undone 3`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			box, err := sandboxFor(c, args[0])
@@ -43,6 +52,19 @@ Addresses pit is sure of come first. The others say why it is not.`,
 			if err != nil {
 				return err
 			}
+			if len(done) > 0 || len(undone) > 0 {
+				m, err := manager()
+				if err != nil {
+					return err
+				}
+				if box, err = review.Record(m.Store, box, list, undone, false); err != nil {
+					return err
+				}
+				if box, err = review.Record(m.Store, box, list, done, true); err != nil {
+					return err
+				}
+			}
+			review.Progress(c.Context(), proc.Exec{}, box.RepoRoot, box.Checked, &list)
 
 			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
 			if opts.jsonOutput {
@@ -55,6 +77,9 @@ Addresses pit is sure of come first. The others say why it is not.`,
 			return out.Err()
 		},
 	}
+	cmd.Flags().IntSliceVar(&done, "done", nil, "mark these numbers as looked at")
+	cmd.Flags().IntSliceVar(&undone, "undone", nil, "take the mark back from these numbers")
+	return cmd
 }
 
 // answers reports whether something listens on the sandbox's port. A
@@ -92,7 +117,7 @@ func writeWhat(out *ui.Printer, box state.Sandbox, list review.Checklist) {
 	if len(list.Items) == 0 {
 		out.Println("Nothing in this pull request leads to an address pit knows.")
 	} else {
-		out.Println("Affected by this pull request:")
+		out.Printf("Affected by this pull request (%d of %d looked at):\n", list.Looked(), len(list.Items))
 	}
 	width := len(strconv.Itoa(len(list.Items)))
 	for _, item := range list.Items {
@@ -135,13 +160,23 @@ func writeItem(out *ui.Printer, item review.Item, width int, scenario string) {
 		address = strings.Join(item.Methods, ",") + " " + address
 	}
 
-	line := fmt.Sprintf("  %*d. %s  (%s)", width, item.Number, address, files(item.Files))
+	mark := " "
+	switch item.Mark {
+	case review.Looked:
+		mark = "✓"
+	case review.Again:
+		mark = "↻"
+	}
+	line := fmt.Sprintf("  %s %*d. %s  (%s)", mark, width, item.Number, address, files(item.Files))
 	if item.Confidence != analysis.Certain {
 		line += "  " + item.Confidence.String()
 	}
 	out.Println(line)
 
-	indent := strings.Repeat(" ", width+6)
+	indent := strings.Repeat(" ", width+8)
+	if item.Mark == review.Again {
+		out.Printf("%slooked at in %s; %s changed since, so look again\n", indent, short(item.CheckedAt), files(item.ChangedSince))
+	}
 	if len(item.Missing) > 0 {
 		where := "data.scenarios[].params"
 		if scenario != "" {
@@ -212,6 +247,10 @@ type (
 		Via        [][]string `json:"via,omitempty"`
 		Confidence string     `json:"confidence"`
 		Doubts     []string   `json:"doubts,omitempty"`
+		// Progress is "open", "looked" or "again".
+		Progress     string   `json:"progress"`
+		CheckedAt    string   `json:"checkedAt,omitempty"`
+		ChangedSince []string `json:"changedSince,omitempty"`
 	}
 	whatWarning struct {
 		Kind    string `json:"kind"`
@@ -236,6 +275,7 @@ func writeWhatJSON(w io.Writer, box state.Sandbox, list review.Checklist) error 
 		doc.Items = append(doc.Items, whatItem{
 			Number: it.Number, Kind: string(it.Kind), Methods: it.Methods, Path: it.Path, URL: it.URL,
 			Missing: it.Missing, Files: it.Files, Via: via, Confidence: it.Confidence.String(), Doubts: it.Doubts,
+			Progress: []string{"open", "looked", "again"}[it.Mark], CheckedAt: it.CheckedAt, ChangedSince: it.ChangedSince,
 		})
 	}
 	for _, x := range list.Warnings {

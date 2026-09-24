@@ -80,6 +80,22 @@ type Sandbox struct {
 	// than the steps add up to: reserving a port, writing the
 	// override and recording the result all happen between them.
 	SetupMillis int64 `json:"setupMs,omitempty"`
+	// Checked are the addresses of `pit what` the reviewer has looked
+	// at. Kept across updates of the sandbox: a new commit makes a
+	// check stale only where it touches what led to the address.
+	Checked []Check `json:"checked,omitempty"`
+}
+
+// Check is one address a reviewer has looked at.
+type Check struct {
+	// Address is the method and path, as the checklist writes them:
+	// "GET /orders/{id}". Not the number: numbers move when the list
+	// does, an address does not.
+	Address string `json:"address"`
+	// SHA is the commit the sandbox ran when it was looked at.
+	SHA string `json:"sha"`
+	// At is when.
+	At time.Time `json:"at"`
 }
 
 // Step is one part of a setup and how long it took.

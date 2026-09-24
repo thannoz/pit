@@ -338,6 +338,11 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		Steps:        st.taken,
 		SetupMillis:  state.Millis(time.Since(started)),
 	}
+	if updating {
+		// What the reviewer has looked at survives an update; pit what
+		// decides which checks the new commit makes stale.
+		record.Checked = previous.Checked
+	}
 	if err := m.Store.Update(func(f *state.File) error {
 		f.Put(record)
 		return nil

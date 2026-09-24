@@ -1400,3 +1400,43 @@ func TestUpFetchesTheBranchItGoesInto(t *testing.T) {
 		}
 	}
 }
+
+// What a reviewer has looked at survives an update to a new commit;
+// which marks the new commit makes stale is for pit what to decide, and
+// it can only decide that if the marks are still there.
+func TestUpKeepsWhatWasLookedAt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	first, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("first Up: %v", err)
+	}
+	checked := []state.Check{{Address: "/orders", SHA: first.SHA, At: time.Now().UTC()}}
+	if err := m.Store.Update(func(f *state.File) error {
+		box, _ := f.Find(first.RepoRef, first.PR)
+		box.Checked = checked
+		f.Put(box)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	advancePullRequest(t, req.Repo.Root, req.PR.Number)
+	second, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("second Up: %v", err)
+	}
+	if second.SHA == first.SHA {
+		t.Fatal("the pull request did not move; the test proves nothing")
+	}
+	f, err := m.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, _ := f.Find(second.RepoRef, second.PR)
+	if len(box.Checked) != 1 || box.Checked[0].Address != "/orders" || box.Checked[0].SHA != first.SHA {
+		t.Errorf("checked after the update = %+v, want %+v", box.Checked, checked)
+	}
+}
