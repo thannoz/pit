@@ -17,6 +17,7 @@ Written in Go. Runs locally on Docker. No cloud account required.
 
 ```console
 $ pit 7
+#7 "Show refunds, and prices with a thousands separator" by Demo
 warning: this repository has no hosting service to ask for pull request details; the description above is the commit's own
   ✓ fetch      #7 at 84d9508a118f
   ✓ worktree   ~/.local/state/pit/pit-demo-teashop-83c553/pr-7
@@ -85,8 +86,10 @@ requests.
 go install github.com/thannoz/pit/cmd/pit@latest
 ```
 
-This puts `pit` into `$(go env GOPATH)/bin`, usually `~/go/bin`. If your shell
-does not find it afterwards, add that directory to your `PATH`.
+This puts `pit` into `$(go env GOBIN)`, or `$(go env GOPATH)/bin` when that is
+empty, usually `~/go/bin`. If your shell does not find it afterwards, add that
+directory to your `PATH`. There are no releases yet, so `pit version` prints
+`dev` for a build made this way.
 
 Then check that everything `pit` needs is there:
 
@@ -117,8 +120,8 @@ Bring up pull request #7:
 pit 7
 ```
 
-The first run builds the image and pulls Postgres, which takes a minute or
-two; later runs take seconds. `pit` prints a warning that there is no hosting
+The first run downloads the Go and Postgres images and builds the web service,
+which can take a few minutes; later runs take seconds. `pit` prints a warning that there is no hosting
 service to ask about the pull request. That is right for the demo, whose
 remote is a local directory; `pit` reads the title from the commit instead.
 
@@ -134,24 +137,27 @@ Now ask what the pull request changed, as links into the sandbox:
 pit what 7
 ```
 
-The pull request adds refunds, and it brings its own data for them. Load
-that data instead of the default:
+`pit` also notes that it is "using #7's own .pit.yaml": the pull request
+changes `.pit.yaml`, and a pull request is reviewed with its own version of
+it. This one adds refunds, and a scenario with data to show them. Load that
+data instead of the default:
 
 ```bash
 pit 7 --scenario refunded
 pit what 7
 ```
 
-Item 2 now links to order 1002, the refunded one. The scenario says which
-order to use. Everything `pit` created — containers, volumes, the worktree,
-the generated compose file — goes away with:
+The sandbox keeps running; only its data is replaced. Item 2 now links to
+order 1002, the refunded one, because the scenario says which order to use.
+The containers, volumes, worktree and generated compose file go away with:
 
 ```bash
 pit down 7
 ```
 
 Your checkout of the demo was never touched: the sandbox ran in a worktree of
-its own. The demo directory itself is yours to delete.
+its own. The demo directory itself is yours to delete, and so is the image
+Docker built (`docker image ls 'pit-*'`).
 
 ## Use it on your project
 
@@ -163,7 +169,8 @@ pit init
 
 It asks which service a reviewer opens in a browser, and on which port that
 service listens inside its container, then writes `.pit.yaml`. Pass
-`--service web --port 3000` to skip the questions. The file it writes explains
+`--service web --port 3000` to skip the questions, and `--compose-file` when
+the compose file is not `docker-compose.yml`. The file it writes explains
 every setting in comments; read it once.
 
 Check `.pit.yaml` in. Every reviewer uses the same file, and a pull request
@@ -198,7 +205,7 @@ Most projects need two more things before a review is useful:
 | `pit data reset <n>` | Load a scenario into a running sandbox again. |
 | `pit scenarios` | List the data states this repository declares. |
 | `pit timing <n>` | Show where the time went while a sandbox was built. |
-| `pit down <n>` | Remove a sandbox and everything it created. `--all` removes every one. |
+| `pit down <n>` | Remove a sandbox: containers, volumes, worktree. `--all` removes every one. |
 | `pit init` | Write a `.pit.yaml` for this project. |
 | `pit doctor` | Check whether this machine can run `pit`. |
 | `pit version` | Print the version. |
@@ -278,13 +285,28 @@ data:
   default: standard
 ```
 
-`pit 482 --scenario refunds` loads one other than the default.
-`pit data reset 482 --scenario empty` loads a different one into a running
-sandbox; it asks first, because anything entered by hand is lost. `pit
-scenarios` lists what the repository offers.
+`pit 482 --scenario refunds` loads one other than the default, also into a
+sandbox that is already running: asking for a scenario is asking for its data,
+so it replaces what is there without a question. When a pull request gets a
+new commit, the sandbox keeps its data, and `pit` asks whether to load the
+scenario again. `pit data reset 482` loads the scenario again on purpose,
+after asking, because anything entered by hand is lost. `pit scenarios` lists
+what the repository offers.
 
-The files the commands read must be inside the container. Mount a directory of
-fixtures into the database service in `docker-compose.yml`, as the demo does.
+The commands run inside the containers, so the files they read must be there
+too. Mount a directory of fixtures into the database service:
+
+```yaml
+# docker-compose.yml
+services:
+  db:
+    image: postgres:17-alpine
+    volumes:
+      - ./fixtures:/fixtures:ro
+```
+
+Migrations run when the sandbox is set up and again for every new commit, so
+they have to be safe to run twice, as most migration tools are.
 
 ## `.pit.yaml` reference
 
@@ -304,13 +326,13 @@ machine, in the sandbox's worktree.
 | `compose.services` | all | The services a review needs. What they depend on comes with them. |
 | `web.service` | *required* | The service a reviewer opens in a browser. |
 | `web.port` | *required* | The port it listens on **inside** its container. `pit` picks the published port itself, one per sandbox, from 40000–49999. |
-| `healthcheck.url` | `http://{host}:{port}/` | Polled until it answers; `{host}` and `{port}` are filled in. |
+| `healthcheck.url` | `http://{host}:{port}/` | Polled until it answers. `{host}` becomes `localhost`, `{port}` the sandbox's published port. |
 | `healthcheck.expect_status` | `200` | The status that means ready. |
 | `healthcheck.timeout` | `120s` | How long to keep trying. |
 | `healthcheck.interval` | `2s` | How long to wait between tries. |
 | `hooks.after_up` | none | Commands run once the services are up, before migrations and data. For installing dependencies and the like. |
 | `build.prebuilt` | none | Image name with `{service}` and `{sha}`, e.g. `ghcr.io/acme/shop-{service}:{sha}`. When it can be pulled, the build is skipped. `{sha}` is required. See [`examples/`](examples/README.md). |
-| `data.migrate` | none | Commands that bring the schema up to date, run before any scenario. |
+| `data.migrate` | none | Commands that bring the schema up to date, run before any scenario, at setup and for every new commit. `pit` counts them as "migrations". |
 | `data.scenarios[].name` | *required* | What `--scenario` takes. |
 | `data.scenarios[].description` | none | Shown by `pit scenarios`. |
 | `data.scenarios[].extends` | none | A scenario to load first. |
@@ -319,7 +341,7 @@ machine, in the sandbox's worktree.
 | `data.default` | none | The scenario loaded when none is asked for. |
 | `review.routes.framework` | `auto` | `auto`, `nextjs`, `go` or `sveltekit`. |
 | `review.ignore` | none | Glob patterns for files that never belong on the checklist, e.g. `"**/*.test.ts"`. |
-| `env.set` | none | Environment variables set on the web service. |
+| `env.set` | none | Environment variables set on the web service, as a map: `NODE_ENV: development`. |
 
 A few keys are accepted and checked but do not do anything yet. They belong to
 features that are planned, not built: `data.service`, `data.snapshot`,
@@ -333,7 +355,9 @@ features that are planned, not built: `data.service`, `data.snapshot`,
   directory: `pit` fetches the pull request's ref from `origin` directly, and
   reads the title and author from its commit. The ref is
   `refs/merge-requests/<n>/head` on GitLab and `refs/pull/<n>/head` elsewhere.
-  The demo works this way.
+  The demo works this way. What a commit cannot say stays unknown: `pit ls`
+  shows no branch, and `pit what` compares against `origin`'s default branch,
+  which it calls "the default branch".
 
 ## What stays where
 
@@ -346,8 +370,10 @@ features that are planned, not built: `data.service`, `data.snapshot`,
 - **Everything `pit` keeps** lives under `$XDG_STATE_HOME/pit`, which is
   `~/.local/state/pit` by default: the sandbox list, worktrees and generated
   compose files.
-- **`pit down` removes it all:** containers, networks, volumes, the worktree
-  and the files it generated. `pit ls` shows what exists; it also notices
+- **`pit down` removes what the sandbox ran in:** containers, networks,
+  volumes, the worktree and the files it generated. Images stay, like Docker's
+  build cache, so that the next review of the project starts quickly; `docker
+  image ls 'pit-*'` lists them. `pit ls` shows what exists; it also notices
   sandboxes whose containers were removed behind its back.
 
 ## What it runs
