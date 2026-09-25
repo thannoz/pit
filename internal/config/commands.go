@@ -71,6 +71,14 @@ func (c *Config) commands() []command {
 		}
 	}
 
+	for i, line := range c.Data.Rollback {
+		out = append(out, command{
+			Path: fmt.Sprintf("data.rollback[%d]", i),
+			Line: line,
+			at:   func(n *yaml.Node) int { return lineOfIndex(n, i, "data", "rollback") },
+		})
+	}
+
 	for _, s := range []struct{ path, line string }{
 		{"data.snapshot.save", c.Data.Snapshot.Save},
 		{"data.snapshot.restore", c.Data.Snapshot.Restore},

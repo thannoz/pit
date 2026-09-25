@@ -271,3 +271,115 @@ func TestCheckCommandsOutput(t *testing.T) {
 		t.Errorf("unseen %q, %v", check.Unseen, err)
 	}
 }
+
+// withRollback is withDestruction, with counts that go back to the
+// base's once .rolledback exists -- which the rollback given makes, or
+// not.
+func withRollback(t *testing.T, rollback string) (*sandbox.Manager, sandbox.UpRequest) {
+	t.Helper()
+	m, req := withDestruction(t, true)
+	const head = `test -f migrations/002_add_vat.sql && ! test -f .rolledback`
+	req.Config.Data.Check.Rows = `sh -c 'if ` + head + `; then printf "orders|40\ncustomers|431\n"; else printf "orders|43\ncustomers|431\nlegacy|12\n"; fi'`
+	req.Config.Data.Check.Columns = `sh -c 'if ` + head + `; then printf "orders|id\norders|vat\ncustomers|id\n"; else printf "orders|id\ncustomers|id\ncustomers|tax_code\nlegacy|id\n"; fi'`
+	req.Config.Data.Rollback = []string{rollback}
+	return m, req
+}
+
+// TestAMigrationThatCannotBeUndone is the acceptance criterion for
+// T-908: a rollback that does not bring the schema back is reported,
+// what is left and what did not come back.
+func TestAMigrationThatCannotBeUndone(t *testing.T) {
+	m, req := withRollback(t, "true")
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := check.Rollback
+	want := []string{
+		"column orders.vat is still there",
+		"column customers.tax_code did not come back",
+		"table legacy did not come back",
+	}
+	if !r.Ran || r.Failed != nil || !r.Compared || r.Reversible() || !sameSet(r.Leftover, want) {
+		t.Errorf("rollback %+v", r)
+	}
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, x := range a {
+		if !slices.Contains(b, x) {
+			return false
+		}
+	}
+	return true
+}
+
+func TestAMigrationThatCanBeUndone(t *testing.T) {
+	m, req := withRollback(t, "touch .rolledback")
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || !check.Rollback.Reversible() || check.Rollback.Took <= 0 {
+		t.Errorf("rollback %+v, %v", check.Rollback, err)
+	}
+}
+
+func TestARollbackThatFails(t *testing.T) {
+	m, req := withRollback(t, `sh -c 'echo irreversible >&2; exit 4'`)
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || check.Rollback.Failed == nil || !strings.Contains(check.Rollback.Failed.Error(), "data.rollback entry 1") || check.Rollback.Reversible() {
+		t.Errorf("rollback %+v, %v", check.Rollback, err)
+	}
+}
+
+// {migrations} is how many migrations the pull request adds.
+func TestRollbackIsToldHowMany(t *testing.T) {
+	m, req := withRollback(t, `sh -c 'test {migrations} = 1 && touch .rolledback'`)
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || !check.Rollback.Reversible() {
+		t.Errorf("rollback %+v, %v", check.Rollback, err)
+	}
+}
+
+// A migration kept as an up and down pair is missed when its down is
+// not there.
+func TestAnUpMigrationWithoutItsDown(t *testing.T) {
+	m, req, _ := withMigration(t, `"true"`)
+	pushToPullRequest(t, req.Repo.Root, 7, map[string]string{
+		"migrations/003_index.up.sql":   "CREATE INDEX orders_item ON orders (item);\n",
+		"migrations/003_index.down.sql": "DROP INDEX orders_item;\n",
+		"migrations/004_drop.up.sql":    "ALTER TABLE orders DROP COLUMN note;\n",
+	})
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(check.Rollback.MissingDown, " "); got != "migrations/004_drop.up.sql" {
+		t.Errorf("missing down: %q (new %v)", got, check.Migrations.New)
+	}
+}
+
+// Without data.check the rollback runs, and pit does not claim to know
+// what it left.
+func TestARollbackWithoutDataCheck(t *testing.T) {
+	m, req := withDestruction(t, false)
+	req.Config.Data.Rollback = []string{"true"}
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || !check.Rollback.Ran || check.Rollback.Compared || len(check.Rollback.Leftover) != 0 {
+		t.Errorf("rollback %+v, %v", check.Rollback, err)
+	}
+}
+
+// A pull request that brings its own rollback has it used.
+func TestARollbackThePullRequestBrings(t *testing.T) {
+	m, req := withRollback(t, "true")
+	pushToPullRequest(t, req.Repo.Root, 7, map[string]string{".pit.yaml": "web:\n  service: web\n  port: 80\ndata:\n" +
+		"  migrate: [\"sh -c 'if test -f migrations/002_add_vat.sql; then touch .locked; sleep 0.6; rm .locked; fi'\"]\n" +
+		"  rollback: [\"touch .rolledback\"]\n" +
+		"  scenarios:\n    - name: standard\n      apply: [\"true\"]\n  default: standard\n"})
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || !check.Rollback.Reversible() {
+		t.Errorf("rollback %+v, %v", check.Rollback, err)
+	}
+}

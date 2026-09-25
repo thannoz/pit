@@ -123,6 +123,28 @@ func writeMigrationCheck(out *ui.Printer, pr int, baseBranch string, c sandbox.M
 	case len(c.Losses) == 0:
 		out.Printf("  ✓ no data lost\n")
 	}
+	writeRollback(out, c.Rollback)
+}
+
+// writeRollback says whether the migrations can be undone.
+func writeRollback(out *ui.Printer, r sandbox.Rollback) {
+	switch {
+	case !r.Ran:
+		out.Printf("  ? data.rollback is not configured, so pit did not try to undo the migrations\n")
+	case r.Failed != nil:
+		out.Printf("  ✗ the rollback failed after %s\n    %s\n", seconds(r.Took), firstLine(r.Failed.Error()))
+	default:
+		out.Printf("  ✓ rolls back  %s\n", seconds(r.Took))
+		for _, l := range r.Leftover {
+			out.Printf("  ! after the rollback, %s\n", l)
+		}
+		if !r.Compared {
+			out.Printf("  ? without data.check, pit cannot tell whether the rollback left the schema as it was\n")
+		}
+	}
+	for _, f := range r.MissingDown {
+		out.Printf("  ! %s has no down migration beside it\n", f)
+	}
 }
 
 // heldFor says how long pit saw a lock held: a lock seen at one look
@@ -143,21 +165,32 @@ func waits(mode string) string {
 }
 
 type migrationCheckJSON struct {
-	PR         int        `json:"pr"`
-	BaseBranch string     `json:"baseBranch,omitempty"`
-	BaseSHA    string     `json:"baseSha"`
-	HeadSHA    string     `json:"headSha"`
-	Scenario   string     `json:"scenario,omitempty"`
-	New        []string   `json:"new"`
-	Changed    []string   `json:"changed"`
-	Removed    []string   `json:"removed"`
-	Ran        bool       `json:"ran"`
-	TookMS     int64      `json:"tookMs"`
-	Failed     string     `json:"failed,omitempty"`
-	Rows       int64      `json:"rows"`
-	Losses     []lossJSON `json:"losses"`
-	Locks      []lockJSON `json:"locks"`
-	Unseen     string     `json:"unseen,omitempty"`
+	PR         int          `json:"pr"`
+	BaseBranch string       `json:"baseBranch,omitempty"`
+	BaseSHA    string       `json:"baseSha"`
+	HeadSHA    string       `json:"headSha"`
+	Scenario   string       `json:"scenario,omitempty"`
+	New        []string     `json:"new"`
+	Changed    []string     `json:"changed"`
+	Removed    []string     `json:"removed"`
+	Ran        bool         `json:"ran"`
+	TookMS     int64        `json:"tookMs"`
+	Failed     string       `json:"failed,omitempty"`
+	Rows       int64        `json:"rows"`
+	Losses     []lossJSON   `json:"losses"`
+	Locks      []lockJSON   `json:"locks"`
+	Unseen     string       `json:"unseen,omitempty"`
+	Rollback   rollbackJSON `json:"rollback"`
+}
+
+type rollbackJSON struct {
+	Ran         bool     `json:"ran"`
+	TookMS      int64    `json:"tookMs"`
+	Failed      string   `json:"failed,omitempty"`
+	Leftover    []string `json:"leftover"`
+	Compared    bool     `json:"compared"`
+	MissingDown []string `json:"missingDown"`
+	Reversible  bool     `json:"reversible"`
 }
 
 type lossJSON struct {
@@ -187,6 +220,12 @@ func migrationJSON(pr int, baseBranch string, c sandbox.MigrationCheck) migratio
 	}
 	for _, l := range c.Locks {
 		j.Locks = append(j.Locks, lockJSON{Table: l.Table, Mode: l.Mode, HeldMS: l.Held.Milliseconds()})
+	}
+	r := c.Rollback
+	j.Rollback = rollbackJSON{Ran: r.Ran, TookMS: r.Took.Milliseconds(), Leftover: append([]string{}, r.Leftover...),
+		Compared: r.Compared, MissingDown: append([]string{}, r.MissingDown...), Reversible: r.Reversible()}
+	if r.Failed != nil {
+		j.Rollback.Failed = r.Failed.Error()
 	}
 	return j
 }

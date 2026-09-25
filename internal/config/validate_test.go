@@ -369,3 +369,10 @@ func TestCheckCommandsAreChecked(t *testing.T) {
 		t.Errorf("message:\n%s", err)
 	}
 }
+
+func TestRollbackCommandsAreChecked(t *testing.T) {
+	err := loadBroken(t, "web:\n  service: web\n  port: 80\ndata:\n  rollback:\n    - \"true\"\n    - \"compose exec -T db psql -c 'DROP\"\n", nil)
+	if !strings.Contains(err.Error(), "data.rollback[1]") || strings.Contains(err.Error(), "data.rollback[0]") {
+		t.Errorf("message:\n%s", err)
+	}
+}

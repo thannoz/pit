@@ -59,3 +59,36 @@ func TestLockWatchKeepsTheStrongestMode(t *testing.T) {
 		t.Errorf("locks %+v", got)
 	}
 }
+
+func TestDownOf(t *testing.T) {
+	for path, want := range map[string]string{
+		"migrations/0042_vat.up.sql":          "migrations/0042_vat.down.sql",
+		"db/2026-09-25_vat/up.sql":            "db/2026-09-25_vat/down.sql",
+		"0001_init.up.sql":                    "0001_init.down.sql",
+		"migrations/0042_vat.sql":             "",
+		"db/migrate/20260925_add_vat.rb":      "",
+		"migrations/0042_update_setup.up.sql": "migrations/0042_update_setup.down.sql",
+	} {
+		if got := downOf(path); got != want {
+			t.Errorf("downOf(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestSchemaDiff(t *testing.T) {
+	was := shape{rows: map[string]int64{"orders": 1}, columns: map[string][]string{"orders": {"id", "item"}}}
+	is := shape{rows: map[string]int64{"orders": 1, "refunds": 0}, columns: map[string][]string{"orders": {"id", "vat"}, "refunds": {"id"}}}
+	got := schemaDiff(was, is)
+	want := []string{"table refunds is still there", "column orders.vat is still there", "column orders.item did not come back"}
+	if len(got) != len(want) {
+		t.Fatalf("diff %q", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("diff %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if d := schemaDiff(was, was); len(d) != 0 {
+		t.Errorf("the same schema differs: %q", d)
+	}
+}

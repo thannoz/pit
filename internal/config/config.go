@@ -103,6 +103,11 @@ type Data struct {
 	// is a different problem from a hook that fails: it is the change
 	// under review often enough to deserve being named.
 	Migrate []string `yaml:"migrate"`
+	// Rollback undoes what a pull request's migrations did, for pit
+	// migrate-check to see whether it can be: "compose exec -T web
+	// bin/rails db:rollback STEP={migrations}". {migrations} is the
+	// number of migrations the pull request adds.
+	Rollback []string `yaml:"rollback"`
 	// Check says how pit migrate-check sees what migrations do to the
 	// data: how many rows, which columns, which locks.
 	Check Check `yaml:"check"`

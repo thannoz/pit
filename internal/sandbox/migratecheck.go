@@ -37,6 +37,8 @@ type MigrationCheck struct {
 	// Unseen says why pit could not look at the data, when it could
 	// not: data.check is not configured, or its commands failed.
 	Unseen string
+	// Rollback is what undoing the migrations showed.
+	Rollback Rollback
 }
 
 // Ran reports whether there was anything to run: a pull request that
@@ -141,14 +143,33 @@ func (m *Manager) CheckMigrations(ctx context.Context, req UpRequest, rep Report
 		// request not answering -- is not theirs, and not this check's.
 		rep.Note("the migrations ran; after them: %v", err)
 	}
+	// The pull request's own commands, where it has them: it may be
+	// the one that adds them.
+	lookNow := func() (shape, bool) {
+		return m.lookAt(ctx, baseBox, checkOf(baseBox.Worktree, &config.Config{Data: config.Data{Check: look}}), &check)
+	}
 	if seen && ctx.Err() == nil {
-		// The pull request's own commands, where it has them: it may
-		// be the one that adds them.
-		if after, ok := m.lookAt(ctx, baseBox, checkOf(baseBox.Worktree, &config.Config{Data: config.Data{Check: look}}), &check); ok {
+		if after, ok := lookNow(); ok {
 			check.Losses = losses(before, after)
 		}
 	}
+	if ctx.Err() == nil {
+		check.Rollback = m.rollBack(ctx, baseBox, rollbackOf(baseBox.Worktree, req.Config), len(check.Migrations.New), before, lookNow)
+		check.Rollback.MissingDown = m.missingDown(ctx, req.Repo.Root, head, check.Migrations.New)
+	}
 	return check, ctx.Err()
+}
+
+// rollbackOf is the data.rollback of the pull request's configuration,
+// or the reviewer's when it has none.
+func rollbackOf(worktree string, fallback *config.Config) []string {
+	if cfg, _, err := config.LoadFrom(worktree); err == nil && len(cfg.Data.Rollback) > 0 {
+		return cfg.Data.Rollback
+	}
+	if fallback != nil {
+		return fallback.Data.Rollback
+	}
+	return nil
 }
 
 // lockLook is how often the locks are looked at while migrations run.

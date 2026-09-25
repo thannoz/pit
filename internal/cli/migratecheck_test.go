@@ -58,7 +58,8 @@ func TestMigrateCheckOutput(t *testing.T) {
 		"  Migration:   migrations/0042_add_vat_id_to_orders.sql\n" +
 		"\n" +
 		"  ✓ ran through  1.4s\n" +
-		"  ✓ no data lost\n"
+		"  ✓ no data lost\n" +
+		"  ? data.rollback is not configured, so pit did not try to undo the migrations\n"
 	if out != want {
 		t.Errorf("output\n%s\nwant\n%s", out, want)
 	}
@@ -137,8 +138,8 @@ func TestMigrateCheckReportsWhatWasLost(t *testing.T) {
 		"  ! column customers.tax_code removed — 431 rows had it\n" +
 		"  ! table legacy_orders removed — 12 rows gone\n" +
 		"  ! orders lost 5 rows\n"
-	if !strings.HasSuffix(out, want) {
-		t.Errorf("output\n%s\nwant it to end\n%s", out, want)
+	if !strings.Contains(out, want) {
+		t.Errorf("output\n%s\nwant it to hold\n%s", out, want)
 	}
 	out, _, _ = run(t, "migrate-check", "482", "--json")
 	var r migrationCheckJSON
@@ -155,5 +156,48 @@ func TestMigrateCheckThatCouldNotLook(t *testing.T) {
 	if err != nil || strings.Contains(out, "rows)") || strings.Contains(out, "no data lost") ||
 		!strings.Contains(out, "  ? data.check is not configured") {
 		t.Errorf("%v:\n%s", err, out)
+	}
+}
+
+// TestMigrateCheckReportsAMigrationThatCannotBeUndone is the output half
+// of T-908: a rollback that leaves the schema otherwise, fails, or has
+// no down migration to run, is said so.
+func TestMigrateCheckReportsAMigrationThatCannotBeUndone(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		rollback sandbox.Rollback
+		want     []string
+	}{
+		{"undone", sandbox.Rollback{Ran: true, Took: 300 * time.Millisecond, Compared: true},
+			[]string{"  ✓ rolls back  300ms\n"}},
+		{"not all of it", sandbox.Rollback{Ran: true, Took: 300 * time.Millisecond, Compared: true,
+			Leftover:    []string{"column orders.vat is still there", "column customers.tax_code did not come back"},
+			MissingDown: []string{"migrations/0042_vat.up.sql"}},
+			[]string{"  ✓ rolls back  300ms\n  ! after the rollback, column orders.vat is still there\n  ! after the rollback, column customers.tax_code did not come back\n",
+				"  ! migrations/0042_vat.up.sql has no down migration beside it\n"}},
+		{"failed", sandbox.Rollback{Ran: true, Took: 200 * time.Millisecond, Failed: errors.New("data.rollback entry 1: exit status 1\nirreversible")},
+			[]string{"  ✗ the rollback failed after 200ms\n    data.rollback entry 1: exit status 1\n"}},
+		{"not compared", sandbox.Rollback{Ran: true, Took: 300 * time.Millisecond},
+			[]string{"  ? without data.check, pit cannot tell whether the rollback left the schema as it was\n"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := passed
+			c.Rollback = tc.rollback
+			withCheck(t, c, nil)
+			out, _, err := run(t, "migrate-check", "482")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("output lacks %q:\n%s", want, out)
+				}
+			}
+			out, _, _ = run(t, "migrate-check", "482", "--json")
+			var r migrationCheckJSON
+			if json.Unmarshal([]byte(out), &r) != nil || r.Rollback.Reversible != tc.rollback.Reversible() || !r.Rollback.Ran {
+				t.Errorf("json:\n%s", out)
+			}
+		})
 	}
 }
