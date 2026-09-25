@@ -322,16 +322,26 @@ func mustList(t *testing.T, b notes.Book) []notes.Note {
 	return list
 }
 
-// Off GitHub there is nowhere to post, and pit says so without asking
-// gh anything.
+// Off GitHub and GitLab there is nowhere to post, and pit says so
+// without asking anything.
 func TestCommentsOnlyOnGitHub(t *testing.T) {
 	for repo, want := range map[string]string{
-		"local//home/lisa/shop":        "this repository is in a directory on this machine",
-		"gitlab.com/acme/backend/shop": "this repository is on gitlab.com",
+		"local//home/lisa/shop":   "this repository is in a directory on this machine",
+		"bitbucket.org/acme/shop": "this repository is on bitbucket.org",
 	} {
 		_, err := realCommenterFor(t.Context(), repo)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v", repo, err)
 		}
+	}
+}
+
+// On GitLab, the merge request's notes; nothing is asked of gh.
+func TestCommentsOnGitLab(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "glpat-secret")
+	c, err := realCommenterFor(t.Context(), "gitlab.com/acme/backend/shop")
+	g, ok := c.(forge.GitLab)
+	if err != nil || !ok || g.Project != "acme/backend/shop" || g.Token != "glpat-secret" {
+		t.Errorf("%#v, %v", c, err)
 	}
 }

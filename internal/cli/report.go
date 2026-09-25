@@ -27,17 +27,19 @@ var commenterFor = func(ctx context.Context, repo string) (forge.Commenter, erro
 		if host == forge.LocalHost {
 			where = "in a directory on this machine"
 		}
-		return nil, errs.New("pit can post comments only on GitHub, and this repository is %s", where).
+		return nil, errs.New("pit can post comments only on GitHub and GitLab, and this repository is %s", where).
 			WithHint("the comment is above; paste it into the pull request yourself")
 	}
-	gh, ok := f.(forge.GitHub)
+	if gh, ok := f.(forge.GitHub); ok {
+		if err := gh.Check(ctx); err != nil {
+			return nil, err
+		}
+	}
+	c, ok := f.(forge.Commenter)
 	if !ok {
 		return nil, errs.New("pit cannot post comments on %s", host)
 	}
-	if err := gh.Check(ctx); err != nil {
-		return nil, err
-	}
-	return gh, nil
+	return c, nil
 }
 
 // reportJSON is what pit report --json prints.

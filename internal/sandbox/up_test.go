@@ -2207,3 +2207,27 @@ func TestTheBaseLeavesThePullRequestItsPort(t *testing.T) {
 		t.Errorf("the base took the pull request's port %d", wanted)
 	}
 }
+
+// A compose file that fixes a container's name or binds a host port is
+// made safe for a second sandbox of the same repository.
+func TestUpIsolatesFixedNamesAndPorts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	pushToPullRequest(t, req.Repo.Root, 7, map[string]string{"docker-compose.yml": "services:\n  web:\n    image: nginx\n    container_name: shop-web\n  db:\n    image: postgres\n    ports: [\"5432:5432\"]\n"})
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(record.ComposeFiles[len(record.ComposeFiles)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	override := string(data)
+	for _, want := range []string{"container_name: " + record.Project + "-web", "  db:\n", "ports: !reset []"} {
+		if !strings.Contains(override, want) {
+			t.Errorf("the override lacks %q:\n%s", want, override)
+		}
+	}
+}

@@ -130,3 +130,21 @@ func TestReadServicesReportsAMissingFile(t *testing.T) {
 		t.Error("the error carries no hint")
 	}
 }
+
+func TestReadServicesFindsWhatSandboxesWouldShare(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compose.yaml")
+	if err := os.WriteFile(path, []byte("services:\n  web:\n    image: nginx\n    container_name: shop-web\n    ports: [\"8080:80\"]\n  db:\n    image: postgres\n    expose: [5432]\n  cache:\n    image: redis\n    ports:\n      - target: 6379\n        published: 6379\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	services, err := ReadServices(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][2]bool{}
+	for _, s := range services {
+		got[s.Name] = [2]bool{s.Named, s.Publishes}
+	}
+	if got["web"] != [2]bool{true, true} || got["db"] != [2]bool{false, false} || got["cache"] != [2]bool{false, true} {
+		t.Errorf("services %v", got)
+	}
+}

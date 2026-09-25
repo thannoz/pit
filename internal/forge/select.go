@@ -48,6 +48,9 @@ func For(o Options) (Forge, error) {
 	if isGitHub(o.Host) {
 		return GitHub{Runner: o.Runner, Repo: o.Repo}, nil
 	}
+	if isGitLab(o.Host) {
+		return GitLab{Host: o.Host, Project: o.Repo, Token: TokenFromEnv()}, nil
+	}
 
 	if o.Resolver == nil {
 		return nil, errs.New("pit cannot read pull requests from %s", o.Host).

@@ -58,6 +58,12 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, errs.Wrap(err, "cannot resolve %s", path)
 	}
+	// No file named: the one Compose itself would take here.
+	if c.composeUnnamed {
+		if name, ok := FindComposeFile(dir); ok {
+			c.Compose.Files = []string{name}
+		}
+	}
 	if err := c.validate(node, dir, path); err != nil {
 		return nil, err
 	}

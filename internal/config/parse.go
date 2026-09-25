@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -44,6 +46,7 @@ func (c *Config) applyDefaults() {
 	}
 	if len(c.Compose.Files) == 0 {
 		c.Compose.Files = []string{DefaultComposeFile}
+		c.composeUnnamed = true
 	}
 
 	h := &c.Healthcheck
@@ -69,4 +72,18 @@ func (c *Config) applyDefaults() {
 	if c.Data.ProductionLike.Fetch != "" && c.Data.ProductionLike.TTL.IsZero() {
 		c.Data.ProductionLike.TTL = Duration(DefaultProductionTTL)
 	}
+}
+
+// ComposeNames are the files Docker Compose reads when it is not told
+// which, in the order it looks for them.
+var ComposeNames = []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+
+// FindComposeFile is the compose file Docker Compose would take in dir.
+func FindComposeFile(dir string) (string, bool) {
+	for _, name := range ComposeNames {
+		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() {
+			return name, true
+		}
+	}
+	return "", false
 }

@@ -135,3 +135,36 @@ func TestLoadReportsAMissingFile(t *testing.T) {
 		t.Error("the error carries no hint")
 	}
 }
+
+// Without compose.files, the file is the one Docker Compose would take:
+// compose.yaml before docker-compose.yml, as Compose looks.
+func TestTheComposeFileIsTheOneComposeWouldTake(t *testing.T) {
+	for _, tc := range []struct {
+		files []string
+		want  string
+	}{
+		{[]string{"compose.yaml"}, "compose.yaml"},
+		{[]string{"compose.yml", "docker-compose.yaml"}, "compose.yml"},
+		{[]string{"docker-compose.yaml"}, "docker-compose.yaml"},
+	} {
+		root := t.TempDir()
+		write(t, filepath.Join(root, ".git"), "")
+		for _, f := range tc.files {
+			write(t, filepath.Join(root, f), "services:\n  web:\n    image: nginx\n")
+		}
+		write(t, filepath.Join(root, FileName), "web:\n  service: web\n  port: 80\n")
+		c, err := Load(filepath.Join(root, FileName))
+		if err != nil {
+			t.Fatalf("%v: %v", tc.files, err)
+		}
+		if len(c.Compose.Files) != 1 || c.Compose.Files[0] != tc.want {
+			t.Errorf("%v: files %v, want %s", tc.files, c.Compose.Files, tc.want)
+		}
+	}
+	// Named, it is what was named.
+	root := project(t, map[string]string{"compose.yaml": "services:\n  web:\n    image: nginx\n",
+		FileName: "compose:\n  files: [docker-compose.yml]\nweb:\n  service: web\n  port: 80\n"})
+	if c, err := Load(filepath.Join(root, FileName)); err != nil || c.Compose.Files[0] != "docker-compose.yml" {
+		t.Errorf("named: %v, %v", c, err)
+	}
+}

@@ -68,7 +68,12 @@ func runInit(c *cobra.Command, o *initOptions) error {
 
 	files := o.composeFiles
 	if len(files) == 0 {
-		files = []string{config.DefaultComposeFile}
+		name, ok := config.FindComposeFile(dir)
+		if !ok {
+			return errs.New("there is no compose file in %s", dir).
+				WithHint("pit looks for %s; --compose-file names another", strings.Join(config.ComposeNames, ", "))
+		}
+		files = []string{name}
 	}
 
 	services, err := runtime.ReadServices(filepath.Join(dir, files[0]))

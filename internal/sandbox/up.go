@@ -270,7 +270,10 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 			return state.Sandbox{}, err
 		}
 
-		if err := runtime.WriteOverride(overridePath, overrideFor(req.Config, port, ready.images)); err != nil {
+		o := overrideFor(req.Config, port, ready.images)
+		o.Project = project
+		o.Renamed, o.Unpublished = isolation(req.Config, wt.Path)
+		if err := runtime.WriteOverride(overridePath, o); err != nil {
 			return state.Sandbox{}, err
 		}
 		if !updating {

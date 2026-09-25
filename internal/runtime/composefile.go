@@ -31,6 +31,11 @@ type Service struct {
 	// reads them rather than leaving it to Compose: what is started
 	// is also what has to be built.
 	DependsOn []string
+	// Named says the file gives its container a fixed name, which a
+	// second sandbox of the project could not have too.
+	Named bool
+	// Publishes says the file binds one of its ports on the host.
+	Publishes bool
 }
 
 // composeFile is the sliver of the Compose schema pit reads directly.
@@ -40,11 +45,12 @@ type composeFile struct {
 }
 
 type composeService struct {
-	Image     string      `yaml:"image"`
-	Ports     []yaml.Node `yaml:"ports"`
-	Expose    []yaml.Node `yaml:"expose"`
-	Build     yaml.Node   `yaml:"build"`
-	DependsOn yaml.Node   `yaml:"depends_on"`
+	Image         string      `yaml:"image"`
+	ContainerName string      `yaml:"container_name"`
+	Ports         []yaml.Node `yaml:"ports"`
+	Expose        []yaml.Node `yaml:"expose"`
+	Build         yaml.Node   `yaml:"build"`
+	DependsOn     yaml.Node   `yaml:"depends_on"`
 }
 
 // dependencies reads the services a service cannot run without.
@@ -135,6 +141,8 @@ func ReadServices(path string) ([]Service, error) {
 			Ports:     containerPorts(s),
 			Context:   buildContext(s.Build),
 			DependsOn: dependencies(s.DependsOn),
+			Named:     s.ContainerName != "",
+			Publishes: len(s.Ports) > 0,
 		})
 	}
 	return services, nil

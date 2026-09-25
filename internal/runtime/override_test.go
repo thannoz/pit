@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/thannoz/pit/internal/proc"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestRenderOverridePublishesThePort(t *testing.T) {
@@ -179,5 +181,41 @@ func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile(%q): %v", path, err)
+	}
+}
+
+// Two sandboxes of one repository share nothing the compose file fixes:
+// a container's name, a port bound on the host.
+func TestOverrideIsolatesNamesAndPorts(t *testing.T) {
+	data, err := RenderOverride(Override{
+		Service: "web", HostPort: 41234, ContainerPort: 80, Project: "pit-shop-1-7",
+		Images:  map[string]string{"worker": "registry/worker:abc"},
+		Renamed: []string{"web", "worker"}, Unpublished: []string{"db", "web"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Services map[string]struct {
+			ContainerName string    `yaml:"container_name"`
+			Image         string    `yaml:"image"`
+			Ports         yaml.Node `yaml:"ports"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &f); err != nil {
+		t.Fatalf("%v:\n%s", err, data)
+	}
+	web, worker, db := f.Services["web"], f.Services["worker"], f.Services["db"]
+	if web.ContainerName != "pit-shop-1-7-web" || web.Ports.Tag != "!override" {
+		t.Errorf("web %+v:\n%s", web, data)
+	}
+	if worker.ContainerName != "pit-shop-1-7-worker" || worker.Image != "registry/worker:abc" {
+		t.Errorf("worker %+v:\n%s", worker, data)
+	}
+	if db.Ports.Tag != "!reset" || db.ContainerName != "" {
+		t.Errorf("db %+v:\n%s", db, data)
+	}
+	if strings.Count(string(data), "\n  worker:") != 1 {
+		t.Errorf("worker twice:\n%s", data)
 	}
 }

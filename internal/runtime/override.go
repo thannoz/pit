@@ -28,6 +28,17 @@ type Override struct {
 	// build would have produced. It is how a sandbox uses what a
 	// pipeline has already built.
 	Images map[string]string
+	// Project is the sandbox's Compose project, which names its
+	// containers.
+	Project string
+	// Renamed are services the compose file gives a fixed container
+	// name: they get one in the project instead, or a second sandbox
+	// of the same repository could not start.
+	Renamed []string
+	// Unpublished are services other than Service that bind a port on
+	// the host: the binding goes, for the same reason. Inside the
+	// project's network they are reached as before.
+	Unpublished []string
 }
 
 // RenderOverride produces the override file's contents.
@@ -72,11 +83,25 @@ func blocks(o Override) []serviceBlock {
 	}
 
 	out := []serviceBlock{web}
-	for _, name := range sortedKeys(o.Images) {
-		if name == o.Service {
-			continue
+	index := map[string]int{o.Service: 0}
+	block := func(name string) *serviceBlock {
+		if i, ok := index[name]; ok {
+			return &out[i]
 		}
-		out = append(out, serviceBlock{Name: name, Image: o.Images[name]})
+		index[name] = len(out)
+		out = append(out, serviceBlock{Name: name})
+		return &out[len(out)-1]
+	}
+	for _, name := range sortedKeys(o.Images) {
+		block(name).Image = o.Images[name]
+	}
+	for _, name := range o.Renamed {
+		block(name).ContainerName = o.Project + "-" + name
+	}
+	for _, name := range o.Unpublished {
+		if name != o.Service {
+			block(name).ResetPorts = true
+		}
 	}
 	return out
 }
@@ -102,12 +127,14 @@ type overrideView struct {
 
 // serviceBlock is one service's entry in the generated file.
 type serviceBlock struct {
-	Name    string
-	Ports   string
-	EnvFile string
-	EnvKeys []string
-	Env     map[string]string
-	Image   string
+	Name          string
+	Ports         string
+	EnvFile       string
+	EnvKeys       []string
+	Env           map[string]string
+	Image         string
+	ContainerName string
+	ResetPorts    bool
 }
 
 // sortedKeys keeps the generated file stable between runs, so a diff of
@@ -135,8 +162,17 @@ services:
     ports: !override
       - "{{ .Ports }}"
 {{- end }}
+{{- if .ResetPorts }}
+    # Bound on the host, a second sandbox of the project could not
+    # start; inside the project's network it is reached as before.
+    ports: !reset []
+{{- end }}
 {{- if .Image }}
     image: {{ .Image }}
+{{- end }}
+{{- if .ContainerName }}
+    # A fixed name would be one container for every sandbox.
+    container_name: {{ .ContainerName }}
 {{- end }}
 {{- if .EnvFile }}
     env_file:

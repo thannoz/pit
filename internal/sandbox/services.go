@@ -94,6 +94,31 @@ type project struct {
 	byName map[string]runtime.Service
 }
 
+// isolation finds what in the compose files one sandbox would share
+// with another: fixed container names, and ports bound on the host.
+func isolation(c *config.Config, worktree string) (renamed, unpublished []string) {
+	seen := map[string]bool{}
+	for _, file := range c.Compose.Files {
+		declared, err := runtime.ReadServices(filepath.Join(worktree, file))
+		if err != nil {
+			continue
+		}
+		for _, s := range declared {
+			if s.Named && !seen["name:"+s.Name] {
+				seen["name:"+s.Name] = true
+				renamed = append(renamed, s.Name)
+			}
+			// The web service's own ports are replaced by the override
+			// already, with pit's.
+			if s.Publishes && !seen["port:"+s.Name] {
+				seen["port:"+s.Name] = true
+				unpublished = append(unpublished, s.Name)
+			}
+		}
+	}
+	return renamed, unpublished
+}
+
 // readProject reads every service of every configured compose file.
 func readProject(c *config.Config, worktree string) (project, error) {
 	p := project{byName: map[string]runtime.Service{}}

@@ -10,6 +10,10 @@ const Version = 1
 
 // Config is the whole of .pit.yaml.
 type Config struct {
+	// composeUnnamed says compose.files was left out, and holds the
+	// default until Load finds which file Compose would take.
+	composeUnnamed bool
+
 	Version     int         `yaml:"version"`
 	Compose     Compose     `yaml:"compose"`
 	Web         Web         `yaml:"web"`

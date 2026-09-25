@@ -34,7 +34,7 @@ func TestForPicksGitHub(t *testing.T) {
 // a local one. Reading the commit is less than a service can offer,
 // but it is not nothing.
 func TestForFallsBackToGit(t *testing.T) {
-	for _, host := range []string{"gitlab.com", "git.example.org", LocalHost, ""} {
+	for _, host := range []string{"git.example.org", LocalHost, ""} {
 		t.Run(host, func(t *testing.T) {
 			f, err := For(Options{Host: host, Repo: "team/tool", Runner: &stubGH{}, Resolver: stubResolver{}})
 			if err != nil {
@@ -127,6 +127,22 @@ func TestCheckHappensBeforeAnythingIsCreated(t *testing.T) {
 	for i, want := range []string{"--version", "auth"} {
 		if s.calls[i].Args[0] != want {
 			t.Errorf("call %d was %v, want it to start with %q", i+1, s.calls[i].Args, want)
+		}
+	}
+}
+
+// GitLab is asked where the repository is on GitLab: gitlab.com, or an
+// instance named the way they usually are.
+func TestForPicksGitLab(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "glpat-secret")
+	for _, host := range []string{"gitlab.com", "gitlab.example.com", "GitLab.com"} {
+		f, err := For(Options{Host: host, Repo: "group/sub/tool", Runner: &stubGH{}, Resolver: stubResolver{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, ok := f.(GitLab)
+		if !ok || g.Host != host || g.Project != "group/sub/tool" || g.Token != "glpat-secret" {
+			t.Errorf("For(%q) = %#v", host, f)
 		}
 	}
 }

@@ -430,3 +430,28 @@ func TestInitSuggestsNoCheckItCannotWrite(t *testing.T) {
 		t.Errorf("a check for MariaDB:\n%s", written)
 	}
 }
+
+// pit init finds the compose file under any name Compose reads, and
+// writes the one it found into .pit.yaml.
+func TestInitFindsTheComposeFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services:\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	if _, err := runInitCmd(t, "", "--service", "web", "--port", "80"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	c, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil || len(c.Compose.Files) != 1 || c.Compose.Files[0] != "compose.yaml" {
+		t.Errorf("%v, %v", c, err)
+	}
+}
+
+func TestInitWithoutAComposeFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	_, err := runInitCmd(t, "", "--service", "web", "--port", "80")
+	if err == nil || !strings.Contains(err.Error(), "there is no compose file in") || !strings.Contains(errs.Hint(err), "compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml") {
+		t.Errorf("err = %v, hint %q", err, errs.Hint(err))
+	}
+}
