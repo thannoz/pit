@@ -1,23 +1,29 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
+	"github.com/thannoz/pit/internal/view"
 )
 
-// planUp and bringUp are prepareUp and upPlan.up; variables so that a
-// test of what compare asks for needs no forge and no Docker.
+// planUp and bringUp are prepareUp and upPlan.up, and serveView is
+// view.Serve; variables so that a test of what compare asks for needs no
+// forge, no Docker and no server that waits for Ctrl+C.
 var (
-	planUp  = prepareUp
-	bringUp = func(p *upPlan, base bool, scenario string) (state.Sandbox, error) { return p.up(base, scenario) }
+	planUp    = prepareUp
+	bringUp   = func(p *upPlan, base bool, scenario string) (state.Sandbox, error) { return p.up(base, scenario) }
+	serveView = view.Serve
 )
 
 func newCompareCmd(opts *globalOptions) *cobra.Command {
 	o := &upOptions{}
+	var side bool
 	cmd := &cobra.Command{
 		Use:   "compare <pull request number>",
 		Short: "Run a pull request and the branch it goes into side by side, on the same data",
@@ -26,13 +32,20 @@ sandbox of its own, with the same data: the question "is this new, or
 was it always like that?" is answered by opening both.
 
 The pull request's sandbox comes first; the base gets the scenario it
-has, or the one --scenario names, or the snapshot --snapshot names.`,
+has, or the one --scenario names, or the snapshot --snapshot names.
+
+--view shows both in one page, next to each other and scrolled
+together, until Ctrl+C.`,
 		Example: `  pit compare 482
-  pit compare 482 --scenario=refunded`,
+  pit compare 482 --scenario=refunded
+  pit compare 482 --view`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			if opts.base {
 				return errs.New("pit compare brings up the base already").WithHint("leave out --base")
+			}
+			if side && opts.jsonOutput {
+				return errs.New("--view shows a page until Ctrl+C, and --json prints an answer; one or the other")
 			}
 			plan, err := planUp(c, o, args[0])
 			if err != nil {
@@ -68,6 +81,9 @@ has, or the one --scenario names, or the snapshot --snapshot names.`,
 					Scenario: base.Scenario, Snapshot: base.Snapshot, SHA: own.SHA, BaseSHA: base.SHA})
 			}
 			writeComparison(out, own, base)
+			if side {
+				return showSideBySide(c, out, own, base)
+			}
 			if o.open {
 				openInBrowser(c.Context(), out, own.URL)
 				openInBrowser(c.Context(), out, base.URL)
@@ -79,7 +95,30 @@ has, or the one --scenario names, or the snapshot --snapshot names.`,
 	f.BoolVar(&o.open, "open", false, "open both in a browser once they are ready")
 	f.StringVar(&o.scenario, "scenario", "", "data state to load in both (default: the one the pull request's sandbox has)")
 	f.StringVar(&o.snapshot, "snapshot", "", "load a saved snapshot, by ID or name, into both")
+	f.BoolVar(&side, "view", false, "show both in one page, side by side, until Ctrl+C")
 	return cmd
+}
+
+// showSideBySide serves the page with both until Ctrl+C, and opens it.
+func showSideBySide(c *cobra.Command, out *ui.Printer, own, base state.Sandbox) error {
+	left := view.Side{Label: fmt.Sprintf("#%d", own.PR), Detail: describeSide(own.Branch, own.SHA), Target: own.URL}
+	right := view.Side{Label: fmt.Sprintf("#%d base", own.PR), Detail: describeSide(orElse(base.BaseBranch, "default branch"), base.SHA), Target: base.URL}
+	err := serveView(c.Context(), left, right, func(page string) {
+		out.Printf("Side by side: %s\n", page)
+		out.Notef("Ctrl+C stops showing them; the sandboxes keep running")
+		openInBrowser(c.Context(), out, page)
+	})
+	if err != nil {
+		return err
+	}
+	return out.Err()
+}
+
+func describeSide(branch, sha string) string {
+	if branch == "" {
+		return short(sha)
+	}
+	return branch + " at " + short(sha)
 }
 
 type compareJSON struct {

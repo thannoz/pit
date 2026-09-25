@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/thannoz/pit/internal/snapshot"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
+	"github.com/thannoz/pit/internal/view"
 )
 
 type broughtUp struct {
@@ -169,5 +171,36 @@ func TestCompareHasNoBaseFlag(t *testing.T) {
 	calls := withCompare(t, "standard", false, nil, nil)
 	if _, _, err := run(t, "compare", "482", "--base"); err == nil || len(*calls) != 0 {
 		t.Errorf("err = %v, brought up %+v", err, *calls)
+	}
+}
+
+func TestCompareSideBySide(t *testing.T) {
+	withCompare(t, "standard", false, nil, nil)
+	opened := withOpened(t)
+	var sides []view.Side
+	previous := serveView
+	serveView = func(_ context.Context, left, right view.Side, ready func(string)) error {
+		sides = []view.Side{left, right}
+		ready("http://127.0.0.1:51234/")
+		return nil
+	}
+	t.Cleanup(func() { serveView = previous })
+
+	out, stderr, err := run(t, "compare", "482", "--view")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sides) != 2 || sides[0].Target != "http://localhost:40482/" || sides[1].Target != "http://localhost:40999/" ||
+		sides[0].Label != "#482" || sides[1].Label != "#482 base" || sides[1].Detail != "default branch at 8c21f0d" {
+		t.Errorf("sides %+v", sides)
+	}
+	if !strings.Contains(out, "Side by side: http://127.0.0.1:51234/") || !strings.Contains(stderr, "Ctrl+C stops showing them") {
+		t.Errorf("stdout:\n%s\nstderr:\n%s", out, stderr)
+	}
+	if strings.Join(*opened, " ") != "http://127.0.0.1:51234/" {
+		t.Errorf("opened %v", *opened)
+	}
+	if _, _, err := run(t, "compare", "482", "--view", "--json"); err == nil {
+		t.Error("--view with --json")
 	}
 }
