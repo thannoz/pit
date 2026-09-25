@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -106,11 +108,12 @@ func captureForNote(c *cobra.Command, m *sandbox.Manager, box state.Sandbox, n *
 		n.Edited = box.Edited
 	}
 	switch {
-	case skip:
-		n.Uncaptured = "not asked to"
-		return nil, nil
 	case !running:
 		n.Uncaptured = "the sandbox was not running"
+		return nil, nil
+	case skip:
+		n.Uncaptured = "not asked to"
+		n.Logs = logsAround(c.Context(), m, box, time.Now().Add(-logLookback), time.Now())
 		return nil, nil
 	}
 
@@ -120,9 +123,12 @@ func captureForNote(c *cobra.Command, m *sandbox.Manager, box state.Sandbox, n *
 	}
 	from := time.Now()
 	report, err := capture(c.Context(), n.URL, shot)
-	if rerr := recordBrowsing(m, box, state.Span{From: from, To: time.Now()}); rerr != nil {
+	to := time.Now()
+	if rerr := recordBrowsing(m, box, state.Span{From: from, To: to}); rerr != nil {
 		return nil, rerr
 	}
+	// Docker's clock and this one can be a moment apart.
+	n.Logs = logsAround(c.Context(), m, box, from.Add(-logLookback), to.Add(time.Second))
 	if err != nil {
 		if c.Context().Err() != nil {
 			return nil, err
@@ -136,6 +142,59 @@ func captureForNote(c *cobra.Command, m *sandbox.Manager, box state.Sandbox, n *
 		return report.Screenshot.PNG, nil
 	}
 	return nil, nil
+}
+
+// logLookback is how far back before a note its logs reach: what the
+// reviewer did just before is as likely the cause as what pit loaded.
+const logLookback = 30 * time.Second
+
+// maxLogLines is as many lines of each service as a note keeps: the
+// ones nearest the note, not the whole log.
+const maxLogLines = 30
+
+// logsAround is what each service wrote between from and to, the web
+// service first. A log that cannot be read is left out: the note is
+// about the page, and the logs only help.
+func logsAround(ctx context.Context, m *sandbox.Manager, box state.Sandbox, from, to time.Time) []notes.Log {
+	rs := sandbox.RuntimeSandbox(box)
+	services, err := m.Runtime.Services(ctx, rs)
+	if err != nil || len(services) == 0 {
+		services = []string{box.WebService}
+	}
+	slices.SortStableFunc(services, func(a, b string) int {
+		switch {
+		case a == box.WebService && b != box.WebService:
+			return -1
+		case b == box.WebService && a != box.WebService:
+			return 1
+		}
+		return 0
+	})
+	var out []notes.Log
+	for _, service := range services {
+		lines, err := m.Runtime.LogsSince(ctx, rs, service, from)
+		if err != nil {
+			continue
+		}
+		// LogsSince starts at from; what came after to is the next
+		// thing the reviewer did.
+		var kept []notes.LogLine
+		for _, l := range lines {
+			if !l.At.After(to) {
+				kept = append(kept, notes.LogLine{At: l.At, Text: l.Text})
+			}
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		log := notes.Log{Service: service}
+		if extra := len(kept) - maxLogLines; extra > 0 {
+			log.Skipped, kept = extra, kept[extra:]
+		}
+		log.Lines = kept
+		out = append(out, log)
+	}
+	return out
 }
 
 // book finds the notes on a pull request: its sandbox's, or, when it
@@ -251,6 +310,13 @@ func writeNote(out *ui.Printer, n notes.Note, fresh bool) {
 	}
 	if n.Screenshot != "" {
 		out.Printf("     screenshot %s\n", n.Screenshot)
+	}
+	if len(n.Logs) > 0 {
+		var parts []string
+		for _, l := range n.Logs {
+			parts = append(parts, fmt.Sprintf("%s (%d)", l.Service, len(l.Lines)))
+		}
+		out.Printf("     logs %s\n", strings.Join(parts, ", "))
 	}
 	if n.Posted != "" {
 		out.Printf("     posted %s\n", n.Posted)

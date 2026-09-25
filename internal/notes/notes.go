@@ -47,8 +47,26 @@ type Note struct {
 	// Uncaptured says why the page was not loaded, when it was not:
 	// the sandbox was not running, there was no browser.
 	Uncaptured string `json:"uncaptured,omitempty"`
+	// Logs are what the services wrote around the time of the note:
+	// while pit loaded the page, and a little before.
+	Logs []Log `json:"logs,omitempty"`
 	// Posted is the comment the note went into, once it did.
 	Posted string `json:"posted,omitempty"`
+}
+
+// Log is what one service wrote around the time of a note.
+type Log struct {
+	Service string    `json:"service"`
+	Lines   []LogLine `json:"lines"`
+	// Skipped counts the earlier lines in the window left out, when
+	// there were more than a comment should carry.
+	Skipped int `json:"skipped,omitempty"`
+}
+
+// LogLine is one line a service wrote, and when.
+type LogLine struct {
+	At   time.Time `json:"at"`
+	Text string    `json:"text"`
 }
 
 // Captured reports whether the page was loaded for the note.

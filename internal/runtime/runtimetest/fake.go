@@ -43,6 +43,9 @@ type Fake struct {
 	// Lines are what LogsSince returns, from the moment it is asked
 	// for.
 	Lines []runtime.LogLine
+	// ServiceLines are what LogsSince returns for a service, in place
+	// of Lines, for a test about which service wrote what.
+	ServiceLines map[string][]runtime.LogLine
 	// ReadyAfter is how many WaitReady calls fail before one succeeds.
 	ReadyAfter int
 	// Fail maps a method name to the error it should return.
@@ -216,8 +219,12 @@ func (f *Fake) LogsSince(_ context.Context, s runtime.Sandbox, service string, s
 	if err := f.failure("LogsSince"); err != nil {
 		return nil, err
 	}
+	lines := f.Lines
+	if own, ok := f.ServiceLines[service]; ok {
+		lines = own
+	}
 	var out []runtime.LogLine
-	for _, l := range f.Lines {
+	for _, l := range lines {
 		if l.At.After(since) {
 			out = append(out, l)
 		}

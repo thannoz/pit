@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/thannoz/pit/internal/inspect"
 	"github.com/thannoz/pit/internal/notes"
+	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/runtime/runtimetest"
 	"github.com/thannoz/pit/internal/state"
 )
 
@@ -260,5 +263,89 @@ func TestNoteJSON(t *testing.T) {
 	var list []notes.Note
 	if err != nil || json.Unmarshal([]byte(out), &list) != nil || len(list) != 1 || len(list[0].Problems) != 4 {
 		t.Errorf("%v:\n%s", err, out)
+	}
+}
+
+// TestNotesKeepTheLogsAroundThem: what the services wrote while pit
+// loaded the page, and in the half minute before, is kept with the
+// note -- not what came long before, and not the whole log.
+func TestNotesKeepTheLogsAroundThem(t *testing.T) {
+	m, box := runningBox(t)
+	if err := m.Store.Update(func(f *state.File) error {
+		box.WebService = "web"
+		f.Put(box)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fake := m.Runtime.(*runtimetest.Fake)
+	fake.Declared = []string{"db", "cache", "web"}
+	now := time.Now()
+	web := []runtime.LogLine{
+		{At: now.Add(-2 * time.Minute), Text: "GET / 200 (long before)"},
+	}
+	for i := range 35 {
+		web = append(web, runtime.LogLine{At: now.Add(-20*time.Second + time.Duration(i)*100*time.Millisecond), Text: fmt.Sprintf("GET /orders/%d 200", i)})
+	}
+	web = append(web, runtime.LogLine{At: now.Add(time.Hour), Text: "GET / 200 (long after)"})
+	fake.ServiceLines = map[string][]runtime.LogLine{
+		"web":   web,
+		"db":    {{At: now.Add(-5 * time.Second), Text: `ERROR:  column "refunded_cents" does not exist`}},
+		"cache": {{At: now.Add(-10 * time.Minute), Text: "Ready to accept connections"}},
+	}
+	fake.Lines = nil
+
+	withPage(t, nil, nil)
+	out, _, err := run(t, "note", "482", "The refund total ignores the voucher")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "logs web (30), db (1)") {
+		t.Errorf("output:\n%s", out)
+	}
+	list, _ := m.Notes("github.com/acme/shop", "acme-shop-c56680", 482).List()
+	logs := list[0].Logs
+	if len(logs) != 2 || logs[0].Service != "web" || logs[1].Service != "db" {
+		t.Fatalf("logs = %+v", logs)
+	}
+	if logs[0].Skipped != 5 || len(logs[0].Lines) != 30 || logs[0].Lines[0].Text != "GET /orders/5 200" || logs[0].Lines[29].Text != "GET /orders/34 200" {
+		t.Errorf("web kept %d, skipped %d, from %q", len(logs[0].Lines), logs[0].Skipped, logs[0].Lines[0].Text)
+	}
+	for _, l := range logs[0].Lines {
+		if strings.Contains(l.Text, "long") {
+			t.Errorf("kept %q", l.Text)
+		}
+	}
+
+	// Without loading the page, the half minute before the note.
+	if _, _, err := run(t, "note", "482", "Totals overlap", "--no-capture"); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = m.Notes("github.com/acme/shop", "acme-shop-c56680", 482).List()
+	if len(list[1].Logs) != 2 {
+		t.Errorf("--no-capture kept %+v", list[1].Logs)
+	}
+
+	// A log that cannot be read is left out, and the note is kept.
+	fake.Fail = map[string]error{"LogsSince": errors.New("docker is gone")}
+	if _, _, err := run(t, "note", "482", "Checkout button does nothing"); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = m.Notes("github.com/acme/shop", "acme-shop-c56680", 482).List()
+	if len(list) != 3 || len(list[2].Logs) != 0 {
+		t.Errorf("third = %+v", list[2])
+	}
+}
+
+// A sandbox that is not running has no logs to keep.
+func TestNoLogsFromAStoppedSandbox(t *testing.T) {
+	m, fake := withManager(t, recorded(482, "github.com/acme/shop", "acme-shop-c56680", "refunds", time.Minute))
+	fake.Lines = []runtime.LogLine{{At: time.Now(), Text: "GET / 200"}}
+	withPage(t, nil, nil)
+	if _, _, err := run(t, "note", "482", "Checkout button does nothing"); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := m.Notes("github.com/acme/shop", "acme-shop-c56680", 482).List(); len(list[0].Logs) != 0 {
+		t.Errorf("logs = %+v", list[0].Logs)
 	}
 }

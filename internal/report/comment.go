@@ -86,6 +86,7 @@ func Comment(in Input) string {
 		}
 		b.WriteString("\n")
 		writeFindings(&b, n)
+		writeLogs(&b, n)
 		if !sameScenario {
 			writeCommand(&b, "To see it yourself", in.PR, n.Scenario)
 		}
@@ -236,16 +237,7 @@ func short(sha string) string {
 // code sets text as code, with a fence of more backticks than it has
 // in a row: a message can have backticks of its own.
 func code(s string) string {
-	run, longest := 0, 0
-	for _, r := range s {
-		if r == '`' {
-			run++
-			longest = max(longest, run)
-		} else {
-			run = 0
-		}
-	}
-	fence := strings.Repeat("`", longest+1)
+	fence := strings.Repeat("`", longestRun(s, '`')+1)
 	if strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") {
 		s = " " + s + " "
 	}
