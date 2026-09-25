@@ -354,3 +354,11 @@ func TestParamsWithNamesAndValuesAreAccepted(t *testing.T) {
 		t.Fatalf("usable params were rejected: %v", err)
 	}
 }
+
+func TestMigrationPatternsAreChecked(t *testing.T) {
+	err := loadBroken(t, "web:\n  service: web\n  port: 80\ndata:\n  migrations:\n    - \"db/schema/*.sql\"\n    - \"db/[schema/*.sql\"\n", nil)
+	msg := err.Error()
+	if !strings.Contains(msg, "data.migrations[1]") || strings.Contains(msg, "data.migrations[0]") || !hasLineNumber.MatchString(msg) {
+		t.Errorf("message:\n%s", msg)
+	}
+}

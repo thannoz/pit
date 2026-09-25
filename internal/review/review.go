@@ -93,7 +93,7 @@ type Input struct {
 // within each, pages before endpoints. The order is the order a
 // reviewer with little time should go in.
 func Build(ctx context.Context, in Input) (Checklist, error) {
-	files := analysis.Classify(in.Diff, in.Config.Review.Ignore)
+	files := analysis.ClassifyWith(in.Diff, analysis.Options{Ignore: in.Config.Review.Ignore, Migrations: in.Config.Data.Migrations})
 
 	guide, err := analysis.Entrypoints(ctx, in.Head, files, in.Analyzers, in.Linkers)
 	if err != nil {

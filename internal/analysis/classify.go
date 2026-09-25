@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -86,11 +87,29 @@ func (f File) OnChecklist() bool {
 // A deleted file is classified by where it was. A deleted endpoint is
 // still an endpoint, and a more interesting one than most.
 func Classify(d diff.Diff, ignore []string) []File {
+	return ClassifyWith(d, Options{Ignore: ignore})
+}
+
+// Options are what a project says about its own files.
+type Options struct {
+	// Ignore are patterns of files that never belong on a checklist.
+	Ignore []string
+	// Migrations are patterns of the files that are migrations. When
+	// there are any, they decide alone: a project that says where its
+	// migrations are knows better than the usual places.
+	Migrations []string
+}
+
+// ClassifyWith is Classify with what the project says about its files.
+func ClassifyWith(d diff.Diff, o Options) []File {
 	out := make([]File, 0, len(d.Files))
 	for _, f := range d.Files {
 		kind, reason := kindOf(f.Path)
+		if len(o.Migrations) > 0 {
+			kind, reason = migrationOrNot(f.Path, kind, reason, o.Migrations)
+		}
 		c := File{File: f, Kind: kind, Reason: reason}
-		for _, pattern := range ignore {
+		for _, pattern := range o.Ignore {
 			if glob.Match(pattern, f.Path) {
 				c.Ignored = pattern
 				break
@@ -345,11 +364,30 @@ var rules = []rule{
 
 // kindOf applies the rules in order.
 func kindOf(p string) (Kind, string) {
+	return kindBy(p, func(Kind) bool { return true })
+}
+
+// kindBy is kindOf with only the rules for kinds that count.
+func kindBy(p string, counts func(Kind) bool) (Kind, string) {
 	f := factsOf(p)
 	for _, r := range rules {
-		if r.match(f) {
+		if counts(r.kind) && r.match(f) {
 			return r.kind, r.reason
 		}
 	}
 	return Other, "no rule recognised it"
+}
+
+// migrationOrNot decides by the project's patterns whether a file is a
+// migration; one that is not is what the other rules make of it.
+func migrationOrNot(p string, kind Kind, reason string, patterns []string) (Kind, string) {
+	for _, pattern := range patterns {
+		if glob.Match(pattern, p) {
+			return Migration, fmt.Sprintf("a migration, by data.migrations %q", pattern)
+		}
+	}
+	if kind != Migration {
+		return kind, reason
+	}
+	return kindBy(p, func(k Kind) bool { return k != Migration })
 }

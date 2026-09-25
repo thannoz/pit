@@ -66,6 +66,7 @@ func (c *Config) validate(node *yaml.Node, dir, file string) error {
 	p = append(p, c.checkScenarioSnapshots(node, dir)...)
 	p = append(p, c.checkCommands(node)...)
 	p = append(p, c.checkIgnore(node)...)
+	p = append(p, checkPatterns(node, c.Data.Migrations, "data", "migrations")...)
 	p = append(p, c.checkEnv(node, dir)...)
 
 	if len(p) == 0 {
@@ -366,12 +367,18 @@ func (c *Config) knownScenarios() string {
 // which is found out as a checklist full of files that were supposed
 // to be ignored.
 func (c *Config) checkIgnore(node *yaml.Node) []Problem {
+	return checkPatterns(node, c.Review.Ignore, "review", "ignore")
+}
+
+// checkPatterns makes sure every pattern in a list at section.key can
+// match something.
+func checkPatterns(node *yaml.Node, patterns []string, section, key string) []Problem {
 	var p []Problem
-	for i, pattern := range c.Review.Ignore {
+	for i, pattern := range patterns {
 		if err := glob.Valid(pattern); err != nil {
 			p = append(p, Problem{
-				Line: lineOfIndex(node, i, "review", "ignore"),
-				Path: fmt.Sprintf("review.ignore[%d]", i),
+				Line: lineOfIndex(node, i, section, key),
+				Path: fmt.Sprintf("%s.%s[%d]", section, key, i),
 				Msg:  fmt.Sprintf("is %q, which is not a pattern that can match anything", pattern),
 				Hint: "check the brackets; ** stands for any number of directories",
 			})

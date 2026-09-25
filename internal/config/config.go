@@ -103,6 +103,10 @@ type Data struct {
 	// is a different problem from a hook that fails: it is the change
 	// under review often enough to deserve being named.
 	Migrate []string `yaml:"migrate"`
+	// Migrations are glob patterns for the files that are migrations,
+	// for a project whose migrations live where pit would not look:
+	// "db/schema/*.sql". Empty lets pit go by the usual places.
+	Migrations []string `yaml:"migrations"`
 	// Snapshot says how to dump and restore that service.
 	Snapshot Snapshot `yaml:"snapshot"`
 	// SnapshotLimit is how much a snapshot may hold, measured as what

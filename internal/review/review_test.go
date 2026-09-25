@@ -3,6 +3,7 @@ package review_test
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -136,5 +137,15 @@ func TestLinksAreFilledFromValuesGivenApart(t *testing.T) {
 	}
 	if u := c.Items[0].URL; u != "http://localhost:41234/orders/1002" {
 		t.Errorf("URL = %q", u)
+	}
+}
+
+// A project that says where its migrations are is heard: the warning is
+// about its migration, not about a file in a folder that looks like it.
+func TestMigrationsWhereTheProjectSays(t *testing.T) {
+	yaml := "web:\n  service: web\n  port: 3000\ndata:\n  migrations: [\"db/schema/*.sql\"]\n"
+	c := build(t, yaml, "", nil, "db/schema/0003_vat.sql", "db/migrations/helpers.go")
+	if len(c.Warnings) != 1 || !strings.Contains(c.Warnings[0].Message, "db/schema/0003_vat.sql") {
+		t.Errorf("warnings %+v", c.Warnings)
 	}
 }
