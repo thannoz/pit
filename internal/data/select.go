@@ -1,6 +1,7 @@
 package data
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/thannoz/pit/internal/config"
@@ -64,11 +65,28 @@ func unknown(c *config.Config, name string) error {
 	e := errs.New("there is no scenario named %q", name)
 
 	names := c.ScenarioNames()
-	if len(names) == 0 {
-		return e.WithHint("no scenarios are configured; add one under data.scenarios in the .pit.yaml")
+	switch near := suggest.Closest(name, names); {
+	case len(names) == 0:
+		e = e.WithHint("no scenarios are configured; add one under data.scenarios in the .pit.yaml")
+	case near != "":
+		e = e.WithHint("did you mean %q? configured scenarios: %s", near, strings.Join(names, ", "))
+	default:
+		e = e.WithHint("configured scenarios: %s", strings.Join(names, ", "))
 	}
-	if near := suggest.Closest(name, names); near != "" {
-		return e.WithHint("did you mean %q? configured scenarios: %s", near, strings.Join(names, ", "))
-	}
-	return e.WithHint("configured scenarios: %s", strings.Join(names, ", "))
+	return unknownScenario{e}
+}
+
+// unknownScenario is the error of a scenario that is not configured,
+// for a caller that has something better to say about it. It says what
+// the error it carries says, hint and all.
+type unknownScenario struct{ err *errs.Error }
+
+func (u unknownScenario) Error() string { return u.err.Error() }
+func (u unknownScenario) Unwrap() error { return u.err }
+
+// IsUnknownScenario reports whether err is about a scenario that is not
+// configured.
+func IsUnknownScenario(err error) bool {
+	var u unknownScenario
+	return errors.As(err, &u)
 }

@@ -31,14 +31,51 @@ type upOptions struct {
 // runUp builds the sandbox for a pull request. It is what `pit 482`
 // does; the root command dispatches here when its argument is a number.
 func runUp(c *cobra.Command, o *upOptions, arg string) error {
+	plan, err := prepareUp(c, o, arg)
+	if err != nil {
+		return err
+	}
+	record, err := plan.up(o.base, o.scenario)
+	if err != nil {
+		return err
+	}
+
+	// The URL is the answer, so it goes to stdout on its own line. The
+	// narration went to stderr, which is what makes `pit 482` usable
+	// in a pipe.
+	plan.rep.Blank()
+	plan.out.Println(record.URL)
+	if o.open {
+		openInBrowser(c.Context(), plan.out, record.URL)
+	}
+	return nil
+}
+
+// upPlan is what bringing up a pull request's sandboxes needs, found
+// out once: the repository, the pull request, where the data comes
+// from.
+type upPlan struct {
+	c    *cobra.Command
+	out  *ui.Printer
+	rep  *stepReporter
+	m    *sandbox.Manager
+	repo workspace.Repo
+	pull forge.PR
+	snap *snapshot.Snapshot
+}
+
+// prepareUp checks everything that can be checked before anything is
+// created: finding out that gh is missing after a worktree exists is a
+// worse experience than finding out now.
+func prepareUp(c *cobra.Command, o *upOptions, arg string) (*upPlan, error) {
 	pr, err := strconv.Atoi(arg)
 	if err != nil || pr <= 0 {
-		return errs.New("%q is not a pull request number", arg).
+		return nil, errs.New("%q is not a pull request number", arg).
 			WithHint("run `pit --help` to see the available commands")
 	}
 
 	if o.scenario != "" && o.snapshot != "" {
-		return errs.New("--scenario and --snapshot both say where the data comes from").
+		return nil, errs.New("--scenario and --snapshot both say where the data comes from").
 			WithHint("pick one: a scenario the repository describes, or a snapshot someone saved")
 	}
 
@@ -47,30 +84,26 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 
 	repo, err := currentRepo(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Looked up before anything else happens: a mistyped ID is cheaper
 	// to hear about now than after a build.
 	m, err := manager()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var snap *snapshot.Snapshot
 	if o.snapshot != "" {
 		found, err := m.Snapshots(state.Sandbox{RepoRef: repo.Identity.Ref()}).Find(o.snapshot)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		snap = &found
 	}
-	cfg, _, err := config.LoadFrom(repo.Root)
-	if err != nil {
-		return err
+	if _, _, err := config.LoadFrom(repo.Root); err != nil {
+		return nil, err
 	}
 
-	// Everything that can be checked before anything is created gets
-	// checked first: finding out that gh is missing after a worktree
-	// exists is a worse experience than finding out now.
 	f, err := forge.For(forge.Options{
 		Host:     repo.Identity.Host,
 		Repo:     repo.Identity.Owner + "/" + repo.Identity.Name,
@@ -79,47 +112,46 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 		Dir:      repo.Root,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if gh, ok := f.(forge.GitHub); ok {
 		if err := gh.Check(ctx); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	pull, err := f.PullRequest(ctx, pr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	out.Printf("%s\n", pull.Describe())
 	warnIfNotWorthReviewing(out, pull, repo.Identity.Host)
 
-	rep := newStepReporter(out, c.ErrOrStderr())
-	record, err := m.Up(ctx, sandbox.UpRequest{
-		Repo:     repo,
-		PR:       pull,
+	return &upPlan{c: c, out: out, rep: newStepReporter(out, c.ErrOrStderr()), m: m, repo: repo, pull: pull, snap: snap}, nil
+}
+
+// up brings up the pull request's sandbox, or its base's, with a
+// scenario -- or the snapshot the plan was made with.
+func (p *upPlan) up(base bool, scenario string) (state.Sandbox, error) {
+	// Read for each sandbox: bringing one up adopts the pull request's
+	// file, and the next one starts from the reviewer's again.
+	cfg, _, err := config.LoadFrom(p.repo.Root)
+	if err != nil {
+		return state.Sandbox{}, err
+	}
+	c, out, m := p.c, p.out, p.m
+	return m.Up(c.Context(), sandbox.UpRequest{
+		Repo:     p.repo,
+		PR:       p.pull,
 		Config:   cfg,
-		Scenario: o.scenario,
-		Snapshot: snap,
+		Scenario: scenario,
+		Snapshot: p.snap,
 		Confirm:  func(question string) bool { return ask(c, out, question) },
 		OfferSave: func(box state.Sandbox) error {
 			return saveBeforeReplacing(c, m, out, box, true)
 		},
-		Base: o.base,
-	}, rep)
-	if err != nil {
-		return err
-	}
-
-	// The URL is the answer, so it goes to stdout on its own line. The
-	// narration went to stderr, which is what makes `pit 482` usable
-	// in a pipe.
-	rep.Blank()
-	out.Println(record.URL)
-	if o.open {
-		openInBrowser(ctx, out, record.URL)
-	}
-	return nil
+		Base: base,
+	}, p.rep)
 }
 
 // warnIfNotWorthReviewing says so when the pull request is already

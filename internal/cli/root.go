@@ -90,6 +90,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd.AddCommand(
 		newBaseCmd(opts),
+		newCompareCmd(opts),
 		newDataCmd(opts),
 		newDoctorCmd(opts),
 		newDownCmd(opts),
