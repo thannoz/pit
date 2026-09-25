@@ -95,6 +95,10 @@ type Sandbox struct {
 	// ProbedAt is when pit last asked the sandbox whether it answers.
 	// Its own requests are not a reviewer's visits.
 	ProbedAt time.Time `json:"probedAt,omitempty"`
+	// Browsed are the times pit itself loaded the sandbox's pages, for
+	// pit inspect. What was requested then was pit, not a reviewer.
+	// Only the latest are kept.
+	Browsed []Span `json:"browsed,omitempty"`
 	// Checked are the addresses of `pit what` the reviewer has looked
 	// at. Kept across updates of the sandbox: a new commit makes a
 	// check stale only where it touches what led to the address.
@@ -149,6 +153,22 @@ func Millis(d time.Duration) int64 {
 	}
 	return d.Milliseconds()
 }
+
+// Span is a stretch of time.
+type Span struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+}
+
+// Contains reports whether t is within the span, give or take a second
+// either side: the time a container logs a request by and the time on
+// this machine need not agree to the millisecond.
+func (s Span) Contains(t time.Time) bool {
+	return !t.Before(s.From.Add(-time.Second)) && !t.After(s.To.Add(time.Second))
+}
+
+// MaxBrowsed is how many spans of pit's own browsing a sandbox keeps.
+const MaxBrowsed = 20
 
 // Key identifies a sandbox: a pull request number means nothing without
 // the repository it belongs to.

@@ -367,3 +367,17 @@ func TestTheBuildCacheIsFineByDefault(t *testing.T) {
 		t.Errorf("build cache = %+v on an ordinary machine", f)
 	}
 }
+
+func TestBrowserIsAWarningAtMost(t *testing.T) {
+	e := env(t, healthyRunner())
+	e.FindBrowser = func() (string, error) { return "", errors.New("none") }
+	report := doctor.Run(t.Context(), doctor.Default(e))
+	f := findingFor(t, report, "browser")
+	if f.Result != doctor.Warn || !strings.Contains(f.Fix, "PIT_BROWSER") || report.Failed() {
+		t.Errorf("finding = %+v, failed %v", f, report.Failed())
+	}
+	e.FindBrowser = func() (string, error) { return "/usr/bin/chromium", nil }
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "browser"); f.Result != doctor.OK || f.Detail != "/usr/bin/chromium" {
+		t.Errorf("finding = %+v", f)
+	}
+}

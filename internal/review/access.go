@@ -48,13 +48,14 @@ func Visits(lines []runtime.LogLine) []Visit {
 // pit's own requests do not count. The one that made sure the sandbox
 // answers happened before it was recorded as up; a later one, when a
 // running sandbox is reused, asked for the root, and a request for the
-// root counts only after it.
-func Covered(list Checklist, visits []Visit, since, probed time.Time) map[int]time.Time {
+// root counts only after it. What pit inspect loaded happened within
+// the spans own.
+func Covered(list Checklist, visits []Visit, since, probed time.Time, own ...state.Span) map[int]time.Time {
 	out := map[int]time.Time{}
 	for i, it := range list.Items {
 		re := addressPattern(it.Path)
 		for _, v := range visits {
-			if !v.At.After(since) || (v.Path == "/" && !v.At.After(probed)) {
+			if !v.At.After(since) || (v.Path == "/" && !v.At.After(probed)) || byPit(v, own) {
 				continue
 			}
 			if !re.MatchString(v.Path) || !methodFits(it, v.Method) {
@@ -66,6 +67,15 @@ func Covered(list Checklist, visits []Visit, since, probed time.Time) map[int]ti
 		}
 	}
 	return out
+}
+
+func byPit(v Visit, own []state.Span) bool {
+	for _, s := range own {
+		if s.Contains(v.At) {
+			return true
+		}
+	}
+	return false
 }
 
 // methodFits reports whether a request's method is one the item is

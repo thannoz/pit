@@ -107,7 +107,7 @@ func recordVisits(ctx context.Context, out *ui.Printer, m *sandbox.Manager, box 
 		out.Notef("%s logs no requests pit can read, so visits are not checked off; --done marks them by hand", box.WebService)
 		return box, nil
 	}
-	return review.RecordVisits(m.Store, box, list, review.Covered(list, visits, box.CreatedAt, box.ProbedAt))
+	return review.RecordVisits(m.Store, box, list, review.Covered(list, visits, box.CreatedAt, box.ProbedAt, box.Browsed...))
 }
 
 // answers reports whether something listens on the sandbox's port. A

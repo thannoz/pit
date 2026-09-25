@@ -171,3 +171,24 @@ func TestAVisitAfterTakingAMarkBackCounts(t *testing.T) {
 		}
 	}
 }
+
+// What pit inspect loaded is pit's doing, not the reviewer's.
+func TestCoveredLeavesOutPitsOwnBrowsing(t *testing.T) {
+	list := review.Checklist{Items: []review.Item{{Path: "/orders/{id}", Kind: analysis.Page}}}
+	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	own := state.Span{From: base.Add(10 * time.Second), To: base.Add(12 * time.Second)}
+	visits := []review.Visit{{Method: "GET", Path: "/orders/1001", At: base.Add(11 * time.Second)}}
+	if c := review.Covered(list, visits, base, base, own); len(c) != 0 {
+		t.Errorf("counted pit's own request: %v", c)
+	}
+	// Half a second after the span may still be pit's, with the clocks
+	// apart; five seconds after is the reviewer.
+	visits = append(visits, review.Visit{Method: "GET", Path: "/orders/1001", At: base.Add(12*time.Second + 500*time.Millisecond)})
+	if c := review.Covered(list, visits, base, base, own); len(c) != 0 {
+		t.Errorf("counted pit's own request, logged a moment late: %v", c)
+	}
+	visits = append(visits, review.Visit{Method: "GET", Path: "/orders/1001", At: base.Add(17 * time.Second)})
+	if c := review.Covered(list, visits, base, base, own); c[0] != base.Add(17*time.Second) {
+		t.Errorf("covered = %v", c)
+	}
+}

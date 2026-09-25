@@ -31,6 +31,9 @@ type Environment struct {
 	// Getenv reads the environment the checks run in. It is a field so
 	// that a test can describe a machine without becoming one.
 	Getenv func(string) string
+	// FindBrowser looks for the browser pit inspect drives; nil leaves
+	// the check out.
+	FindBrowser func() (string, error)
 }
 
 // Default is the list of checks pit doctor runs.
@@ -48,6 +51,24 @@ func Default(env Environment) []Check {
 		env.buildCache(),
 		env.configuration(),
 		env.strayProjects(),
+		env.browser(),
+	}
+}
+
+// browser says whether pit inspect has a browser to drive. Only a
+// warning: everything else pit does works without one.
+func (env Environment) browser() Check {
+	const name = "browser"
+	return func(context.Context) Finding {
+		if env.FindBrowser == nil {
+			return Finding{Name: name, Result: OK, Detail: "not checked"}
+		}
+		path, err := env.FindBrowser()
+		if err != nil {
+			return Finding{Name: name, Result: Warn, Detail: "no Chrome or Chromium found, so pit inspect cannot load pages",
+				Fix: "install Chrome, or set PIT_BROWSER to a Chrome or Chromium executable"}
+		}
+		return Finding{Name: name, Result: OK, Detail: path}
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/thannoz/pit/internal/doctor"
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/inspect"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
@@ -33,7 +34,7 @@ in a setup script.`,
 }
 
 func runDoctor(c *cobra.Command, opts *globalOptions) error {
-	env := doctor.Environment{Runner: proc.Exec{}, WorkDir: workDir(), Getenv: os.Getenv}
+	env := doctor.Environment{Runner: proc.Exec{}, WorkDir: workDir(), Getenv: os.Getenv, FindBrowser: inspect.FindBrowser}
 
 	// The state directory is itself one of the things under test, so a
 	// failure to open it becomes a finding rather than an error.
