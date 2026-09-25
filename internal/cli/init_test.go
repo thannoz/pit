@@ -455,3 +455,111 @@ func TestInitWithoutAComposeFile(t *testing.T) {
 		t.Errorf("err = %v, hint %q", err, errs.Hint(err))
 	}
 }
+
+// devProject is a project that has a devcontainer.json and no compose
+// file.
+func devProject(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(dir)
+	return dir
+}
+
+func TestInitReadsADevcontainer(t *testing.T) {
+	dir := devProject(t, map[string]string{
+		".devcontainer/devcontainer.json": `{
+			// microsoft/vscode-remote-try-node's, which forwards no port
+			"image": "mcr.microsoft.com/devcontainers/javascript-node:1-18-bullseye",
+			"portsAttributes": {"3000": {"label": "Hello Remote World"}},
+			"postCreateCommand": "npm install"
+		}`,
+		"package.json": `{"scripts": {"start": "node server.js", "dev": "nodemon"}}`,
+	})
+	out, err := runInitCmd(t, "")
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Wrote .pit.yaml: dev on port 3000, from .devcontainer/devcontainer.json") {
+		t.Errorf("out = %s", out)
+	}
+	c, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Devcontainer.File != ".devcontainer/devcontainer.json" || c.Devcontainer.Start != "npm start" ||
+		c.Web.Service != "dev" || c.Web.Port != 3000 || len(c.Compose.Files) != 0 {
+		t.Errorf("config = %+v", c)
+	}
+}
+
+func TestInitReadsADevcontainerOfComposeFiles(t *testing.T) {
+	dir := devProject(t, map[string]string{
+		".devcontainer/devcontainer.json": `{"dockerComposeFile": "compose.yml", "service": "app", "forwardPorts": ["db:5432", 8001]}`,
+		".devcontainer/compose.yml":       "services:\n  app:\n    build: .\n    ports: [\"8000:8000\"]\n  db:\n    image: postgres:16\n",
+		"package.json":                    `{"scripts": {"dev": "vite"}}`,
+	})
+	if out, err := runInitCmd(t, ""); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	c, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The service worked in, the port the file forwards for it before
+	// the one its compose file names -- not the database's -- and the
+	// database found for the data section.
+	if c.Web.Service != "app" || c.Web.Port != 8001 || c.Devcontainer.Start != "npm run dev" || c.Data.Service != "db" {
+		t.Errorf("config = %+v", c)
+	}
+}
+
+func TestInitWithADevcontainerAndAComposeFileTakesTheComposeFile(t *testing.T) {
+	dir := devProject(t, map[string]string{
+		".devcontainer/devcontainer.json": `{"image": "node"}`,
+		"compose.yaml":                    "services:\n  web:\n    image: nginx\n",
+	})
+	if _, err := runInitCmd(t, "", "--port", "80"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil || c.Devcontainer.File != "" || c.Compose.Files[0] != "compose.yaml" {
+		t.Errorf("%+v, %v", c, err)
+	}
+}
+
+func TestInitWithABrokenDevcontainer(t *testing.T) {
+	devProject(t, map[string]string{".devcontainer/devcontainer.json": `{"name": "nothing to run"}`})
+	_, err := runInitCmd(t, "")
+	if err == nil || !strings.Contains(err.Error(), "neither which image") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestStartOf(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"scripts": {"start": "node ."}}`: "npm start",
+		`{"scripts": {"dev": "vite"}}`:     "npm run dev",
+		`{"scripts": {"test": "jest"}}`:    "",
+		`not json`:                         "",
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := startOf(dir); got != want {
+			t.Errorf("%s: got %q, want %q", body, got, want)
+		}
+	}
+	if got := startOf(t.TempDir()); got != "" {
+		t.Errorf("without a package.json: %q", got)
+	}
+}

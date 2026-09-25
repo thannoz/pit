@@ -207,3 +207,13 @@ func OverridePathIn(repoDir string, pr int, slot string) string {
 	}
 	return filepath.Join(repoDir, "pr-"+strconv.Itoa(pr)+"-"+slot+".compose.override.yml")
 }
+
+// DevcontainerPathIn is where the compose file pit writes from a
+// devcontainer.json lives, beside the override.
+func DevcontainerPathIn(repoDir string, pr int, slot string) string {
+	name := "pr-" + strconv.Itoa(pr)
+	if slot != "" {
+		name += "-" + slot
+	}
+	return filepath.Join(repoDir, name+".devcontainer.yml")
+}

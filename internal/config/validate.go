@@ -123,6 +123,41 @@ func (c *Config) checkCompose(node *yaml.Node, dir string) []Problem {
 			})
 		}
 	}
+
+	if f := c.Devcontainer.File; f != "" {
+		if len(c.Compose.Files) > 0 {
+			p = append(p, Problem{
+				Line: lineOf(node, "devcontainer", "file"),
+				Path: "devcontainer.file",
+				Msg:  "is set together with compose.files; the services come from one or the other",
+				Hint: "a devcontainer.json that uses compose files names them itself",
+			})
+		}
+		info, err := os.Stat(filepath.Join(dir, f))
+		switch {
+		case err != nil:
+			p = append(p, Problem{
+				Line: lineOf(node, "devcontainer", "file"),
+				Path: "devcontainer.file",
+				Msg:  fmt.Sprintf("names %q, which does not exist", f),
+				Hint: "paths are relative to " + FileName,
+			})
+		case info.IsDir():
+			p = append(p, Problem{
+				Line: lineOf(node, "devcontainer", "file"),
+				Path: "devcontainer.file",
+				Msg:  fmt.Sprintf("names %q, which is a directory", f),
+				Hint: "name the devcontainer.json in it",
+			})
+		}
+	}
+	if c.Devcontainer.Start != "" && c.Devcontainer.File == "" {
+		p = append(p, Problem{
+			Line: lineOf(node, "devcontainer", "start"),
+			Path: "devcontainer.start",
+			Msg:  "is set without devcontainer.file; it starts the app in a dev container",
+		})
+	}
 	return p
 }
 

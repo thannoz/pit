@@ -14,6 +14,10 @@ type InitOptions struct {
 	// ComposeFiles are the compose files, relative to the repository
 	// root.
 	ComposeFiles []string
+	// Devcontainer is the devcontainer.json the services come from,
+	// instead of ComposeFiles, and Start what starts the app in it.
+	Devcontainer string
+	Start        string
 	// WebService is the service a reviewer opens.
 	WebService string
 	// WebPort is the port it listens on inside its container.
@@ -39,7 +43,7 @@ func Render(o InitOptions) ([]byte, error) {
 	if o.WebPort <= 0 || o.WebPort > 65535 {
 		return nil, errs.New("%d is not a usable port", o.WebPort)
 	}
-	if len(o.ComposeFiles) == 0 {
+	if len(o.ComposeFiles) == 0 && o.Devcontainer == "" {
 		o.ComposeFiles = []string{DefaultComposeFile}
 	}
 
@@ -124,16 +128,37 @@ var initTemplate = template.Must(template.New("pit.yaml").Parse(
 
 version: {{ .Version }}
 
+{{ if .Devcontainer -}}
+# The services come from the project's devcontainer.json: pit runs the
+# container it describes, and its lifecycle commands in it.
+devcontainer:
+  file: {{ .Devcontainer }}
+  # What starts the app in the container, once the lifecycle commands
+  # have run. A dev container is one to work in: nothing in it starts
+  # the app by itself.
+{{- if .Start }}
+  start: {{ printf "%q" .Start }}
+{{- else }}
+  # start: npm run dev
+{{- end }}
+{{- if .Services }}
+
+compose:
+{{- end }}
+{{- else -}}
 compose:
   files:
 {{- range .ComposeFiles }}
     - {{ . }}
 {{- end }}
+{{- end }}
+{{- if or (not .Devcontainer) .Services }}
   # Only these services, and whatever they depend on. Leaving it out
   # starts the whole project, which is right until one grows a queue
   # worker and a mail catcher that no review ever looks at.
   # services:
   #   - {{ .WebService }}
+{{- end }}
 
 # The service a reviewer opens, and the port it listens on inside its
 # container. pit chooses the published port itself, one per sandbox, so
@@ -245,6 +270,9 @@ data:
 
 // Summary describes what Render produced, for pit init to print.
 func (o InitOptions) Summary() string {
+	if o.Devcontainer != "" {
+		return fmt.Sprintf("%s on port %d, from %s", o.WebService, o.WebPort, o.Devcontainer)
+	}
 	return fmt.Sprintf("%s on port %d, from %s",
 		o.WebService, o.WebPort, strings.Join(o.ComposeFiles, ", "))
 }

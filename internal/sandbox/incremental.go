@@ -97,7 +97,7 @@ func (m *Manager) plan(ctx context.Context, req UpRequest, previous state.Sandbo
 	// Once either has moved, what a diff means cannot be worked out
 	// from the diff.
 	for _, f := range changed {
-		if f == config.FileName || listed(req.Config.Compose.Files, f) {
+		if f == config.FileName || f == req.Config.Devcontainer.File || listed(req.Config.Compose.Files, f) {
 			slog.DebugContext(ctx, "the setup itself changed, building everything", "file", f)
 			return everything(req.Config, worktree)
 		}
@@ -132,21 +132,46 @@ type service struct {
 // rather than built picks the new commit up from the worktree without
 // anyone doing anything.
 func buildableServices(c *config.Config, worktree string) ([]service, error) {
-	var out []service
+	var names []string
+	dirs := map[string]string{}
 
 	for _, file := range c.Compose.Files {
-		declared, err := runtime.ReadServices(filepath.Join(worktree, file))
+		declared, err := runtime.ReadServices(inWorktree(worktree, file))
 		if err != nil {
 			return nil, err
 		}
 		for _, s := range declared {
+			// A later file can take the build away, and one that says
+			// nothing of it leaves what an earlier file said.
+			if s.Unbuilt {
+				delete(dirs, s.Name)
+				continue
+			}
 			if s.Context == "" {
 				continue
 			}
 			// The context is relative to its own compose file, and
 			// the diff is relative to the repository root.
 			dir := filepath.Clean(filepath.Join(filepath.Dir(file), s.Context))
-			out = append(out, service{name: s.Name, dir: dir})
+			// A file pit wrote, from a devcontainer.json, names the
+			// context where it is.
+			if filepath.IsAbs(s.Context) {
+				rel, err := filepath.Rel(worktree, s.Context)
+				if err != nil {
+					return nil, err
+				}
+				dir = rel
+			}
+			if _, ok := dirs[s.Name]; !ok {
+				names = append(names, s.Name)
+			}
+			dirs[s.Name] = dir
+		}
+	}
+	var out []service
+	for _, n := range names {
+		if dir, ok := dirs[n]; ok {
+			out = append(out, service{name: n, dir: dir})
 		}
 	}
 	return out, nil

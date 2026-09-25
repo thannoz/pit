@@ -56,6 +56,7 @@ builds and starts the services; those lines are left out here.
 - [Install](#install)
 - [Try it on the demo](#try-it-on-the-demo)
 - [Use it on your project](#use-it-on-your-project)
+- [Dev containers](#dev-containers)
 - [Commands](#commands)
 - [What to look at: `pit what`](#what-to-look-at-pit-what)
 - [Data scenarios](#data-scenarios)
@@ -77,9 +78,9 @@ builds and starts the services; those lines are left out here.
   repositories on GitHub. Not needed for anything else — see
   [Where pull requests come from](#where-pull-requests-come-from).
 
-The project you review needs a working `docker-compose.yml`. If
-`docker compose up` brings it up on your machine, `pit` can bring up its pull
-requests.
+The project you review needs a working compose file, or a `devcontainer.json`.
+If `docker compose up` brings it up on your machine, `pit` can bring up its
+pull requests.
 
 ## Install
 
@@ -198,25 +199,22 @@ pit init
 
 It asks which service a reviewer opens in a browser, and on which port that
 service listens inside its container, then writes `.pit.yaml`. Pass
-`--service web --port 3000` to skip the questions. `pit` reads
-`docker-compose.yml` unless told otherwise; for a `compose.yaml`, or several
-files, pass `--compose-file` (once per file). The file `pit init` writes
-explains every setting in comments, with commented-out examples for
-migrations and scenarios; read it once.
+`--service web --port 3000` to skip the questions. `pit` finds the compose
+file the way Compose does (`compose.yaml`, `compose.yml`, `docker-compose.yaml`,
+`docker-compose.yml`); for another, or several, pass `--compose-file` (once per
+file). A project with no compose file but a `devcontainer.json` gets one that
+runs its dev container; see [Dev containers](#dev-containers). The file
+`pit init` writes explains every setting in comments, with commented-out
+examples for migrations and scenarios; read it once.
 
-Before the first review, check three things in your compose file, because a
-sandbox runs next to your own stack and next to other sandboxes:
-
-- **Published ports.** `pit` replaces the web service's published port with
-  one of its own. Ports other services publish, like `"5432:5432"` for the
-  database, are kept, and a second sandbox, or your own running stack, would
-  collide on them. A service that only other containers talk to does not need
-  a published port.
-- **`container_name`.** A fixed container name exists only once. Leave it out.
-- **Untracked files.** The sandbox is a fresh checkout. A `.env` file that is
-  not committed is not in it, and an `env_file:` that points at one fails.
-  Set what the services need in the compose file, or for the web service under
-  `env.set` in `.pit.yaml`.
+A sandbox runs next to your own stack and next to other sandboxes, so `pit`
+gives each one its own: the web service gets a port of its own, ports other
+services publish on your machine, like `"5432:5432"`, are taken away (inside
+the sandbox they are reached as before), and a fixed `container_name` gets the
+sandbox's name in front of it. One thing to check yourself: the sandbox is a
+fresh checkout, so a `.env` file that is not committed is not in it, and an
+`env_file:` that points at one fails. Set what the services need in the
+compose file, or for the web service under `env.set` in `.pit.yaml`.
 
 Then add what makes a review useful, both described in
 [Data scenarios](#data-scenarios):
@@ -245,6 +243,33 @@ a container mounts from it, like `./migrations` or `./src`, shows the new
 files. A single mounted file, like `./nginx.conf:/etc/nginx/nginx.conf`, does
 not: git replaces a changed file with a new one, and the container keeps the
 old. `pit down 482` and `pit 482` start that service afresh.
+
+## Dev containers
+
+A project that describes its environment in `.devcontainer/devcontainer.json`
+needs no compose file. `pit init` writes:
+
+```yaml
+devcontainer:
+  file: .devcontainer/devcontainer.json
+  start: npm start
+web:
+  service: dev
+  port: 3000
+```
+
+`pit` runs the container the file describes, from its `image`, its `build`, or
+its `dockerComposeFile`, with the pull request's checkout as the workspace. It
+runs the lifecycle commands in it as the file's user: `onCreateCommand`,
+`updateContentCommand` and `postCreateCommand` in a new container,
+`updateContentCommand` again when the pull request has a new commit, and
+`postStartCommand` each time. Then `devcontainer.start` starts the app. A dev
+container is one to work in, and nothing in it starts the app by itself.
+`pit init` takes the `start` or `dev` script of a `package.json`; for anything
+else, write the command yourself. What it prints is in `pit logs`.
+
+`pit` leaves out features, which it cannot install, and `initializeCommand`,
+which would run on your machine; it says so when a file has them.
 
 ## Commands
 
@@ -502,8 +527,10 @@ machine, in the sandbox's worktree.
 | Key | Default | Meaning |
 |---|---|---|
 | `version` | `1` | Schema version. |
-| `compose.files` | `[docker-compose.yml]` | Compose files, relative to the repository root, in merge order. |
+| `compose.files` | the one Compose finds | Compose files, relative to the repository root, in merge order. |
 | `compose.services` | all | The services a review needs. What they depend on comes with them. |
+| `devcontainer.file` | none | A `devcontainer.json`, in place of `compose.files`. See [Dev containers](#dev-containers). |
+| `devcontainer.start` | none | The command that starts the app in the dev container, after its lifecycle commands. |
 | `web.service` | *required* | The service a reviewer opens in a browser. |
 | `web.port` | *required* | The port it listens on **inside** its container. `pit` picks the published port itself, one per sandbox, from 40000–49999. |
 | `healthcheck.url` | `http://{host}:{port}/` | Polled until it answers. `{host}` becomes `localhost`, `{port}` the sandbox's published port. |

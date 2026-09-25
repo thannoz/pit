@@ -14,15 +14,18 @@ type Config struct {
 	// default until Load finds which file Compose would take.
 	composeUnnamed bool
 
-	Version     int         `yaml:"version"`
-	Compose     Compose     `yaml:"compose"`
-	Web         Web         `yaml:"web"`
-	Healthcheck Healthcheck `yaml:"healthcheck"`
-	Hooks       Hooks       `yaml:"hooks"`
-	Build       Build       `yaml:"build"`
-	Data        Data        `yaml:"data"`
-	Review      Review      `yaml:"review"`
-	Env         Env         `yaml:"env"`
+	Version int     `yaml:"version"`
+	Compose Compose `yaml:"compose"`
+	// Devcontainer takes the services from a devcontainer.json instead
+	// of compose files.
+	Devcontainer Devcontainer `yaml:"devcontainer,omitempty"`
+	Web          Web          `yaml:"web"`
+	Healthcheck  Healthcheck  `yaml:"healthcheck"`
+	Hooks        Hooks        `yaml:"hooks"`
+	Build        Build        `yaml:"build"`
+	Data         Data         `yaml:"data"`
+	Review       Review       `yaml:"review"`
+	Env          Env          `yaml:"env"`
 
 	// Dir is the directory the file was read from. The paths a scenario
 	// loads are relative to it, and it is not the same directory for
@@ -45,6 +48,18 @@ type Compose struct {
 	// worker, a mail catcher, an analytics sink -- cost minutes of
 	// build and answer nothing a reviewer asked.
 	Services []string `yaml:"services"`
+}
+
+// Devcontainer says the project's environment is described by a
+// devcontainer.json, the file editors and Codespaces use. pit runs the
+// container it describes, with Compose, and the lifecycle commands in it.
+type Devcontainer struct {
+	// File is the devcontainer.json, relative to the repository root.
+	File string `yaml:"file,omitempty"`
+	// Start starts the app in the container, after the lifecycle
+	// commands: a dev container is usually one to work in, and
+	// nothing in it starts the app on its own.
+	Start string `yaml:"start,omitempty"`
 }
 
 // Web identifies the service a reviewer opens in a browser.

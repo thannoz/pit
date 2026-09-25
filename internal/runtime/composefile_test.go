@@ -148,3 +148,13 @@ func TestReadServicesFindsWhatSandboxesWouldShare(t *testing.T) {
 		t.Errorf("services %v", got)
 	}
 }
+
+func TestReadServicesSeesABuildTakenAway(t *testing.T) {
+	got, err := ReadServices(composeFileAt(t, "services:\n  web:\n    build: !reset null\n    image: golang:1.27-alpine\n  api:\n    build: ./api\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got[0].Unbuilt || got[0].Context != "" || got[1].Unbuilt || got[1].Context != "./api" {
+		t.Errorf("services = %+v", got)
+	}
+}

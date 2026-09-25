@@ -31,6 +31,9 @@ type Service struct {
 	// reads them rather than leaving it to Compose: what is started
 	// is also what has to be built.
 	DependsOn []string
+	// Unbuilt says the file takes away a build an earlier file gave the
+	// service, with `build: !reset null`: it runs its image instead.
+	Unbuilt bool
 	// Named says the file gives its container a fixed name, which a
 	// second sandbox of the project could not have too.
 	Named bool
@@ -87,6 +90,9 @@ func dependencies(n yaml.Node) []string {
 // rare, and treating it as part of the context would be wrong in the
 // other direction.
 func buildContext(n yaml.Node) string {
+	if n.Tag == "!reset" {
+		return ""
+	}
 	switch n.Kind {
 	case yaml.ScalarNode:
 		return n.Value
@@ -140,6 +146,7 @@ func ReadServices(path string) ([]Service, error) {
 			Image:     s.Image,
 			Ports:     containerPorts(s),
 			Context:   buildContext(s.Build),
+			Unbuilt:   s.Build.Tag == "!reset",
 			DependsOn: dependencies(s.DependsOn),
 			Named:     s.ContainerName != "",
 			Publishes: len(s.Ports) > 0,

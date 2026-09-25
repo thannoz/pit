@@ -217,9 +217,13 @@ func (m *Manager) Down(ctx context.Context, box state.Sandbox, stdout, stderr io
 		}
 	}
 
-	override := runtime.OverridePathIn(m.RepoDir(box), box.PR, box.Slot())
-	if err := os.Remove(override); err != nil && !os.IsNotExist(err) {
-		failures = append(failures, errs.Wrap(err, "cannot remove %s", override))
+	for _, generated := range []string{
+		runtime.OverridePathIn(m.RepoDir(box), box.PR, box.Slot()),
+		runtime.DevcontainerPathIn(m.RepoDir(box), box.PR, box.Slot()),
+	} {
+		if err := os.Remove(generated); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, errs.Wrap(err, "cannot remove %s", generated))
+		}
 	}
 	// An empty repository directory is litter; a non-empty one holds
 	// another review, and os.Remove refuses it for us.

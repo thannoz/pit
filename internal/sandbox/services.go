@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -99,7 +98,7 @@ type project struct {
 func isolation(c *config.Config, worktree string) (renamed, unpublished []string) {
 	seen := map[string]bool{}
 	for _, file := range c.Compose.Files {
-		declared, err := runtime.ReadServices(filepath.Join(worktree, file))
+		declared, err := runtime.ReadServices(inWorktree(worktree, file))
 		if err != nil {
 			continue
 		}
@@ -124,18 +123,50 @@ func readProject(c *config.Config, worktree string) (project, error) {
 	p := project{byName: map[string]runtime.Service{}}
 
 	for _, file := range c.Compose.Files {
-		declared, err := runtime.ReadServices(filepath.Join(worktree, file))
+		declared, err := runtime.ReadServices(inWorktree(worktree, file))
 		if err != nil {
 			return project{}, err
 		}
 		for _, s := range declared {
-			if _, seen := p.byName[s.Name]; !seen {
+			prev, seen := p.byName[s.Name]
+			if !seen {
 				p.names = append(p.names, s.Name)
+			} else {
+				s = merged(prev, s)
 			}
 			p.byName[s.Name] = s
 		}
 	}
 	return p, nil
+}
+
+// merged is a service two compose files declare, the way Compose
+// merges them: the later file's settings over the earlier's, and lists
+// of what it depends on and publishes put together. A file that only
+// changes a service's command leaves it depending on what it did.
+func merged(earlier, later runtime.Service) runtime.Service {
+	out := later
+	if out.Image == "" {
+		out.Image = earlier.Image
+	}
+	if out.Context == "" && !later.Unbuilt {
+		out.Context = earlier.Context
+	}
+	out.Ports = union(earlier.Ports, later.Ports)
+	out.DependsOn = union(earlier.DependsOn, later.DependsOn)
+	out.Named = earlier.Named || later.Named
+	out.Publishes = earlier.Publishes || later.Publishes
+	return out
+}
+
+func union[T comparable](a, b []T) []T {
+	out := slices.Clone(a)
+	for _, x := range b {
+		if !slices.Contains(out, x) {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // addWithDependencies adds a service and everything it cannot run

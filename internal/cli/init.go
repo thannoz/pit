@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/thannoz/pit/internal/config"
+	"github.com/thannoz/pit/internal/devcontainer"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/runtime"
 	"github.com/thannoz/pit/internal/suggest"
@@ -67,17 +69,27 @@ func runInit(c *cobra.Command, o *initOptions) error {
 	}
 
 	files := o.composeFiles
+	var dev devFound
 	if len(files) == 0 {
 		name, ok := config.FindComposeFile(dir)
-		if !ok {
-			return errs.New("there is no compose file in %s", dir).
-				WithHint("pit looks for %s; --compose-file names another", strings.Join(config.ComposeNames, ", "))
+		if ok {
+			files = []string{name}
+		} else if dev, ok, err = findDevcontainer(dir); err != nil {
+			return err
+		} else if !ok {
+			return errs.New("there is no compose file in %s, and no devcontainer.json", dir).
+				WithHint("pit looks for %s and %s; --compose-file names another",
+					strings.Join(config.ComposeNames, ", "), strings.Join(devcontainer.Places, ", "))
 		}
-		files = []string{name}
 	}
 
-	services, err := runtime.ReadServices(filepath.Join(dir, files[0]))
-	if err != nil {
+	var services []runtime.Service
+	if dev.file != "" {
+		services = dev.services
+		if o.service == "" {
+			o.service = dev.service
+		}
+	} else if services, err = runtime.ReadServices(filepath.Join(dir, files[0])); err != nil {
 		return err
 	}
 
@@ -87,6 +99,8 @@ func runInit(c *cobra.Command, o *initOptions) error {
 	}
 
 	opts := config.InitOptions{
+		Devcontainer: dev.file,
+		Start:        dev.start,
 		ComposeFiles: files,
 		WebService:   service,
 		WebPort:      port,
@@ -289,4 +303,66 @@ func databases(services []runtime.Service) []config.Database {
 		out = append(out, config.Database{Service: s.Name, Image: s.Image})
 	}
 	return out
+}
+
+// devFound is what pit init read of a devcontainer.json.
+type devFound struct {
+	file     string
+	service  string
+	start    string
+	services []runtime.Service
+}
+
+// findDevcontainer reads the project's devcontainer.json, for a project
+// without a compose file: the services it describes, the one worked in
+// with the ports it forwards, and what could start the app.
+func findDevcontainer(dir string) (devFound, bool, error) {
+	file, ok := devcontainer.Find(dir)
+	if !ok {
+		return devFound{}, false, nil
+	}
+	f, err := devcontainer.Load(filepath.Join(dir, file), devcontainer.Vars{Workspace: dir, Basename: filepath.Base(dir)})
+	if err != nil {
+		return devFound{}, false, err
+	}
+	found := devFound{file: file, service: devcontainer.Service, start: startOf(dir)}
+	if f.Compose() {
+		found.service = f.Service
+		for _, c := range f.ComposeFiles {
+			declared, err := runtime.ReadServices(filepath.Join(dir, filepath.Dir(file), c))
+			if err == nil {
+				found.services = append(found.services, declared...)
+			}
+		}
+	}
+	for i, s := range found.services {
+		if s.Name == found.service {
+			found.services[i].Ports = append(f.Ports(), s.Ports...)
+			return found, true, nil
+		}
+	}
+	found.services = append([]runtime.Service{{Name: found.service, Image: f.Image, Ports: f.Ports()}}, found.services...)
+	return found, true, nil
+}
+
+// startOf is what starts a project the way its own scripts say, where
+// they say it plainly: a package.json's start or dev script.
+func startOf(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var p struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &p) != nil {
+		return ""
+	}
+	switch {
+	case p.Scripts["start"] != "":
+		return "npm start"
+	case p.Scripts["dev"] != "":
+		return "npm run dev"
+	}
+	return ""
 }

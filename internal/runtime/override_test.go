@@ -219,3 +219,12 @@ func TestOverrideIsolatesNamesAndPorts(t *testing.T) {
 		t.Errorf("worker twice:\n%s", data)
 	}
 }
+
+func TestDevcontainerPathIsBesideTheOverride(t *testing.T) {
+	for slot, want := range map[string]string{"": "pr-482.devcontainer.yml", "base": "pr-482-base.devcontainer.yml", "check": "pr-482-check.devcontainer.yml"} {
+		got := DevcontainerPathIn("/state/pit/acme-shop-c56680", 482, slot)
+		if got != filepath.Join("/state/pit/acme-shop-c56680", want) {
+			t.Errorf("slot %q: %q", slot, got)
+		}
+	}
+}

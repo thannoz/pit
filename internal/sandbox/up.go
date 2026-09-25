@@ -10,6 +10,7 @@ import (
 
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/data"
+	"github.com/thannoz/pit/internal/devcontainer"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/hooks"
@@ -230,6 +231,20 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 
 	repoDir := id.RepoDir(m.StateDir)
 	overridePath := runtime.OverridePathIn(repoDir, pr, slot)
+
+	// A devcontainer.json becomes a compose file, and from here on the
+	// sandbox is one like any other.
+	var dev *devcontainer.Setup
+	if req.Config.Devcontainer.File != "" {
+		generated := runtime.DevcontainerPathIn(repoDir, pr, slot)
+		req.Config, dev, err = fromDevcontainer(req, wt.Path, project, generated, rep)
+		if err != nil {
+			return state.Sandbox{}, err
+		}
+		if !updating {
+			undo.push(func(context.Context) { _ = removeFile(generated) })
+		}
+	}
 	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
 
@@ -303,6 +318,15 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		if err := m.recordCommit(previous, sha); err != nil {
 			return state.Sandbox{}, err
 		}
+	}
+
+	if dev != nil {
+		st.begin("dev container", streaming)
+		said, err := m.devLifecycle(ctx, box, dev, req.Config.Devcontainer.Start, rep)
+		if err != nil {
+			return state.Sandbox{}, err
+		}
+		st.done(ctx, "%s", said)
 	}
 
 	h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
@@ -543,6 +567,15 @@ func removeFile(path string) error {
 	return nil
 }
 
+// inWorktree is where a configured compose file is: in the worktree,
+// unless pit wrote it.
+func inWorktree(worktree, file string) string {
+	if filepath.IsAbs(file) {
+		return file
+	}
+	return filepath.Join(worktree, file)
+}
+
 // absoluteFiles resolves the configured compose files against the
 // worktree. They have to be absolute because the generated override
 // lives outside it, and Compose resolves relative paths against the
@@ -550,11 +583,7 @@ func removeFile(path string) error {
 func absoluteFiles(worktree string, files []string) []string {
 	out := make([]string, 0, len(files))
 	for _, f := range files {
-		if filepath.IsAbs(f) {
-			out = append(out, f)
-			continue
-		}
-		out = append(out, filepath.Join(worktree, f))
+		out = append(out, inWorktree(worktree, f))
 	}
 	return out
 }

@@ -44,7 +44,7 @@ func (c *Config) applyDefaults() {
 	if c.Version == 0 {
 		c.Version = Version
 	}
-	if len(c.Compose.Files) == 0 {
+	if len(c.Compose.Files) == 0 && c.Devcontainer.File == "" {
 		c.Compose.Files = []string{DefaultComposeFile}
 		c.composeUnnamed = true
 	}
