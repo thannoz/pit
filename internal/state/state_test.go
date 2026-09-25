@@ -328,3 +328,48 @@ func TestMillisNeverExceedsTheWhole(t *testing.T) {
 		t.Error("a negative duration is recorded as time spent")
 	}
 }
+
+// A pull request's sandbox and its base's are two records: finding,
+// replacing and removing one leaves the other.
+func TestAPullRequestAndItsBase(t *testing.T) {
+	own := Sandbox{RepoRef: "acme-shop-c56680", PR: 482, SHA: "own"}
+	base := Sandbox{RepoRef: "acme-shop-c56680", PR: 482, Base: true, SHA: "base"}
+	f := &File{}
+	f.Put(own)
+	f.Put(base)
+	if len(f.Sandboxes) != 2 {
+		t.Fatalf("the base replaced the pull request: %+v", f.Sandboxes)
+	}
+	if got, ok := f.Find("acme-shop-c56680", 482); !ok || got.SHA != "own" {
+		t.Errorf("Find = %+v", got)
+	}
+	if got, ok := f.Lookup("acme-shop-c56680", 482, true); !ok || got.SHA != "base" {
+		t.Errorf("Lookup base = %+v", got)
+	}
+	base.SHA = "moved"
+	f.Put(base)
+	if got, _ := f.Current(Sandbox{RepoRef: "acme-shop-c56680", PR: 482, Base: true}); got.SHA != "moved" || len(f.Sandboxes) != 2 {
+		t.Errorf("Put base = %+v", f.Sandboxes)
+	}
+	if own.Key() == base.Key() {
+		t.Errorf("one key for both: %s", own.Key())
+	}
+	if !f.RemoveBox(base) || len(f.Sandboxes) != 1 || f.Sandboxes[0].Base {
+		t.Errorf("RemoveBox = %+v", f.Sandboxes)
+	}
+	f.Put(base)
+	if !f.Remove("acme-shop-c56680", 482) || len(f.Sandboxes) != 1 || !f.Sandboxes[0].Base {
+		t.Errorf("Remove took the base: %+v", f.Sandboxes)
+	}
+}
+
+func TestTheBaseIsNamedSo(t *testing.T) {
+	base := Sandbox{PR: 482, Base: true, Title: "Refunds", Branch: "feat/refunds", BaseBranch: "main", Repo: "github.com/acme/shop"}
+	if got := base.Describe(); got != `the base of #482 "Refunds" (main) in acme/shop` {
+		t.Errorf("Describe = %s", got)
+	}
+	base.Base = false
+	if got := base.Describe(); got != `#482 "Refunds" (feat/refunds) in acme/shop` {
+		t.Errorf("Describe = %s", got)
+	}
+}

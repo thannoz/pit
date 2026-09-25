@@ -158,3 +158,8 @@ services:
 func OverridePath(repoDir string, pr int) string {
 	return filepath.Join(repoDir, "pr-"+strconv.Itoa(pr)+".compose.override.yml")
 }
+
+// BaseOverridePath is OverridePath for a pull request's base.
+func BaseOverridePath(repoDir string, pr int) string {
+	return filepath.Join(repoDir, "pr-"+strconv.Itoa(pr)+"-base.compose.override.yml")
+}

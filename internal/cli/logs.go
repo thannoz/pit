@@ -105,15 +105,20 @@ func sandboxFor(c *cobra.Command, arg string) (state.Sandbox, error) {
 		return state.Sandbox{}, err
 	}
 
+	base, _ := c.Flags().GetBool("base")
 	var matches []state.Sandbox
 	for _, box := range f.Sandboxes {
-		if ref.Matches(box) {
+		if ref.Matches(box) && box.Base == base {
 			matches = append(matches, box)
 		}
 	}
 
 	switch len(matches) {
 	case 0:
+		if base {
+			return state.Sandbox{}, errs.New("there is no sandbox for the base of #%d", ref.PR).
+				WithHint("`pit base %d` creates one", ref.PR)
+		}
 		return state.Sandbox{}, errs.New("there is no sandbox for #%d", ref.PR).
 			WithHint("`pit ls` shows what exists; `pit %d` creates one", ref.PR)
 	case 1:

@@ -72,6 +72,9 @@ them, for you to drag into the comment if they help.`,
   pit report 482 --dry-run`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := notOnBase(c, "pit report"); err != nil {
+				return err
+			}
 			if dryRun && yes {
 				return errs.New("--dry-run and --yes contradict each other")
 			}

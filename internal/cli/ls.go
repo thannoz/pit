@@ -67,6 +67,7 @@ type lsRow struct {
 	// Edited is whether the data was written to since it was loaded;
 	// absent where pit cannot tell.
 	Edited    *bool    `json:"edited,omitempty"`
+	Base      bool     `json:"base,omitempty"`
 	CreatedAt string   `json:"createdAt"`
 	Services  []string `json:"services,omitempty"`
 }
@@ -89,6 +90,7 @@ func writeLsJSON(out *ui.Printer, entries []sandbox.Entry) error {
 			Scenario:  e.Scenario,
 			Snapshot:  e.Snapshot,
 			Edited:    edited(e.Edited),
+			Base:      e.Base,
 			CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
 			Services:  services,
 		})
@@ -126,10 +128,15 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 	_, _ = fmt.Fprintln(w, strings.Join(header, "\t"))
 
 	for _, e := range entries {
+		number, branch := "#"+strconv.Itoa(e.PR), e.Branch
+		if e.Base {
+			// The branch it runs is the one the pull request goes into.
+			number, branch = number+" base", orElse(e.BaseBranch, "default branch")
+		}
 		row := []string{
-			"#" + strconv.Itoa(e.PR),
+			number,
 			orDash(truncate(e.Title, maxTitle)),
-			orDash(e.Branch),
+			orDash(branch),
 			e.Status(),
 			orDash(e.URL),
 			shortDuration(time.Since(e.CreatedAt)),

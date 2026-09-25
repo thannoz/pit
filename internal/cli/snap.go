@@ -71,7 +71,7 @@ go on afterwards.`,
 
 			// A dump of containers that are not there fails inside a
 			// compose command; saying so first is cheaper to read.
-			entry, err := m.Find(c.Context(), box.RepoRef, box.PR)
+			entry, err := m.FindBox(c.Context(), box)
 			if err != nil {
 				return err
 			}
@@ -150,7 +150,7 @@ migrations of this one run after it.`,
 			}
 			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
 
-			entry, err := m.Find(c.Context(), box.RepoRef, box.PR)
+			entry, err := m.FindBox(c.Context(), box)
 			if err != nil {
 				return err
 			}

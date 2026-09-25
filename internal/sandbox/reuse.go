@@ -57,7 +57,7 @@ func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario
 	// it for the reviewer's.
 	box.ProbedAt = time.Now()
 	if err := m.Store.Update(func(f *state.File) error {
-		if current, ok := f.Find(box.RepoRef, box.PR); ok {
+		if current, ok := f.Current(box); ok {
 			current.ProbedAt = box.ProbedAt
 			f.Put(current)
 		}

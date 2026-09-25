@@ -66,13 +66,25 @@ func (s Sandbox) QualifiedRef() string {
 	return fmt.Sprintf("%s#%d", shortRepo(s.Repo), s.PR)
 }
 
+// Name is how pit calls the sandbox in a sentence: "#482", or "the
+// base of #482".
+func (s Sandbox) Name() string {
+	if s.Base {
+		return fmt.Sprintf("the base of #%d", s.PR)
+	}
+	return fmt.Sprintf("#%d", s.PR)
+}
+
 // Describe names the sandbox the way a person would recognise it.
 func (s Sandbox) Describe() string {
-	parts := fmt.Sprintf("#%d", s.PR)
+	parts := s.Name()
 	if s.Title != "" {
 		parts += fmt.Sprintf(" %q", s.Title)
 	}
-	if s.Branch != "" {
+	switch {
+	case s.Base && s.BaseBranch != "":
+		parts += " (" + s.BaseBranch + ")"
+	case !s.Base && s.Branch != "":
 		parts += " (" + s.Branch + ")"
 	}
 	return parts + " in " + shortRepo(s.Repo)

@@ -126,7 +126,7 @@ func RecordVisits(store *state.Store, box state.Sandbox, list Checklist, covered
 		return box, nil
 	}
 	err := store.Update(func(f *state.File) error {
-		current, ok := f.Find(box.RepoRef, box.PR)
+		current, ok := f.Current(box)
 		if !ok {
 			return nil
 		}

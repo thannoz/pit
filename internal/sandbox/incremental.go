@@ -62,7 +62,7 @@ func (m *Manager) updating(ctx context.Context, req UpRequest) (state.Sandbox, b
 		return state.Sandbox{}, false
 	}
 
-	box, ok := f.Find(req.Repo.Identity.Ref(), req.PR.Number)
+	box, ok := f.Lookup(req.Repo.Identity.Ref(), req.PR.Number, req.Base)
 	if !ok {
 		return state.Sandbox{}, false
 	}
@@ -182,7 +182,7 @@ func listed(list []string, s string) bool {
 // recordCommit moves the record to the commit the sandbox now holds.
 func (m *Manager) recordCommit(box state.Sandbox, sha string) error {
 	return m.Store.Update(func(f *state.File) error {
-		current, ok := f.Find(box.RepoRef, box.PR)
+		current, ok := f.Current(box)
 		if !ok {
 			return nil
 		}

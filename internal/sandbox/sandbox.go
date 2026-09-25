@@ -125,6 +125,32 @@ func (m *Manager) List(ctx context.Context) ([]Entry, error) {
 	return entries, nil
 }
 
+// hasOwn reports whether the pull request of a base sandbox has a
+// sandbox of its own too.
+func (m *Manager) hasOwn(base state.Sandbox) bool {
+	f, err := m.Store.Load()
+	if err != nil {
+		return true // keeping a ref is the harmless mistake
+	}
+	_, ok := f.Find(base.RepoRef, base.PR)
+	return ok
+}
+
+// FindBox is Find for the sandbox a record is of: a pull request's
+// own, or its base.
+func (m *Manager) FindBox(ctx context.Context, box state.Sandbox) (Entry, error) {
+	f, err := m.Store.Load()
+	if err != nil {
+		return Entry{}, err
+	}
+	current, ok := f.Current(box)
+	if !ok {
+		return Entry{}, errs.New("there is no sandbox for %s", box.Name()).
+			WithHint("`pit ls` shows what exists")
+	}
+	return m.describe(ctx, current), nil
+}
+
 // Find returns one recorded sandbox with its live state.
 func (m *Manager) Find(ctx context.Context, repoRef string, pr int) (Entry, error) {
 	f, err := m.Store.Load()
@@ -182,12 +208,19 @@ func (m *Manager) Down(ctx context.Context, box state.Sandbox, stdout, stderr io
 		if err := workspace.RemoveWorktree(ctx, m.Git, repo, box.Worktree); err != nil {
 			failures = append(failures, err)
 		}
-		if err := workspace.DeleteRef(ctx, m.Git, repo, box.PR); err != nil {
-			failures = append(failures, err)
+		// The refs are the pull request's: a base sandbox leaves them
+		// to the pull request's own, while there is one.
+		if !box.Base || !m.hasOwn(box) {
+			if err := workspace.DeleteRef(ctx, m.Git, repo, box.PR); err != nil {
+				failures = append(failures, err)
+			}
 		}
 	}
 
 	override := runtime.OverridePath(m.RepoDir(box), box.PR)
+	if box.Base {
+		override = runtime.BaseOverridePath(m.RepoDir(box), box.PR)
+	}
 	if err := os.Remove(override); err != nil && !os.IsNotExist(err) {
 		failures = append(failures, errs.Wrap(err, "cannot remove %s", override))
 	}
@@ -201,7 +234,7 @@ func (m *Manager) Down(ctx context.Context, box state.Sandbox, stdout, stderr io
 	}
 
 	return m.Store.Update(func(f *state.File) error {
-		f.Remove(box.RepoRef, box.PR)
+		f.RemoveBox(box)
 		return nil
 	})
 }

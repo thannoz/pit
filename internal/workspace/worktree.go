@@ -32,9 +32,12 @@ func AddWorktree(ctx context.Context, r Runner, repo Repo, stateDir string, pr i
 		return Worktree{}, errs.Wrap(err, "pull request #%d has not been fetched", pr).
 			WithHint("fetch it first")
 	}
+	return AddWorktreeAt(ctx, r, repo, repo.Identity.WorktreeDir(stateDir, pr), pr, sha)
+}
 
-	path := repo.Identity.WorktreeDir(stateDir, pr)
-
+// AddWorktreeAt checks a commit out at path for pull request pr: its
+// own commit, or the one it goes into.
+func AddWorktreeAt(ctx context.Context, r Runner, repo Repo, path string, pr int, sha string) (Worktree, error) {
 	// An existing worktree at the same path is reused when it already
 	// holds the right commit, and moved to the new one when it does not.
 	// Re-running pit on the same pull request is the normal case, not an

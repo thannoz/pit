@@ -10,10 +10,14 @@ import (
 	"github.com/thannoz/pit/internal/ui"
 )
 
-// openInBrowser shows a URL in whatever the system uses for one. A
-// failure is worth mentioning but not worth failing over: the URL is
-// on screen either way.
-func openInBrowser(ctx context.Context, out *ui.Printer, url string) {
+// openInBrowser shows a URL in whatever the system uses for one; a
+// variable so that no test opens a browser on the machine it runs on.
+var openInBrowser = systemBrowser
+
+// systemBrowser opens a URL the way the system does. A failure is worth
+// mentioning but not worth failing over: the URL is on screen either
+// way.
+func systemBrowser(ctx context.Context, out *ui.Printer, url string) {
 	name, args := browserCommand(url)
 	if name == "" {
 		out.Warnf("do not know how to open a browser on %s", runtime.GOOS)
@@ -65,6 +69,9 @@ again on another machine.`,
 			out.Notef("%s", box.Describe())
 			out.Println(box.URL)
 			if record {
+				if err := notOnBase(c, "a recording"); err != nil {
+					return err
+				}
 				return recordSandbox(c, out, box)
 			}
 			openInBrowser(c.Context(), out, box.URL)

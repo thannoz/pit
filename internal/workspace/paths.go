@@ -46,3 +46,9 @@ func (i Identity) RepoDir(stateDir string) string {
 func (i Identity) WorktreeDir(stateDir string, pr int) string {
 	return filepath.Join(i.RepoDir(stateDir), "pr-"+strconv.Itoa(pr))
 }
+
+// BaseWorktreeDir is where the commit pull request pr goes into is
+// checked out, beside the pull request itself.
+func (i Identity) BaseWorktreeDir(stateDir string, pr int) string {
+	return i.WorktreeDir(stateDir, pr) + "-base"
+}

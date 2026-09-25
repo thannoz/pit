@@ -24,6 +24,8 @@ type upOptions struct {
 	scenario string
 	// snapshot is a saved state to load instead.
 	snapshot string
+	// base brings up the commit the pull request goes into.
+	base bool
 }
 
 // runUp builds the sandbox for a pull request. It is what `pit 482`
@@ -103,6 +105,7 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 		OfferSave: func(box state.Sandbox) error {
 			return saveBeforeReplacing(c, m, out, box, true)
 		},
+		Base: o.base,
 	}, rep)
 	if err != nil {
 		return err

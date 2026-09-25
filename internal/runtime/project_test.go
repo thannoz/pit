@@ -128,3 +128,17 @@ func TestIsPitProject(t *testing.T) {
 		t.Error("someone else's project was claimed as pit's")
 	}
 }
+
+func TestTheBaseHasItsOwnProject(t *testing.T) {
+	own, err := ProjectName("acme-shop-c56680", 482)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := BaseProjectName("acme-shop-c56680", 482)
+	if err != nil || base != own+"-base" {
+		t.Errorf("base = %q, %v", base, err)
+	}
+	if OverridePath("/s", 482) == BaseOverridePath("/s", 482) {
+		t.Error("one override for both")
+	}
+}

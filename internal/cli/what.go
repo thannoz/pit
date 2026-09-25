@@ -46,6 +46,9 @@ file that leads to it has changed; then it asks to be looked at again.`,
   pit what 482 --undone 3`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := notOnBase(c, "pit what"); err != nil {
+				return err
+			}
 			box, err := sandboxFor(c, args[0])
 			if err != nil {
 				return err

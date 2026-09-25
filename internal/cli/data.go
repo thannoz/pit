@@ -77,7 +77,7 @@ func runDataReset(c *cobra.Command, o *dataResetOptions, arg string) error {
 
 	// Loading data into containers that are not there fails in the
 	// middle of a compose command; saying so first is cheaper to read.
-	entry, err := m.Find(c.Context(), box.RepoRef, box.PR)
+	entry, err := m.FindBox(c.Context(), box)
 	if err != nil {
 		return err
 	}

@@ -31,6 +31,17 @@ var composeName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 // well as its slug -- two clones of the same project, or two projects
 // with the same name on different hosts, must not end up in one place.
 func ProjectName(repoRef string, pr int) (string, error) {
+	return projectName(repoRef, pr, "")
+}
+
+// BaseProjectName is ProjectName for the sandbox of the commit a pull
+// request goes into, which runs beside the pull request's own and so
+// needs a name of its own.
+func BaseProjectName(repoRef string, pr int) (string, error) {
+	return projectName(repoRef, pr, "-base")
+}
+
+func projectName(repoRef string, pr int, suffix string) (string, error) {
 	if pr <= 0 {
 		return "", errs.New("%d is not a pull request number", pr)
 	}
@@ -44,7 +55,7 @@ func ProjectName(repoRef string, pr int) (string, error) {
 			WithHint("this is a bug in pit; please report it")
 	}
 
-	name := ProjectPrefix + strings.ToLower(repoRef) + "-" + strconv.Itoa(pr)
+	name := ProjectPrefix + strings.ToLower(repoRef) + "-" + strconv.Itoa(pr) + suffix
 	if len(name) > maxProjectName {
 		return "", errs.New("the project name %q is too long (%d characters, at most %d)", name, len(name), maxProjectName).
 			WithHint("the repository name is unusually long; shorten it or report this")

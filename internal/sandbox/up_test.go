@@ -20,6 +20,7 @@ import (
 	"github.com/thannoz/pit/internal/data/datatest"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/forge"
+	"github.com/thannoz/pit/internal/ports"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime/runtimetest"
 	"github.com/thannoz/pit/internal/sandbox"
@@ -1983,5 +1984,226 @@ func TestUpRefusesASnapshotItCannotRestore(t *testing.T) {
 	}
 	if slices.Contains(fake.Methods(), "Up") {
 		t.Error("the services were started for a snapshot that cannot be loaded")
+	}
+}
+
+// TestUpBringsUpTheBase is the acceptance criterion for T-901: the
+// commit the pull request goes into runs in a sandbox of its own,
+// beside the pull request's.
+func TestUpBringsUpTheBase(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	own, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	req.Base = true
+	base, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("Up --base: %v", err)
+	}
+
+	tip, err := workspace.ResolveRef(t.Context(), proc.Exec{}, req.Repo.Root, "refs/remotes/origin/main")
+	if err != nil {
+		tip, err = workspace.ResolveRef(t.Context(), proc.Exec{}, req.Repo.Root, "main")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !base.Base || base.SHA != tip || base.SHA == own.SHA {
+		t.Errorf("base at %s (base %v), pull request at %s, branch at %s", base.SHA, base.Base, own.SHA, tip)
+	}
+	// Before the change: the pull request's file is not there.
+	if _, err := os.Stat(filepath.Join(base.Worktree, "pr.txt")); !os.IsNotExist(err) {
+		t.Errorf("the base holds the change: %v", err)
+	}
+	if base.Worktree == own.Worktree || base.Project == own.Project || base.Port == own.Port {
+		t.Errorf("the base shares with the pull request: %+v / %+v", base, own)
+	}
+	if !strings.HasSuffix(base.Project, "-7-base") || !fake.IsUp(base.Project) || !fake.IsUp(own.Project) {
+		t.Errorf("projects %s and %s", base.Project, own.Project)
+	}
+
+	f, _ := m.Store.Load()
+	if got, ok := f.Find(req.Repo.Identity.Ref(), 7); !ok || got.Base || got.SHA != own.SHA {
+		t.Errorf("the pull request's record: %+v", got)
+	}
+	if got, ok := f.Lookup(req.Repo.Identity.Ref(), 7, true); !ok || got.SHA != base.SHA {
+		t.Errorf("the base's record: %+v", got)
+	}
+
+	// Each has an override of its own, with its own port in it.
+	ownOverride, baseOverride := own.ComposeFiles[len(own.ComposeFiles)-1], base.ComposeFiles[len(base.ComposeFiles)-1]
+	if ownOverride == baseOverride {
+		t.Fatalf("one override for both: %s", ownOverride)
+	}
+	for file, port := range map[string]int{ownOverride: own.Port, baseOverride: base.Port} {
+		if data, err := os.ReadFile(file); err != nil || !strings.Contains(string(data), strconv.Itoa(port)) {
+			t.Errorf("%s: %v\n%s", file, err, data)
+		}
+	}
+
+	// Brought up again, it is the same sandbox, on the same port.
+	again, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil || again.Port != base.Port || again.Project != base.Project {
+		t.Errorf("again: %+v, %v", again, err)
+	}
+	if f, _ := m.Store.Load(); len(f.Sandboxes) != 2 {
+		t.Errorf("%d records", len(f.Sandboxes))
+	}
+}
+
+// Taking the base down leaves the pull request's sandbox and the refs
+// it runs from; without one, the refs go with the base.
+func TestDownOfTheBase(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	own, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Base = true
+	base, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Down(t.Context(), base, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !fake.IsUp(own.Project) || fake.IsUp(base.Project) {
+		t.Error("the wrong sandbox went down")
+	}
+	if _, err := os.Stat(own.ComposeFiles[len(own.ComposeFiles)-1]); err != nil {
+		t.Errorf("the pull request's override went with the base: %v", err)
+	}
+	if _, err := os.Stat(base.ComposeFiles[len(base.ComposeFiles)-1]); !os.IsNotExist(err) {
+		t.Errorf("the base's override is still there: %v", err)
+	}
+	for _, ref := range []string{workspace.LocalRef(7), workspace.BaseRef(7)} {
+		if _, err := workspace.ResolveRef(t.Context(), proc.Exec{}, req.Repo.Root, ref); err != nil {
+			t.Errorf("%s went with the base: %v", ref, err)
+		}
+	}
+	if _, err := os.Stat(base.Worktree); !os.IsNotExist(err) {
+		t.Errorf("the base's worktree is still there")
+	}
+	f, _ := m.Store.Load()
+	if _, ok := f.Find(req.Repo.Identity.Ref(), 7); !ok || len(f.Sandboxes) != 1 {
+		t.Errorf("records: %+v", f.Sandboxes)
+	}
+
+	// A base on its own takes its refs with it.
+	if err := m.Down(t.Context(), own, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	base, err = m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Down(t.Context(), base, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workspace.ResolveRef(t.Context(), proc.Exec{}, req.Repo.Root, workspace.BaseRef(7)); err == nil {
+		t.Error("the base's ref outlived it")
+	}
+}
+
+// A base that fails to come up takes nothing from the pull request's
+// sandbox with it.
+func TestAFailedBaseLeavesThePullRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	own, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.Fail = map[string]error{"WaitReady": errors.New("it never answered")}
+	req.Base = true
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err == nil {
+		t.Fatal("no error")
+	}
+	if !fake.IsUp(own.Project) {
+		t.Error("the pull request's sandbox went down")
+	}
+	if _, err := workspace.ResolveRef(t.Context(), proc.Exec{}, req.Repo.Root, workspace.LocalRef(7)); err != nil {
+		t.Errorf("the pull request's ref went: %v", err)
+	}
+	if _, err := os.Stat(req.Repo.Identity.BaseWorktreeDir(m.StateDir, 7)); !os.IsNotExist(err) {
+		t.Error("the failed base's worktree is still there")
+	}
+	f, _ := m.Store.Load()
+	if len(f.Sandboxes) != 1 || f.Sandboxes[0].Base {
+		t.Errorf("records: %+v", f.Sandboxes)
+	}
+}
+
+// A base's port is its own: brought up first, it does not take the one
+// the pull request would get, and set up again, it gets its own back.
+func TestTheBaseKeepsAPortOfItsOwn(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	id := req.Repo.Identity
+	wanted := ports.Preferred(id.String(), 7)
+	if ports.Taken(t.Context(), wanted) {
+		t.Skipf("port %d is in use on this machine", wanted)
+	}
+	req.Base = true
+	base, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Base = false
+	own, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if own.Port != wanted {
+		t.Errorf("the pull request got %d, not %d; the base has %d", own.Port, wanted, base.Port)
+	}
+
+	// Its containers gone, the base is set up anew -- on its port.
+	if err := fake.Down(t.Context(), sandbox.RuntimeSandbox(base), io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	req.Base = true
+	again, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil || again.Port != base.Port {
+		t.Errorf("set up again on %d, was %d: %v", again.Port, base.Port, err)
+	}
+}
+
+// The pull request's sandbox may sit on the port the base would like;
+// the base does not take it from it.
+func TestTheBaseLeavesThePullRequestItsPort(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	id := req.Repo.Identity
+	wanted := ports.Preferred(id.String()+" base", 7)
+	if ports.Taken(t.Context(), wanted) {
+		t.Skipf("port %d is in use on this machine", wanted)
+	}
+	if err := m.Store.Update(func(f *state.File) error {
+		f.Put(state.Sandbox{RepoRef: id.Ref(), PR: 7, Port: wanted, Project: "pit-elsewhere-7"})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req.Base = true
+	base, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.Port == wanted {
+		t.Errorf("the base took the pull request's port %d", wanted)
 	}
 }

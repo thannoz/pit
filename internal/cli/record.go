@@ -80,7 +80,7 @@ func recordSandbox(c *cobra.Command, out *ui.Printer, box state.Sandbox) error {
 // needsRunning refuses a sandbox that has nothing running to load a
 // page from.
 func needsRunning(c *cobra.Command, m *sandbox.Manager, box state.Sandbox) error {
-	entry, err := m.Find(c.Context(), box.RepoRef, box.PR)
+	entry, err := m.FindBox(c.Context(), box)
 	if err != nil {
 		return err
 	}

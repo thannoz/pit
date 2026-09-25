@@ -21,6 +21,9 @@ type globalOptions struct {
 	// jsonOutput switches commands that display something to machine
 	// readable output.
 	jsonOutput bool
+	// base points a command at the sandbox of the commit a pull
+	// request goes into, instead of the pull request's own.
+	base bool
 }
 
 const rootLong = `pit brings up the running state of a pull request on your own machine.
@@ -60,6 +63,7 @@ func newRootCmd() *cobra.Command {
 			if _, err := strconv.Atoi(args[0]); err != nil {
 				return unknownCommand(c, args[0])
 			}
+			up.base = opts.base
 			return runUp(c, up, args[0])
 		},
 	}
@@ -82,8 +86,10 @@ func newRootCmd() *cobra.Command {
 	f.BoolVarP(&opts.verbose, "verbose", "v", false, "print diagnostic logging to stderr")
 	f.StringVar(&opts.configPath, "config", "", "path to .pit.yaml (default: found from the working directory)")
 	f.BoolVar(&opts.jsonOutput, "json", false, "print machine readable output")
+	f.BoolVar(&opts.base, "base", false, "the sandbox of the commit the pull request goes into, not of the pull request")
 
 	cmd.AddCommand(
+		newBaseCmd(opts),
 		newDataCmd(opts),
 		newDoctorCmd(opts),
 		newDownCmd(opts),

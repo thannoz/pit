@@ -60,7 +60,7 @@ func Record(store *state.Store, box state.Sandbox, list Checklist, numbers []int
 	}
 
 	err := store.Update(func(f *state.File) error {
-		current, ok := f.Find(box.RepoRef, box.PR)
+		current, ok := f.Current(box)
 		if !ok {
 			return errs.New("#%d has no sandbox any more", box.PR)
 		}

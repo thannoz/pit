@@ -40,6 +40,9 @@ type where the reviewer typed one.`,
   pbpaste | pit replay 482 - --note 2`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := notOnBase(c, "pit replay"); err != nil {
+				return err
+			}
 			recipe, err := readRecipe(c, args[1], note)
 			if err != nil {
 				return err

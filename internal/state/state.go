@@ -31,6 +31,9 @@ const Version = 1
 type Sandbox struct {
 	// PR is the pull request number.
 	PR int `json:"pr"`
+	// Base marks the sandbox of the commit the pull request goes into,
+	// kept beside the pull request's own: what it looked like before.
+	Base bool `json:"base,omitempty"`
 	// Repo is the canonical repository identity, e.g.
 	// "github.com/acme/shop".
 	Repo string `json:"repo"`
@@ -173,7 +176,16 @@ const MaxBrowsed = 20
 // Key identifies a sandbox: a pull request number means nothing without
 // the repository it belongs to.
 func (s Sandbox) Key() string {
+	if s.Base {
+		return s.RepoRef + "#" + fmt.Sprint(s.PR) + "-base"
+	}
 	return s.RepoRef + "#" + fmt.Sprint(s.PR)
+}
+
+// Same reports whether two records are of one sandbox: the same pull
+// request, and both its own or both its base's.
+func (s Sandbox) Same(o Sandbox) bool {
+	return s.RepoRef == o.RepoRef && s.PR == o.PR && s.Base == o.Base
 }
 
 // Age is how long the sandbox has been up.
@@ -185,10 +197,22 @@ type File struct {
 	Sandboxes []Sandbox `json:"sandboxes"`
 }
 
-// Find returns the sandbox for a pull request in a repository.
+// Find returns the sandbox of a pull request in a repository -- its
+// own, not its base's.
 func (f *File) Find(repoRef string, pr int) (Sandbox, bool) {
+	return f.Lookup(repoRef, pr, false)
+}
+
+// Lookup returns the sandbox of a pull request, or of its base.
+func (f *File) Lookup(repoRef string, pr int, base bool) (Sandbox, bool) {
+	return f.Current(Sandbox{RepoRef: repoRef, PR: pr, Base: base})
+}
+
+// Current returns the record of the sandbox box is a record of, as it
+// is now.
+func (f *File) Current(box Sandbox) (Sandbox, bool) {
 	for _, s := range f.Sandboxes {
-		if s.RepoRef == repoRef && s.PR == pr {
+		if s.Same(box) {
 			return s, true
 		}
 	}
@@ -198,7 +222,7 @@ func (f *File) Find(repoRef string, pr int) (Sandbox, bool) {
 // Put adds a sandbox or replaces the one it supersedes.
 func (f *File) Put(s Sandbox) {
 	for i, existing := range f.Sandboxes {
-		if existing.RepoRef == s.RepoRef && existing.PR == s.PR {
+		if existing.Same(s) {
 			f.Sandboxes[i] = s
 			return
 		}
@@ -206,12 +230,16 @@ func (f *File) Put(s Sandbox) {
 	f.Sandboxes = append(f.Sandboxes, s)
 }
 
-// Remove drops a sandbox and reports whether there was one.
+// Remove drops a pull request's own sandbox and reports whether there
+// was one.
 func (f *File) Remove(repoRef string, pr int) bool {
+	return f.RemoveBox(Sandbox{RepoRef: repoRef, PR: pr})
+}
+
+// RemoveBox drops the sandbox box is a record of.
+func (f *File) RemoveBox(box Sandbox) bool {
 	before := len(f.Sandboxes)
-	f.Sandboxes = slices.DeleteFunc(f.Sandboxes, func(s Sandbox) bool {
-		return s.RepoRef == repoRef && s.PR == pr
-	})
+	f.Sandboxes = slices.DeleteFunc(f.Sandboxes, box.Same)
 	return len(f.Sandboxes) != before
 }
 

@@ -85,7 +85,7 @@ it. What pit loads here does not count as looked at in pit what.
 			if err != nil {
 				return err
 			}
-			entry, err := m.Find(c.Context(), box.RepoRef, box.PR)
+			entry, err := m.FindBox(c.Context(), box)
 			if err != nil {
 				return err
 			}
@@ -179,7 +179,7 @@ func pageOf(base, path string) (string, error) {
 // what does not take its requests for the reviewer's.
 func recordBrowsing(m *sandbox.Manager, box state.Sandbox, span state.Span) error {
 	return m.Store.Update(func(f *state.File) error {
-		current, ok := f.Find(box.RepoRef, box.PR)
+		current, ok := f.Current(box)
 		if !ok {
 			return nil
 		}

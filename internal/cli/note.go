@@ -38,6 +38,9 @@ the sandbox is taken down, until they are removed.`,
   pit note 482 --remove 2`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
+			if err := notOnBase(c, "pit note"); err != nil {
+				return err
+			}
 			text := strings.TrimSpace(strings.Join(args[1:], " "))
 			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
 			adding := c.Flags().Changed("page") || fullPage || noCapture
@@ -114,7 +117,7 @@ the sandbox is taken down, until they are removed.`,
 // why it did not when it could not: the note is kept either way, and
 // what the reviewer wrote matters more than the picture.
 func captureForNote(c *cobra.Command, m *sandbox.Manager, box state.Sandbox, n *notes.Note, skip, fullPage bool) ([]byte, error) {
-	entry, err := m.Find(c.Context(), box.RepoRef, box.PR)
+	entry, err := m.FindBox(c.Context(), box)
 	if err != nil {
 		return nil, err
 	}

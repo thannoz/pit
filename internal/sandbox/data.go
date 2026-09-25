@@ -32,7 +32,7 @@ func (m *Manager) ResetData(ctx context.Context, box state.Sandbox, sc data.Scen
 	// ran would describe a state the sandbox is not in.
 	writes := m.baseline(ctx, box, rep)
 	return m.Store.Update(func(f *state.File) error {
-		current, ok := f.Find(box.RepoRef, box.PR)
+		current, ok := f.Current(box)
 		if !ok {
 			return errs.New("#%d is no longer recorded", box.PR)
 		}
