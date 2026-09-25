@@ -47,8 +47,12 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Both runners come with Chrome; the tests that load pages in it
+      # must run here, not be skipped as on a machine without one.
       - name: Test
         run: go test -race ./...
+        env:
+          PIT_REQUIRE_BROWSER: "1"
 
       # The suite must not need the network: a test that reaches GitHub
       # fails on a plane, behind a proxy, and whenever the service is

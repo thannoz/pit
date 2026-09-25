@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,9 @@ func browser(t *testing.T) string {
 	}
 	path, err := FindBrowser()
 	if err != nil {
+		if os.Getenv("PIT_REQUIRE_BROWSER") != "" {
+			t.Fatalf("PIT_REQUIRE_BROWSER is set: %v", err)
+		}
 		t.Skipf("skipping: %v", err)
 	}
 	return path
