@@ -62,7 +62,7 @@ func (m *Manager) updating(ctx context.Context, req UpRequest) (state.Sandbox, b
 		return state.Sandbox{}, false
 	}
 
-	box, ok := f.Lookup(req.Repo.Identity.Ref(), req.PR.Number, req.Base)
+	box, ok := f.Current(state.Sandbox{RepoRef: req.Repo.Identity.Ref(), PR: req.PR.Number, Base: req.Base, Check: req.Check})
 	if !ok {
 		return state.Sandbox{}, false
 	}

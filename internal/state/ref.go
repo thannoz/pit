@@ -69,7 +69,10 @@ func (s Sandbox) QualifiedRef() string {
 // Name is how pit calls the sandbox in a sentence: "#482", or "the
 // base of #482".
 func (s Sandbox) Name() string {
-	if s.Base {
+	switch s.Slot() {
+	case "check":
+		return fmt.Sprintf("the migration check of #%d", s.PR)
+	case "base":
 		return fmt.Sprintf("the base of #%d", s.PR)
 	}
 	return fmt.Sprintf("#%d", s.PR)

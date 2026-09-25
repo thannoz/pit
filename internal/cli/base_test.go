@@ -107,3 +107,27 @@ func TestDownOfTheBaseOnly(t *testing.T) {
 		t.Errorf("left %+v", f.Sandboxes)
 	}
 }
+
+// A migration check under way is neither the pull request's sandbox nor
+// its base's.
+func TestTheCheckIsNotTheBase(t *testing.T) {
+	own := recorded(482, "github.com/acme/shop", "acme-shop-c56680", "refunds", time.Minute)
+	base := own
+	base.Base, base.URL, base.Project = true, "http://localhost:40999/", own.Project+"-base"
+	check := own
+	check.Base, check.Check, check.URL, check.Project = true, true, "http://localhost:40998/", own.Project+"-check"
+	withManager(t, own, base, check)
+	opened := withOpened(t)
+	for _, args := range []string{"open 482", "open 482 --base"} {
+		if _, _, err := run(t, strings.Fields(args)...); err != nil {
+			t.Errorf("%s: %v", args, err)
+		}
+	}
+	if strings.Join(*opened, " ") != "http://localhost:40482 http://localhost:40999/" {
+		t.Errorf("opened %v", *opened)
+	}
+	out, _, _ := run(t, "ls")
+	if !strings.Contains(out, "#482 check") {
+		t.Errorf("ls:\n%s", out)
+	}
+}

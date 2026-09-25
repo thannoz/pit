@@ -108,7 +108,7 @@ func sandboxFor(c *cobra.Command, arg string) (state.Sandbox, error) {
 	base, _ := c.Flags().GetBool("base")
 	var matches []state.Sandbox
 	for _, box := range f.Sandboxes {
-		if ref.Matches(box) && box.Base == base {
+		if ref.Matches(box) && box.Base == base && !box.Check {
 			matches = append(matches, box)
 		}
 	}

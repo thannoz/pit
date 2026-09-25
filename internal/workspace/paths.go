@@ -50,5 +50,14 @@ func (i Identity) WorktreeDir(stateDir string, pr int) string {
 // BaseWorktreeDir is where the commit pull request pr goes into is
 // checked out, beside the pull request itself.
 func (i Identity) BaseWorktreeDir(stateDir string, pr int) string {
-	return i.WorktreeDir(stateDir, pr) + "-base"
+	return i.WorktreeDirIn(stateDir, pr, "base")
+}
+
+// WorktreeDirIn is where one of a pull request's sandboxes has its
+// checkout.
+func (i Identity) WorktreeDirIn(stateDir string, pr int, slot string) string {
+	if slot == "" {
+		return i.WorktreeDir(stateDir, pr)
+	}
+	return i.WorktreeDir(stateDir, pr) + "-" + slot
 }

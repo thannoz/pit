@@ -38,7 +38,16 @@ func ProjectName(repoRef string, pr int) (string, error) {
 // request goes into, which runs beside the pull request's own and so
 // needs a name of its own.
 func BaseProjectName(repoRef string, pr int) (string, error) {
-	return projectName(repoRef, pr, "-base")
+	return ProjectNameIn(repoRef, pr, "base")
+}
+
+// ProjectNameIn is ProjectName for one of a pull request's sandboxes:
+// its own for an empty slot, else "base" or "check".
+func ProjectNameIn(repoRef string, pr int, slot string) (string, error) {
+	if slot == "" {
+		return projectName(repoRef, pr, "")
+	}
+	return projectName(repoRef, pr, "-"+slot)
 }
 
 func projectName(repoRef string, pr int, suffix string) (string, error) {

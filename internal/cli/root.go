@@ -98,6 +98,7 @@ func newRootCmd() *cobra.Command {
 		newInspectCmd(opts),
 		newLogsCmd(opts),
 		newLsCmd(opts),
+		newMigrateCheckCmd(opts),
 		newNoteCmd(opts),
 		newOpenCmd(opts),
 		newReplayCmd(opts),

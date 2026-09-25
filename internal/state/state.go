@@ -34,6 +34,10 @@ type Sandbox struct {
 	// Base marks the sandbox of the commit the pull request goes into,
 	// kept beside the pull request's own: what it looked like before.
 	Base bool `json:"base,omitempty"`
+	// Check marks the sandbox pit migrate-check brings up for a while
+	// and takes down again: recorded, so that a crash in the middle
+	// leaves something pit knows about.
+	Check bool `json:"check,omitempty"`
 	// Repo is the canonical repository identity, e.g.
 	// "github.com/acme/shop".
 	Repo string `json:"repo"`
@@ -176,16 +180,28 @@ const MaxBrowsed = 20
 // Key identifies a sandbox: a pull request number means nothing without
 // the repository it belongs to.
 func (s Sandbox) Key() string {
-	if s.Base {
-		return s.RepoRef + "#" + fmt.Sprint(s.PR) + "-base"
+	if slot := s.Slot(); slot != "" {
+		return s.RepoRef + "#" + fmt.Sprint(s.PR) + "-" + slot
 	}
 	return s.RepoRef + "#" + fmt.Sprint(s.PR)
 }
 
+// Slot is which of a pull request's sandboxes this is: "" for its own,
+// "base" for its base's, "check" for pit migrate-check's.
+func (s Sandbox) Slot() string {
+	switch {
+	case s.Check:
+		return "check"
+	case s.Base:
+		return "base"
+	}
+	return ""
+}
+
 // Same reports whether two records are of one sandbox: the same pull
-// request, and both its own or both its base's.
+// request, in the same slot.
 func (s Sandbox) Same(o Sandbox) bool {
-	return s.RepoRef == o.RepoRef && s.PR == o.PR && s.Base == o.Base
+	return s.RepoRef == o.RepoRef && s.PR == o.PR && s.Slot() == o.Slot()
 }
 
 // Age is how long the sandbox has been up.

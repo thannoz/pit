@@ -210,17 +210,14 @@ func (m *Manager) Down(ctx context.Context, box state.Sandbox, stdout, stderr io
 		}
 		// The refs are the pull request's: a base sandbox leaves them
 		// to the pull request's own, while there is one.
-		if !box.Base || !m.hasOwn(box) {
+		if box.Slot() == "" || !m.hasOwn(box) {
 			if err := workspace.DeleteRef(ctx, m.Git, repo, box.PR); err != nil {
 				failures = append(failures, err)
 			}
 		}
 	}
 
-	override := runtime.OverridePath(m.RepoDir(box), box.PR)
-	if box.Base {
-		override = runtime.BaseOverridePath(m.RepoDir(box), box.PR)
-	}
+	override := runtime.OverridePathIn(m.RepoDir(box), box.PR, box.Slot())
 	if err := os.Remove(override); err != nil && !os.IsNotExist(err) {
 		failures = append(failures, errs.Wrap(err, "cannot remove %s", override))
 	}

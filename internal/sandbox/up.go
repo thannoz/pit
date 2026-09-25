@@ -82,6 +82,15 @@ type UpRequest struct {
 	// the pull request: the state before it, in a sandbox of its own
 	// beside the pull request's.
 	Base bool
+	// Check brings it up in the slot pit migrate-check uses, apart
+	// from the reviewer's sandboxes: at the base with Base, else at the
+	// pull request.
+	Check bool
+}
+
+// slot is where the request brings a sandbox up.
+func (r UpRequest) slot() string {
+	return state.Sandbox{Base: r.Base, Check: r.Check}.Slot()
 }
 
 // Up builds a sandbox for a pull request and records it.
@@ -158,14 +167,15 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// in the new commit is broken.
 	// The refs are the pull request's, and a base leaves them to the
 	// pull request's own sandbox while there is one.
-	if !updating && (!req.Base || !m.hasOwn(state.Sandbox{RepoRef: id.Ref(), PR: pr})) {
+	slot := req.slot()
+	if !updating && (slot == "" || !m.hasOwn(state.Sandbox{RepoRef: id.Ref(), PR: pr})) {
 		undo.push(func(c context.Context) { _ = workspace.DeleteRef(c, m.Git, req.Repo, pr) })
 	}
 
 	st.begin("worktree", quiet)
 	var wt workspace.Worktree
-	if req.Base {
-		wt, err = workspace.AddWorktreeAt(ctx, m.Git, req.Repo, id.BaseWorktreeDir(m.StateDir, pr), pr, sha)
+	if slot != "" {
+		wt, err = workspace.AddWorktreeAt(ctx, m.Git, req.Repo, id.WorktreeDirIn(m.StateDir, pr, slot), pr, sha)
 	} else {
 		wt, err = workspace.AddWorktree(ctx, m.Git, req.Repo, m.StateDir, pr)
 	}
@@ -197,11 +207,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		return state.Sandbox{}, err
 	}
 
-	projectName, overridePathOf := runtime.ProjectName, runtime.OverridePath
-	if req.Base {
-		projectName, overridePathOf = runtime.BaseProjectName, runtime.BaseOverridePath
-	}
-	project, err := projectName(id.Ref(), pr)
+	project, err := runtime.ProjectNameIn(id.Ref(), pr, slot)
 	if err != nil {
 		return state.Sandbox{}, err
 	}
@@ -212,10 +218,10 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	port := previous.Port
 	if !updating {
 		key := id.String()
-		if req.Base {
-			key += " base"
+		if slot != "" {
+			key += " " + slot
 		}
-		assigned, err := ports.Reserve(ctx, key, pr, m.portTaken(ctx, id.Ref(), pr, req.Base))
+		assigned, err := ports.Reserve(ctx, key, pr, m.portTaken(ctx, state.Sandbox{RepoRef: id.Ref(), PR: pr, Base: req.Base, Check: req.Check}))
 		if err != nil {
 			return state.Sandbox{}, err
 		}
@@ -223,7 +229,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	}
 
 	repoDir := id.RepoDir(m.StateDir)
-	overridePath := overridePathOf(repoDir, pr)
+	overridePath := runtime.OverridePathIn(repoDir, pr, slot)
 	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
 
@@ -342,7 +348,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		}
 		snap := *req.Snapshot
 		st.begin("data", streaming)
-		into := state.Sandbox{PR: pr, Base: req.Base, RepoRef: id.Ref(), RepoRoot: req.Repo.Root, Project: project, ComposeFiles: files, Worktree: wt.Path, SHA: sha}
+		into := state.Sandbox{PR: pr, Base: req.Base, Check: req.Check, RepoRef: id.Ref(), RepoRoot: req.Repo.Root, Project: project, ComposeFiles: files, Worktree: wt.Path, SHA: sha}
 		if err := m.restoreParts(ctx, into, snap, rep); err != nil {
 			return state.Sandbox{}, err
 		}
@@ -404,6 +410,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	record := state.Sandbox{
 		PR:           pr,
 		Base:         req.Base,
+		Check:        req.Check,
 		Repo:         id.String(),
 		RepoRef:      id.Ref(),
 		RepoRoot:     req.Repo.Root,
@@ -453,7 +460,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 // out. Without it two sandboxes started in quick succession can pick
 // the same number: the first has not bound it yet when the second
 // checks.
-func (m *Manager) portTaken(ctx context.Context, repoRef string, pr int, base bool) func(int) bool {
+func (m *Manager) portTaken(ctx context.Context, own state.Sandbox) func(int) bool {
 	reserved := map[int]bool{}
 	if recorded, err := m.Store.List(); err == nil {
 		for _, box := range recorded {
@@ -462,7 +469,7 @@ func (m *Manager) portTaken(ctx context.Context, repoRef string, pr int, base bo
 			// pull request to a new port every time it is set up
 			// again, which is the opposite of what deterministic
 			// ports are for -- a browser tab that stays valid.
-			if box.Same(state.Sandbox{RepoRef: repoRef, PR: pr, Base: base}) {
+			if box.Same(own) {
 				continue
 			}
 			reserved[box.Port] = true

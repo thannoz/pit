@@ -161,5 +161,13 @@ func OverridePath(repoDir string, pr int) string {
 
 // BaseOverridePath is OverridePath for a pull request's base.
 func BaseOverridePath(repoDir string, pr int) string {
-	return filepath.Join(repoDir, "pr-"+strconv.Itoa(pr)+"-base.compose.override.yml")
+	return OverridePathIn(repoDir, pr, "base")
+}
+
+// OverridePathIn is OverridePath for one of a pull request's sandboxes.
+func OverridePathIn(repoDir string, pr int, slot string) string {
+	if slot == "" {
+		return OverridePath(repoDir, pr)
+	}
+	return filepath.Join(repoDir, "pr-"+strconv.Itoa(pr)+"-"+slot+".compose.override.yml")
 }

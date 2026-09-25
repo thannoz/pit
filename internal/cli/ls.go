@@ -129,7 +129,10 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 
 	for _, e := range entries {
 		number, branch := "#"+strconv.Itoa(e.PR), e.Branch
-		if e.Base {
+		switch {
+		case e.Check:
+			number += " check"
+		case e.Base:
 			// The branch it runs is the one the pull request goes into.
 			number, branch = number+" base", orElse(e.BaseBranch, "default branch")
 		}
