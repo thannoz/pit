@@ -391,6 +391,18 @@ func (s *Store) lock() (func(), error) {
 	}, nil
 }
 
+// Locked runs fn holding the lock, for records kept next to this one
+// that have to be read and written by one pit at a time. fn must not
+// call Update: the lock is not taken twice.
+func (s *Store) Locked(fn func() error) error {
+	release, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fn()
+}
+
 // TryLock takes the lock only if it is free. It exists for `pit doctor`,
 // which should report that another pit is running rather than hang
 // waiting for it.
