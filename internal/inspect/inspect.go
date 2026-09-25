@@ -13,8 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	cdplog "github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
@@ -63,7 +65,45 @@ type Report struct {
 	// Pending are requests still unanswered when pit stopped waiting:
 	// a page that never finishes loading says something too.
 	Pending []string `json:"pending,omitempty"`
+	// Screenshot is the picture asked for with Options.Screenshot.
+	Screenshot *Screenshot `json:"-"`
 }
+
+// Shot is which picture of a page to take.
+type Shot int
+
+// The pictures of a page there are.
+const (
+	// NoShot takes none.
+	NoShot Shot = iota
+	// Window is what fits in the browser's window, the way the reviewer
+	// sees the page when it opens.
+	Window
+	// FullPage is the whole page, from its top to its bottom.
+	FullPage
+)
+
+// Screenshot is a picture of a page.
+type Screenshot struct {
+	PNG           []byte
+	Width, Height int
+	FullPage      bool
+	// Cut is the page's height when it was taller than a picture can be
+	// and this one stops short of its bottom; 0 when it shows it all.
+	Cut int
+}
+
+// Width and Height are the size of the browser's window, in CSS pixels,
+// one to a pixel of the picture: a laptop's screen.
+const (
+	Width  = 1280
+	Height = 800
+)
+
+// maxSide is as long as a picture can be. Chrome paints a page in
+// tiles of at most this, and past it it repeats what it painted
+// instead of the page.
+const maxSide = 16384
 
 // Errors counts the problems that are errors rather than warnings.
 func (r Report) Errors() int {
@@ -87,6 +127,8 @@ type Options struct {
 	// Quiet is how long nothing has to be in flight for the page to
 	// count as settled.
 	Quiet time.Duration
+	// Screenshot is the picture to take once the page has settled.
+	Screenshot Shot
 }
 
 const (
@@ -119,7 +161,7 @@ func Capture(ctx context.Context, url string, o Options) (Report, error) {
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(browser),
-		chromedp.WindowSize(1280, 800),
+		chromedp.WindowSize(Width, Height),
 	)
 	// Chrome refuses to start its sandbox as root, which is what a
 	// container usually is.
@@ -138,6 +180,9 @@ func Capture(ctx context.Context, url string, o Options) (Report, error) {
 		network.Enable(),
 		runtime.Enable(),
 		cdplog.Enable(),
+		// The window's frame takes some of its size; the page gets all
+		// of it this way.
+		emulation.SetDeviceMetricsOverride(Width, Height, 1, false),
 		chromedp.Navigate(url),
 	)
 	if err != nil {
@@ -152,7 +197,47 @@ func Capture(ctx context.Context, url string, o Options) (Report, error) {
 			WithHint("`pit ls` shows whether the sandbox is running")
 	}
 	rec.settle(bctx, o.Settle, o.Quiet)
-	return Report{URL: url, Problems: rec.problems(), Pending: rec.pending()}, nil
+	report := Report{URL: url, Problems: rec.problems(), Pending: rec.pending()}
+	if o.Screenshot != NoShot {
+		shot, err := screenshot(bctx, o.Screenshot == FullPage)
+		if err != nil {
+			if ctx.Err() != nil {
+				return Report{}, ctx.Err()
+			}
+			return Report{}, errs.Wrap(err, "the browser could not take a picture of %s", url)
+		}
+		report.Screenshot = &shot
+	}
+	return report, nil
+}
+
+// screenshot takes a picture of what the window shows, or of the whole
+// page.
+func screenshot(bctx context.Context, full bool) (Screenshot, error) {
+	shot := Screenshot{Width: Width, Height: Height, FullPage: full}
+	err := chromedp.Run(bctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		capture := page.CaptureScreenshot().WithFormat(page.CaptureScreenshotFormatPng)
+		if full {
+			_, _, _, _, _, content, err := page.GetLayoutMetrics().Do(ctx)
+			if err != nil {
+				return err
+			}
+			// The page is never smaller than the window: a short one
+			// fills it, the way the window shows it.
+			w, h := int(content.Width), int(content.Height)
+			if h > maxSide {
+				shot.Cut, h = h, maxSide
+			}
+			shot.Width, shot.Height = min(w, maxSide), h
+			capture = capture.
+				WithCaptureBeyondViewport(true).
+				WithClip(&page.Viewport{Width: float64(shot.Width), Height: float64(shot.Height), Scale: 1})
+		}
+		var err error
+		shot.PNG, err = capture.Do(ctx)
+		return err
+	}))
+	return shot, err
 }
 
 // recorder turns the browser's events into problems.
@@ -180,7 +265,7 @@ func (r *recorder) add(p Problem) {
 func (r *recorder) problems() []Problem {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]Problem(nil), r.found...)
+	return append([]Problem{}, r.found...)
 }
 
 func (r *recorder) pending() []string {

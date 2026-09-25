@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,12 +21,30 @@ import (
 
 // capture loads a page in a browser; a variable so that tests need no
 // Chrome.
-var capture = func(ctx context.Context, page string) (inspect.Report, error) {
-	return inspect.Capture(ctx, page, inspect.Options{})
+var capture = func(ctx context.Context, page string, shot inspect.Shot) (inspect.Report, error) {
+	return inspect.Capture(ctx, page, inspect.Options{Screenshot: shot})
+}
+
+// inspection is what pit inspect --json prints.
+type inspection struct {
+	inspect.Report
+	Screenshot *savedShot `json:"screenshot,omitempty"`
+}
+
+type savedShot struct {
+	File     string `json:"file"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	FullPage bool   `json:"full_page"`
+	// PageHeight is how tall the page is when the picture stops short
+	// of its bottom.
+	PageHeight int `json:"page_height,omitempty"`
 }
 
 func newInspectCmd(opts *globalOptions) *cobra.Command {
-	return &cobra.Command{
+	var file string
+	var fullPage bool
+	cmd := &cobra.Command{
 		Use:   "inspect <pull request number> [path]",
 		Short: "Load a page of a sandbox and report what goes wrong on it",
 		Long: `Load a page of a sandbox in a browser nobody sees, the way a reviewer's
@@ -33,11 +53,22 @@ warnings the page logged, and requests that failed or were answered
 with an error -- including the ones it makes after it has loaded.
 
 Needs Chrome or Chromium; PIT_BROWSER names one when pit cannot find
-it. What pit loads here does not count as looked at in pit what.`,
+it. What pit loads here does not count as looked at in pit what.
+
+--screenshot saves a picture of the page as a PNG: what a window of
+1280 by 800 shows, or with --full-page all of it down to its bottom.`,
 		Example: `  pit inspect 482
-  pit inspect 482 /orders/1001`,
+  pit inspect 482 /orders/1001
+  pit inspect 482 /orders/1001 --screenshot order.png --full-page`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(c *cobra.Command, args []string) error {
+			if fullPage && file == "" {
+				return errs.New("--full-page says how much of the page to picture, and there is no picture").
+					WithHint("add --screenshot <file>")
+			}
+			if err := canWrite(file); err != nil {
+				return err
+			}
 			box, err := sandboxFor(c, args[0])
 			if err != nil {
 				return err
@@ -63,24 +94,67 @@ it. What pit loads here does not count as looked at in pit what.`,
 					WithHint("`pit %d` brings the sandbox up again", box.PR)
 			}
 
+			shot := inspect.NoShot
+			switch {
+			case fullPage:
+				shot = inspect.FullPage
+			case file != "":
+				shot = inspect.Window
+			}
 			from := time.Now()
-			report, err := capture(c.Context(), page)
+			report, err := capture(c.Context(), page, shot)
 			if rerr := recordBrowsing(m, box, state.Span{From: from, To: time.Now()}); err == nil {
 				err = rerr
 			}
 			if err != nil {
 				return err
 			}
+			result := inspection{Report: report}
+			if s := report.Screenshot; s != nil {
+				if err := os.WriteFile(file, s.PNG, 0o644); err != nil {
+					return errs.Wrap(err, "cannot save the picture to %s", file)
+				}
+				result.Screenshot = &savedShot{File: file, Width: s.Width, Height: s.Height, FullPage: s.FullPage, PageHeight: s.Cut}
+			}
 
 			out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
 			if opts.jsonOutput {
 				enc := json.NewEncoder(out.Out())
 				enc.SetIndent("", "  ")
-				return enc.Encode(report)
+				return enc.Encode(result)
 			}
 			writeInspection(out, report)
+			if s := result.Screenshot; s != nil {
+				writeShot(out, *s)
+			}
 			return out.Err()
 		},
+	}
+	cmd.Flags().StringVar(&file, "screenshot", "", "save a picture of the page to `file`, a PNG")
+	cmd.Flags().BoolVar(&fullPage, "full-page", false, "picture the whole page, not only what the window shows")
+	return cmd
+}
+
+// canWrite finds out before a browser is started whether the picture
+// has somewhere to go.
+func canWrite(file string) error {
+	if file == "" {
+		return nil
+	}
+	if info, err := os.Stat(file); err == nil && info.IsDir() {
+		return errs.New("%s is a directory", file).WithHint("give the picture a file name, like %s", filepath.Join(file, "page.png"))
+	}
+	dir := filepath.Dir(file)
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return errs.New("cannot save the picture to %s: there is no directory %s", file, dir)
+	}
+	return nil
+}
+
+func writeShot(out *ui.Printer, s savedShot) {
+	out.Printf("Screenshot saved to %s (%d×%d).\n", s.File, s.Width, s.Height)
+	if s.PageHeight > 0 {
+		out.Printf("  The page is %d pixels tall; the picture stops at %d, as tall as one can be.\n", s.PageHeight, s.Height)
 	}
 }
 

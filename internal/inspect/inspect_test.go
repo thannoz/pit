@@ -1,6 +1,7 @@
 package inspect
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -153,6 +154,12 @@ func TestCaptureOfACleanPage(t *testing.T) {
 	}
 	if len(r.Problems) != 0 || len(r.Pending) != 0 {
 		t.Errorf("problems on a clean page: %+v, pending %v", r.Problems, r.Pending)
+	}
+	if r.Screenshot != nil {
+		t.Error("a picture was taken that nobody asked for")
+	}
+	if out, _ := json.Marshal(r); !strings.Contains(string(out), `"problems":[]`) {
+		t.Errorf("no problems read as %s", out)
 	}
 	if took := time.Since(start); took > 12*time.Second {
 		t.Errorf("a quiet page took %v to settle; pending %v", took, r.Pending)
