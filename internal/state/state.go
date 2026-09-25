@@ -74,6 +74,14 @@ type Sandbox struct {
 	// was. Scenario then names the one that snapshot was taken on,
 	// which is where example values for addresses still come from.
 	Snapshot string `json:"snapshot,omitempty"`
+	// Writes are the databases' counts of writes when the data was
+	// loaded, one for each writes command. pit ls counts again and
+	// compares, which is how it knows the data was changed since.
+	Writes []int64 `json:"writes,omitempty"`
+	// Edited is data written to before Writes was counted: an update
+	// kept it, and its migrations were not to count as the reviewer's
+	// writes, so the count began again after them.
+	Edited bool `json:"edited,omitempty"`
 	// CreatedAt is when the sandbox was set up.
 	CreatedAt time.Time `json:"createdAt"`
 	// Steps is how long each part of the setup took, in the order it

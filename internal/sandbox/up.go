@@ -259,6 +259,14 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 
 	h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
 
+	// Whether the data a sandbox keeps across an update was written to,
+	// asked before the new commit's hooks and migrations write to it
+	// themselves: that is the commit's doing, not the reviewer's.
+	before := EditUnknown
+	if updating {
+		before = m.editedSince(ctx, previous)
+	}
+
 	after := hooks.AfterUp(req.Config.Hooks.AfterUp)
 	if !after.Empty() {
 		st.begin("hooks", streaming)
@@ -285,14 +293,16 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// that loads before the table it fills exists fails in a way that
 	// is tedious to diagnose. Before the healthcheck, so that the
 	// moment pit says the sandbox answers, it answers with data.
-	loaded, restored := scenario.Name, ""
+	loaded, restored, kept := scenario.Name, "", false
 	switch {
 	case scenario.Empty():
-		// Nothing configured, so nothing to say about it.
+		// Nothing configured, so nothing to say about it. What an
+		// update found is still there.
+		kept = updating
 	case updating && !wants(req, scenario, previous):
 		// The data survived the update. Replacing it would throw away
 		// whatever the reviewer had done in the sandbox so far.
-		loaded, restored = previous.Scenario, previous.Snapshot
+		loaded, restored, kept = previous.Scenario, previous.Snapshot, true
 		st.begin("data", quiet)
 		st.done(ctx, "kept as it was")
 	default:
@@ -347,6 +357,13 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		// What the reviewer has looked at survives an update; pit what
 		// decides which checks the new commit makes stale.
 		record.Checked = previous.Checked
+	}
+	// Counted after the healthcheck, whose request may itself write: a
+	// session, a visit. Data that was kept stays edited if it was; if
+	// pit could not tell before the update, it cannot tell now either.
+	if !kept || before != EditUnknown {
+		record.Writes = m.baseline(ctx, record, rep)
+		record.Edited = kept && before == Edited
 	}
 	if err := m.Store.Update(func(f *state.File) error {
 		f.Put(record)

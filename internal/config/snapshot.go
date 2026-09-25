@@ -82,7 +82,12 @@ func SuggestSnapshot(service string, e Engine) Snapshot {
 		const empty = `DO \$\$ DECLARE s name; BEGIN FOR s IN SELECT nspname FROM pg_namespace ` +
 			`WHERE nspname NOT LIKE \$p\$pg\_%\$p\$ AND nspname <> \$p\$information_schema\$p\$ ` +
 			`LOOP EXECUTE format(\$f\$DROP SCHEMA %I CASCADE\$f\$, s); END LOOP; END \$\$`
+		// The rows the database's own tables have had written, as
+		// the statistics count them: reads, dumps, autovacuum and
+		// ANALYZE leave the number alone, and it survives a restart.
 		return Snapshot{
+			Writes: inside("exec psql -At -U " + user + " -d " + db +
+				` -c "SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) FROM pg_stat_user_tables"`),
 			Save: inside("exec pg_dump -U " + user + " --clean --if-exists " + db),
 			Restore: inside(`U=` + user + `; D="${POSTGRES_DB:-$U}"; ` +
 				`psql -q -v ON_ERROR_STOP=1 -U "$U" -d "$D" -c "SET client_min_messages TO warning" -c "` + empty + `" -c "CREATE SCHEMA public" && ` +
@@ -95,24 +100,37 @@ func SuggestSnapshot(service string, e Engine) Snapshot {
 		// the whole database, routines and events included, and not
 		// only the tables it names.
 		const login = `export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec `
+		// Writes counts InnoDB's rows written; the internal temporary
+		// tables of a GROUP BY are not among them. A restart of the
+		// server starts it again at zero.
 		return Snapshot{
 			Save:    inside(login + `mysqldump -uroot --set-gtid-purged=OFF --add-drop-database --routines --events --databases "$MYSQL_DATABASE"`),
 			Restore: inside(login + `mysql -uroot`),
+			Writes: inside(login + `mysql -uroot -N -B -e "SELECT SUM(VARIABLE_VALUE) FROM performance_schema.global_status ` +
+				`WHERE VARIABLE_NAME IN (\"Innodb_rows_inserted\", \"Innodb_rows_updated\", \"Innodb_rows_deleted\")"`),
 		}
 	case MariaDB:
 		// MariaDB's images accept both spellings of the variables, and
 		// from 11 on ship only the mariadb names of the tools.
 		const login = `export MYSQL_PWD="${MARIADB_ROOT_PASSWORD:-$MYSQL_ROOT_PASSWORD}"; exec `
+		// MariaDB 11 has no Innodb_rows_ counters; its Handler_
+		// ones leave out temporary tables, which it counts apart.
 		return Snapshot{
 			Save:    inside(login + `mariadb-dump -uroot --add-drop-database --routines --events --databases "${MARIADB_DATABASE:-$MYSQL_DATABASE}"`),
 			Restore: inside(login + `mariadb -uroot`),
+			Writes: inside(login + `mariadb -uroot -N -B -e "SELECT SUM(VARIABLE_VALUE) FROM information_schema.GLOBAL_STATUS ` +
+				`WHERE VARIABLE_NAME IN (\"HANDLER_WRITE\", \"HANDLER_UPDATE\", \"HANDLER_DELETE\")"`),
 		}
 	case MongoDB:
 		// mongorestore --drop replaces the collections the archive
 		// holds; the databases are dropped first so that one added
 		// since the snapshot goes too. MongoDB's own are left alone.
 		const auth = `${MONGO_INITDB_ROOT_USERNAME:+--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin}`
+		// The documents written; unlike opcounters, not the server's
+		// own writes of its sessions every few minutes.
 		return Snapshot{
+			Writes: inside("exec mongosh --quiet " + auth +
+				` --eval "const d = db.serverStatus().metrics.document; print(Number(d.inserted) + Number(d.updated) + Number(d.deleted))"`),
 			Save: inside("exec mongodump --archive --quiet " + auth),
 			Restore: inside("mongosh --quiet " + auth +
 				` --eval "db.adminCommand({listDatabases: 1}).databases.forEach(d => /^(admin|config|local)$/.test(d.name) || db.getSiblingDB(d.name).dropDatabase())" && ` +
@@ -173,7 +191,7 @@ func (c *Config) SnapshotCommands(services []Database) (Snapshot, error) {
 		for _, s := range services {
 			if e, ok := EngineOf(s.Image); ok {
 				one := SuggestSnapshot(s.Service, e)
-				parts = append(parts, SnapshotPart{Service: s.Service, Save: one.Save, Restore: one.Restore})
+				parts = append(parts, SnapshotPart{Service: s.Service, Save: one.Save, Restore: one.Restore, Writes: one.Writes})
 				names = append(names, fmt.Sprintf("%s is %s", s.Service, e))
 			}
 		}
@@ -202,13 +220,20 @@ func snapshotYAML(s Snapshot) string {
 			out += "\n      - service: " + p.Service +
 				"\n        save: >-\n          " + p.Save +
 				"\n        restore: >-\n          " + p.Restore
+			if p.Writes != "" {
+				out += "\n        writes: >-\n          " + p.Writes
+			}
 		}
 		return out
 	}
-	return "  data:\n" +
+	out := "  data:\n" +
 		"    snapshot:\n" +
 		"      save: >-\n" +
 		"        " + s.Save + "\n" +
 		"      restore: >-\n" +
 		"        " + s.Restore
+	if s.Writes != "" {
+		out += "\n      writes: >-\n        " + s.Writes
+	}
+	return out
 }

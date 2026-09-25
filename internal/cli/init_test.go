@@ -351,7 +351,8 @@ func TestInitWritesSnapshotCommandsForTheDatabase(t *testing.T) {
 	lines := strings.Split(string(written), "\n")
 	for i, l := range lines {
 		if strings.HasPrefix(l, "  # snapshot:") {
-			for j := i; j < i+5; j++ {
+			lines[i] = "  snapshot:"
+			for j := i + 1; strings.HasPrefix(lines[j], "  #   "); j++ {
 				lines[j] = "  " + strings.TrimPrefix(lines[j], "  # ")
 			}
 			break

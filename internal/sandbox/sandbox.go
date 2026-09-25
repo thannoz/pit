@@ -50,6 +50,9 @@ type Entry struct {
 	// Unreachable holds the reason the runtime could not be asked,
 	// which is itself worth showing.
 	Unreachable error
+	// Edited says whether the data was written to since it was
+	// loaded, where the sandbox is running and can be asked.
+	Edited Edit
 }
 
 // Running reports whether every recorded service is up. A sandbox with
@@ -149,6 +152,12 @@ func (m *Manager) describe(ctx context.Context, box state.Sandbox) Entry {
 		return e
 	}
 	e.Services = statuses
+	switch {
+	case box.Edited:
+		e.Edited = Edited
+	case e.Running():
+		e.Edited = m.edited(ctx, box)
+	}
 	return e
 }
 

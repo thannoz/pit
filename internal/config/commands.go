@@ -59,7 +59,7 @@ func (c *Config) commands() []command {
 	}
 
 	for i, part := range c.Data.Snapshot.Parts {
-		for _, cmd := range []struct{ name, line string }{{"save", part.Save}, {"restore", part.Restore}} {
+		for _, cmd := range []struct{ name, line string }{{"save", part.Save}, {"restore", part.Restore}, {"writes", part.Writes}} {
 			if cmd.line == "" {
 				continue
 			}
@@ -74,6 +74,7 @@ func (c *Config) commands() []command {
 	for _, s := range []struct{ path, line string }{
 		{"data.snapshot.save", c.Data.Snapshot.Save},
 		{"data.snapshot.restore", c.Data.Snapshot.Restore},
+		{"data.snapshot.writes", c.Data.Snapshot.Writes},
 		{"data.production_like.fetch", c.Data.ProductionLike.Fetch},
 	} {
 		if s.line == "" {

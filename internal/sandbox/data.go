@@ -28,17 +28,15 @@ func (m *Manager) ResetData(ctx context.Context, box state.Sandbox, sc data.Scen
 	}
 	rep.Done("scenario %s", sc.Describe())
 
-	if box.Scenario == sc.Name && box.Snapshot == "" {
-		return nil
-	}
 	// Recorded only now, because a record written before the commands
 	// ran would describe a state the sandbox is not in.
+	writes := m.baseline(ctx, box, rep)
 	return m.Store.Update(func(f *state.File) error {
 		current, ok := f.Find(box.RepoRef, box.PR)
 		if !ok {
 			return errs.New("#%d is no longer recorded", box.PR)
 		}
-		current.Scenario, current.Snapshot = sc.Name, ""
+		current.Scenario, current.Snapshot, current.Writes, current.Edited = sc.Name, "", writes, false
 		f.Put(current)
 		return nil
 	})

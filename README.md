@@ -151,8 +151,10 @@ pit what 7
 The sandbox keeps running; only its data is replaced. Item 2 now links to
 order 1002, the refunded one, because the scenario says which order to use.
 
-Whatever you do in the sandbox from here on changes its data. To keep a state
-worth coming back to, save it:
+Whatever you do in the sandbox from here on changes its data. Order a tea with
+the form on the home page, and `pit ls` shows the scenario as
+`refunded +edited`: the data is no longer what the scenario loads. To keep a
+state worth coming back to, save it:
 
 ```bash
 pit snap save 7 refunded-order
@@ -251,7 +253,7 @@ old. `pit down 482` and `pit 482` start that service afresh.
 | `pit <n>` | Bring up pull request *n*, or update the sandbox that is running. `--scenario` picks the data, `--open` opens the browser when it is ready. |
 | `pit what <n>` | List the addresses the change leads to, as links, and what clicking through them will not show. |
 | `pit open <n>` | Open the sandbox in a browser. |
-| `pit ls` | List every sandbox, from every repository, with what it is actually doing. |
+| `pit ls` | List every sandbox, from every repository, with what it is actually doing, and whether its data was changed since it was loaded. |
 | `pit logs <n> [service]` | Show what a service says. Default: the one a reviewer opens. |
 | `pit shell <n> [service] [-- cmd]` | A shell, or a command, inside a service. |
 | `pit data reset <n>` | Load a scenario into a running sandbox again. |
@@ -395,6 +397,8 @@ data:
       compose exec -T db sh -c 'exec pg_dump -U "${POSTGRES_USER:-postgres}" --clean --if-exists "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}"'
     restore: >-
       compose exec -T db sh -c 'U="${POSTGRES_USER:-postgres}"; D="${POSTGRES_DB:-$U}"; psql -q -v ON_ERROR_STOP=1 -U "$U" -d "$D" -c "SET client_min_messages TO warning" -c "DO \$\$ DECLARE s name; BEGIN FOR s IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE \$p\$pg\_%\$p\$ AND nspname <> \$p\$information_schema\$p\$ LOOP EXECUTE format(\$f\$DROP SCHEMA %I CASCADE\$f\$, s); END LOOP; END \$\$" -c "CREATE SCHEMA public" && exec psql -q -o /dev/null -v ON_ERROR_STOP=1 -U "$U" -d "$D"'
+    writes: >-
+      compose exec -T db sh -c 'exec psql -At -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}" -c "SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) FROM pg_stat_user_tables"'
 ```
 
 You do not have to write these yourself. Without them, `pit snap save` says
@@ -413,6 +417,24 @@ exactly as they are written.
 
 When a pull request brings its own `.pit.yaml` without snapshot commands, the
 ones in your checkout's `.pit.yaml` are used.
+
+The third command, `writes`, is optional. It prints a number that grows with
+every write to the database: for PostgreSQL the rows written, as its
+statistics count them; for MySQL, MariaDB and MongoDB their own counters.
+Reading, saving a snapshot and the database's housekeeping leave it alone.
+`pit` counts once the data is loaded, and `pit ls` counts again: when the
+number grew, the sandbox shows `+edited` next to its scenario, because its
+data is no longer something the scenario, or the snapshot, can bring back. An
+update keeps that mark, and does not count its own migrations as edits.
+
+What the count cannot tell, `pit ls` does not claim:
+
+- MySQL, MariaDB and MongoDB start counting from zero when the database
+  restarts. What was written before is then unknown, and `pit ls` says
+  nothing about that sandbox until its data is loaded again.
+- PostgreSQL can take up to ten seconds to count a write.
+- An application that writes on its own, a session or a visit for every
+  page, shows as edited as soon as a page is opened.
 
 A project with several databases lists a pair of commands for each, named by
 its service, and a snapshot then holds all of them, one file each. When pit
@@ -501,8 +523,9 @@ machine, in the sandbox's worktree.
 | `data.service` | from the images | The service holding the database, for when `pit` cannot tell from the images which one it is. |
 | `data.snapshot.save` | none | A command that writes a dump of the database to stdout. See [Snapshots](#snapshots). |
 | `data.snapshot.restore` | none | A command that reads such a dump from stdin and replaces the database with it. Set together with `save`. |
+| `data.snapshot.writes` | none | A command that prints a number that grows with every write, for `pit ls` to show `+edited`. |
 | `data.snapshot.service` | from the command | The service the commands work on, for `--consistent`, when it is not a `compose exec`. |
-| `data.snapshot[]` | none | Instead, a list of `service`, `save` and `restore`, one for each of several databases. |
+| `data.snapshot[]` | none | Instead, a list of `service`, `save`, `restore` and optionally `writes`, one for each of several databases. |
 | `review.routes.framework` | `auto` | `auto`, `nextjs`, `go` or `sveltekit`. |
 | `review.ignore` | none | Glob patterns for files that never belong on the checklist, e.g. `"**/*.test.ts"`. |
 | `env.set` | none | Environment variables set on the web service, as a map: `NODE_ENV: development`. |

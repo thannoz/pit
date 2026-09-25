@@ -226,12 +226,13 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, box state.Sandbox, snap s
 
 	// Recorded only now: a record written before would describe a
 	// state the sandbox is not in.
+	writes := m.baseline(ctx, box, rep)
 	return m.Store.Update(func(f *state.File) error {
 		current, ok := f.Find(box.RepoRef, box.PR)
 		if !ok {
 			return errs.New("#%d is no longer recorded", box.PR)
 		}
-		current.Scenario, current.Snapshot = snap.Scenario, snap.ID
+		current.Scenario, current.Snapshot, current.Writes, current.Edited = snap.Scenario, snap.ID, writes, false
 		f.Put(current)
 		return nil
 	})

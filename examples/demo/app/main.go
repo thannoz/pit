@@ -1,4 +1,5 @@
-// Teashop is the application in pit's demo: three pages, one database.
+// Teashop is the application in pit's demo: three pages, a form, one
+// database.
 package main
 
 import (
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -30,6 +32,7 @@ func main() {
 	mux.HandleFunc("GET /{$}", s.home)
 	mux.HandleFunc("GET /orders", s.orders)
 	mux.HandleFunc("GET /orders/{id}", s.order)
+	mux.HandleFunc("POST /orders", s.place)
 
 	log.Print("listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", logRequests(mux)))
@@ -40,7 +43,26 @@ type shop struct{ db *sql.DB }
 func (s *shop) home(w http.ResponseWriter, r *http.Request) {
 	var n int
 	_ = s.db.QueryRowContext(r.Context(), "SELECT count(*) FROM orders").Scan(&n)
-	render(w, `<h1>Teashop</h1><p>{{.}} orders so far. <a href="/orders">See them</a></p>`, n)
+	render(w, `<h1>Teashop</h1><p>{{.}} orders so far. <a href="/orders">See them</a></p>`+
+		`<form method="post" action="/orders"><input name="item" placeholder="Gyokuro, 50 g"> <button>Order it</button></form>`, n)
+}
+
+// place takes an order from the form on the home page, the one thing a
+// visitor can change in the shop.
+func (s *shop) place(w http.ResponseWriter, r *http.Request) {
+	item := strings.TrimSpace(r.FormValue("item"))
+	if item == "" {
+		http.Error(w, "an order needs an item", http.StatusBadRequest)
+		return
+	}
+	var id int
+	err := s.db.QueryRowContext(r.Context(),
+		"INSERT INTO orders (id, item, cents) SELECT coalesce(max(id), 1000) + 1, $1, 1000 FROM orders RETURNING id", item).Scan(&id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/orders/%d", id), http.StatusSeeOther)
 }
 
 func (s *shop) orders(w http.ResponseWriter, r *http.Request) {

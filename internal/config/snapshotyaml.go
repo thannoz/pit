@@ -23,7 +23,7 @@ func (s *Snapshot) UnmarshalYAML(n *yaml.Node) error {
 		if err != nil {
 			return err
 		}
-		*s = Snapshot{Save: part.Save, Restore: part.Restore, Service: part.Service}
+		*s = Snapshot{Save: part.Save, Restore: part.Restore, Service: part.Service, Writes: part.Writes}
 		return nil
 	case yaml.SequenceNode:
 		parts := make([]SnapshotPart, 0, len(n.Content))
@@ -45,7 +45,7 @@ func (s *Snapshot) UnmarshalYAML(n *yaml.Node) error {
 		"line %d: data.snapshot is neither save and restore commands nor a list of them", n.Line)}}
 }
 
-var partKeys = []string{"service", "save", "restore"}
+var partKeys = []string{"service", "save", "restore", "writes"}
 
 func decodePart(n *yaml.Node, path string) (SnapshotPart, error) {
 	for i := 0; i+1 < len(n.Content); i += 2 {
@@ -68,7 +68,7 @@ func (s Snapshot) MarshalYAML() (any, error) {
 		return s.Parts, nil
 	}
 	single := map[string]string{}
-	for k, v := range map[string]string{"save": s.Save, "restore": s.Restore, "service": s.Service} {
+	for k, v := range map[string]string{"save": s.Save, "restore": s.Restore, "service": s.Service, "writes": s.Writes} {
 		if v != "" {
 			single[k] = v
 		}
@@ -93,7 +93,7 @@ func (s Snapshot) Each() []SnapshotPart {
 	if s.Save == "" && s.Restore == "" {
 		return nil
 	}
-	return []SnapshotPart{{Service: s.Service, Save: s.Save, Restore: s.Restore}}
+	return []SnapshotPart{{Service: s.Service, Save: s.Save, Restore: s.Restore, Writes: s.Writes}}
 }
 
 // UnmarshalYAML reads a scenario's snapshot: a path, or a mapping from

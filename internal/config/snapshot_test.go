@@ -72,7 +72,7 @@ func TestSuggestedSnapshotRoundTrips(t *testing.T) {
 	for _, e := range []Engine{Postgres, MySQL, MariaDB, MongoDB} {
 		t.Run(string(e), func(t *testing.T) {
 			want := SuggestSnapshot("db", e)
-			if !want.Configured() {
+			if !want.Configured() || want.Writes == "" {
 				t.Fatalf("no commands for %s", e)
 			}
 			src := "version: 1\nweb:\n  service: web\n  port: 3000\n" + dedent(snapshotYAML(want)) + "\n"
@@ -87,7 +87,7 @@ func TestSuggestedSnapshotRoundTrips(t *testing.T) {
 			if !reflect.DeepEqual(c.Data.Snapshot, want) {
 				t.Errorf("pasted\n got %#v\nwant %#v", c.Data.Snapshot, want)
 			}
-			for _, line := range []string{want.Save, want.Restore} {
+			for _, line := range []string{want.Save, want.Restore, want.Writes} {
 				if err := hooks.Check(line); err != nil {
 					t.Errorf("%q: %v", line, err)
 				}
@@ -352,7 +352,57 @@ func TestSnapshotCommandsSuggestTheListForTwoDatabases(t *testing.T) {
 		t.Fatalf("pasted:\n%s\n%v", src, err)
 	}
 	parts := loaded.Data.Snapshot.Each()
-	if len(parts) != 2 || parts[1].Save != SuggestSnapshot("analytics", MySQL).Save {
+	if len(parts) != 2 || parts[1].Save != SuggestSnapshot("analytics", MySQL).Save ||
+		parts[0].Writes != SuggestSnapshot("db", Postgres).Writes || parts[1].Writes == "" {
 		t.Errorf("parts = %+v", parts)
+	}
+}
+
+func TestSnapshotWrites(t *testing.T) {
+	src := `version: 1
+web: {service: web, port: 3000}
+data:
+  snapshot:
+    - {service: db, save: a, restore: b, writes: "compose exec -T db count"}
+    - {service: stock, save: c, restore: d}
+`
+	root := project(t, map[string]string{FileName: src})
+	c, err := Load(filepath.Join(root, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parts := c.Data.Snapshot.Each(); parts[0].Writes != "compose exec -T db count" || parts[1].Writes != "" {
+		t.Errorf("parts = %+v", parts)
+	}
+	// A command like the others: checked, and asked about when it runs
+	// on the machine.
+	var paths []string
+	for _, cmd := range c.commands() {
+		paths = append(paths, cmd.Path)
+	}
+	if !slices.Contains(paths, "data.snapshot[0].writes") {
+		t.Errorf("commands %v lack the writes", paths)
+	}
+
+	single := "version: 1\nweb: {service: web, port: 3000}\ndata:\n  snapshot: {save: a, restore: b, writes: \"host-count\"}\n"
+	root = project(t, map[string]string{FileName: single})
+	if c, err = Load(filepath.Join(root, FileName)); err != nil || c.Data.Snapshot.Each()[0].Writes != "host-count" {
+		t.Fatalf("single form: %+v, %v", c, err)
+	}
+	paths = nil
+	for _, cmd := range c.commands() {
+		paths = append(paths, cmd.Path)
+	}
+	if !slices.Contains(paths, "data.snapshot.writes") {
+		t.Errorf("commands %v lack the writes", paths)
+	}
+	if out, err := yaml.Marshal(c.Data.Snapshot); err != nil || !strings.Contains(string(out), "writes: host-count") {
+		t.Errorf("marshalled:\n%s%v", out, err)
+	}
+
+	alone := "version: 1\nweb: {service: web, port: 3000}\ndata:\n  snapshot: {writes: count}\n"
+	root = project(t, map[string]string{FileName: alone})
+	if _, err := Load(filepath.Join(root, FileName)); err == nil || !strings.Contains(err.Error(), "data.snapshot.writes: is set without save and restore") {
+		t.Errorf("err = %v", err)
 	}
 }

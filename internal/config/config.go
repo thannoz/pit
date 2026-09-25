@@ -124,10 +124,13 @@ type Data struct {
 // are read by UnmarshalYAML.
 type Snapshot struct {
 	// Save and Restore are the single form's commands, and Service,
-	// optionally, the service they work on.
+	// optionally, the service they work on. Writes, also optional,
+	// prints a count of the writes to the database, for telling
+	// whether anyone changed the data since it was loaded.
 	Save    string
 	Restore string
 	Service string
+	Writes  string
 	// Parts is the list form: one pair of commands for each database.
 	Parts []SnapshotPart
 }
@@ -137,6 +140,7 @@ type SnapshotPart struct {
 	Service string `yaml:"service"`
 	Save    string `yaml:"save"`
 	Restore string `yaml:"restore"`
+	Writes  string `yaml:"writes,omitempty"`
 }
 
 // Scenario is a named, reproducible data state.

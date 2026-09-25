@@ -298,6 +298,14 @@ func (c *Config) checkData(node *yaml.Node) []Problem {
 			Hint: "save writes a dump to stdout, restore reads one from stdin",
 		})
 	}
+	if d.Snapshot.Writes != "" && d.Snapshot.Save == "" && d.Snapshot.Restore == "" {
+		p = append(p, Problem{
+			Line: lineOf(node, "data", "snapshot"),
+			Path: "data.snapshot.writes",
+			Msg:  "is set without save and restore, which it belongs to",
+			Hint: "`pit snap save` suggests all three for your database",
+		})
+	}
 	return p
 }
 

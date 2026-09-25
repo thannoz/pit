@@ -211,6 +211,12 @@ data:
   #     {{ .Snapshot.Save }}
   #   restore: >-
   #     {{ .Snapshot.Restore }}
+{{- if .Snapshot.Writes }}
+  #   # Counts the writes, so that "pit ls" can say when the data was
+  #   # changed since it was loaded.
+  #   writes: >-
+  #     {{ .Snapshot.Writes }}
+{{- end }}
 
 # Environment for the sandbox's services. from_file points at a template
 # checked into the repository -- never a real .env, and never a secret.

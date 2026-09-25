@@ -55,15 +55,18 @@ func runLs(c *cobra.Command, opts *globalOptions) error {
 // than the internal one, so that renaming a field inside pit does not
 // silently break someone's script.
 type lsRow struct {
-	PR        int      `json:"pr"`
-	Repo      string   `json:"repo"`
-	Branch    string   `json:"branch,omitempty"`
-	Title     string   `json:"title,omitempty"`
-	Status    string   `json:"status"`
-	URL       string   `json:"url,omitempty"`
-	Port      int      `json:"port,omitempty"`
-	Scenario  string   `json:"scenario,omitempty"`
-	Snapshot  string   `json:"snapshot,omitempty"`
+	PR       int    `json:"pr"`
+	Repo     string `json:"repo"`
+	Branch   string `json:"branch,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Status   string `json:"status"`
+	URL      string `json:"url,omitempty"`
+	Port     int    `json:"port,omitempty"`
+	Scenario string `json:"scenario,omitempty"`
+	Snapshot string `json:"snapshot,omitempty"`
+	// Edited is whether the data was written to since it was loaded;
+	// absent where pit cannot tell.
+	Edited    *bool    `json:"edited,omitempty"`
 	CreatedAt string   `json:"createdAt"`
 	Services  []string `json:"services,omitempty"`
 }
@@ -85,6 +88,7 @@ func writeLsJSON(out *ui.Printer, entries []sandbox.Entry) error {
 			Port:      e.Port,
 			Scenario:  e.Scenario,
 			Snapshot:  e.Snapshot,
+			Edited:    edited(e.Edited),
 			CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
 			Services:  services,
 		})
@@ -131,7 +135,11 @@ func writeLsTable(out *ui.Printer, entries []sandbox.Entry) error {
 			shortDuration(time.Since(e.CreatedAt)),
 		}
 		if showScenario {
-			row = slices.Insert(row, 3, orDash(truncate(dataOrigin(e.Sandbox), maxScenario)))
+			origin := orDash(truncate(dataOrigin(e.Sandbox), maxScenario))
+			if e.Edited == sandbox.Edited {
+				origin += " +edited"
+			}
+			row = slices.Insert(row, 3, origin)
 		}
 		if showRepo {
 			row = append([]string{truncate(e.ShortRepo(), maxRepo)}, row...)
@@ -170,6 +178,18 @@ func dataOrigin(box state.Sandbox) string {
 		return box.Snapshot
 	}
 	return box.Scenario
+}
+
+// edited is an Edit as JSON has it: true, false, or nothing where pit
+// cannot tell.
+func edited(e sandbox.Edit) *bool {
+	switch e {
+	case sandbox.Edited:
+		return new(true)
+	case sandbox.Unedited:
+		return new(false)
+	}
+	return nil
 }
 
 func anyScenario(entries []sandbox.Entry) bool {

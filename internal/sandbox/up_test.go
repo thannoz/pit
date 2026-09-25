@@ -1601,3 +1601,138 @@ func TestUpPrefersThePullRequestsScenarioOfTheSameName(t *testing.T) {
 		t.Errorf("applied %+v", calls)
 	}
 }
+
+// withCounter gives the reviewer's checkout snapshot commands whose
+// writes command reads a number from a file, and migrations that add
+// one to it, as a migration that fills a new column would. It returns
+// the file.
+func withCounter(t *testing.T, req *sandbox.UpRequest) string {
+	t.Helper()
+	counter := filepath.Join(t.TempDir(), "count")
+	writeFile(t, counter, "5\n")
+	yaml := `version: 1
+web:
+  service: web
+  port: 80
+data:
+  migrate: ["sh -c 'n=$(cat ` + counter + `); echo $((n + 1)) > ` + counter + `'"]
+  snapshot:
+    save: "true"
+    restore: "true"
+    writes: "cat ` + counter + `"
+`
+	writeFile(t, filepath.Join(req.Repo.Root, ".pit.yaml"), yaml)
+	cfg, err := config.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Config = cfg
+	return counter
+}
+
+func counted(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func editOf(t *testing.T, m *sandbox.Manager, record state.Sandbox) sandbox.Edit {
+	t.Helper()
+	e, err := m.Find(t.Context(), record.RepoRef, record.PR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e.Edited
+}
+
+// TestUpCountsTheWritesOfWhatItLoaded is the acceptance criterion for
+// T-707 below the command line: the count is taken once the data is
+// loaded, and a write since then shows.
+func TestUpCountsTheWritesOfWhatItLoaded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	counter := withCounter(t, &req)
+
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	// After the migration, which made it 6.
+	if !slices.Equal(record.Writes, []int64{6}) || record.Edited {
+		t.Fatalf("Writes = %v, Edited = %v", record.Writes, record.Edited)
+	}
+	if got := editOf(t, m, record); got != sandbox.Unedited {
+		t.Errorf("right after loading: %v", got)
+	}
+	writeFile(t, counter, "7\n")
+	if got := editOf(t, m, record); got != sandbox.Edited {
+		t.Errorf("after a write: %v", got)
+	}
+}
+
+// An update keeps the data, and runs the new commit's migrations on it.
+// What they write is not the reviewer's; what the reviewer wrote before
+// still is.
+func TestAnUpdateKeepsTrackOfWhatWasWritten(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	for _, reviewerWrote := range []bool{false, true} {
+		m, req, _ := upFixture(t)
+		counter := withCounter(t, &req)
+		first, err := m.Up(t.Context(), req, &quietReporter{})
+		if err != nil {
+			t.Fatalf("Up: %v", err)
+		}
+		if reviewerWrote {
+			writeFile(t, counter, "20\n")
+		}
+
+		pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{"CHANGELOG": "a new commit\n"})
+		updated, err := m.Up(t.Context(), req, &quietReporter{})
+		if err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		if updated.SHA == first.SHA {
+			t.Fatal("the update did not happen")
+		}
+		// Counted after the migration of the new commit.
+		if want := counted(t, counter); len(updated.Writes) != 1 || fmt.Sprint(updated.Writes[0]) != want {
+			t.Errorf("Writes = %v, want [%s]", updated.Writes, want)
+		}
+		want := sandbox.Unedited
+		if reviewerWrote {
+			want = sandbox.Edited
+		}
+		if updated.Edited != reviewerWrote || editOf(t, m, updated) != want {
+			t.Errorf("reviewer wrote %v: Edited = %v, pit ls says %v", reviewerWrote, updated.Edited, editOf(t, m, updated))
+		}
+	}
+}
+
+// A database that began counting again cannot say what happened before;
+// an update does not turn that into "unchanged".
+func TestAnUpdateOfDataPitCannotTellAbout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	counter := withCounter(t, &req)
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, counter, "0\n") // restarted
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{"CHANGELOG": "a new commit\n"})
+	updated, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Writes != nil || updated.Edited || editOf(t, m, updated) != sandbox.EditUnknown {
+		t.Errorf("Writes = %v, Edited = %v", updated.Writes, updated.Edited)
+	}
+}
