@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestSaveKeepsWhatTheCommandWrote(t *testing.T) {
 	s := store(t)
 	dump := strings.Repeat("INSERT INTO orders VALUES (1001, 'Sencha');\n", 500)
 
-	snap, err := s.Save(t.Context(), Snapshot{Name: "cart-with-voucher", PR: 482, SHA: "abc", Scenario: "standard", Service: "db"}, writes(dump))
+	snap, err := s.Save(t.Context(), Snapshot{Name: "cart-with-voucher", PR: 482, SHA: "abc", Scenario: "standard", Service: "db"}, One(writes(dump)))
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestSaveKeepsWhatTheCommandWrote(t *testing.T) {
 
 	// And it is found again, as it was recorded.
 	list, err := s.List()
-	if err != nil || len(list) != 1 || list[0] != snap {
+	if err != nil || len(list) != 1 || !reflect.DeepEqual(list[0], snap) {
 		t.Errorf("List = %+v, %v; want the one saved", list, err)
 	}
 	if want := []string{snap.ID + ".gz", snap.ID + ".json"}; !slices.Equal(files(t, s), want) {
@@ -115,7 +116,7 @@ func TestSaveLeavesNothingBehind(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := store(t)
-			if _, err := s.Save(t.Context(), Snapshot{}, writes("-- an earlier one\n")); err != nil {
+			if _, err := s.Save(t.Context(), Snapshot{}, One(writes("-- an earlier one\n"))); err != nil {
 				t.Fatal(err)
 			}
 			before := files(t, s)
@@ -125,7 +126,7 @@ func TestSaveLeavesNothingBehind(t *testing.T) {
 				cancel()
 			}
 			defer cancel()
-			_, err := s.Save(ctx, Snapshot{Name: "kept"}, dump)
+			_, err := s.Save(ctx, Snapshot{Name: "kept"}, One(dump))
 			if err == nil {
 				t.Fatal("no error")
 			}
@@ -144,12 +145,12 @@ func TestSaveLeavesNothingBehind(t *testing.T) {
 
 func TestSaveRefusesATakenName(t *testing.T) {
 	s := store(t)
-	first, err := s.Save(t.Context(), Snapshot{Name: "cart", PR: 7}, writes("a\n"))
+	first, err := s.Save(t.Context(), Snapshot{Name: "cart", PR: 7}, One(writes("a\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ran := false
-	_, err = s.Save(t.Context(), Snapshot{Name: "cart"}, func(context.Context, io.Writer) error { ran = true; return nil })
+	_, err = s.Save(t.Context(), Snapshot{Name: "cart"}, One(func(context.Context, io.Writer) error { ran = true; return nil }))
 	if err == nil || !strings.Contains(err.Error(), first.ID) || !strings.Contains(err.Error(), "#7") {
 		t.Errorf("err = %v; it should name the snapshot that has the name", err)
 	}
@@ -157,7 +158,7 @@ func TestSaveRefusesATakenName(t *testing.T) {
 		t.Error("the save command ran although the name was taken")
 	}
 	// Without a name there is nothing to collide with.
-	if _, err := s.Save(t.Context(), Snapshot{}, writes("b\n")); err != nil {
+	if _, err := s.Save(t.Context(), Snapshot{}, One(writes("b\n"))); err != nil {
 		t.Errorf("unnamed: %v", err)
 	}
 }
@@ -182,7 +183,7 @@ func TestList(t *testing.T) {
 	}
 	var ids []string
 	for range 3 {
-		snap, err := s.Save(t.Context(), Snapshot{}, writes("x\n"))
+		snap, err := s.Save(t.Context(), Snapshot{}, One(writes("x\n")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -227,11 +228,11 @@ func TestFindByIDOrName(t *testing.T) {
 	if _, err := s.Find("cart"); err == nil || !strings.Contains(errs.Hint(err), "pit snap save") {
 		t.Errorf("none yet: %v, hint %q", err, errs.Hint(err))
 	}
-	named, err := s.Save(t.Context(), Snapshot{Name: "cart"}, writes("a\n"))
+	named, err := s.Save(t.Context(), Snapshot{Name: "cart"}, One(writes("a\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain, err := s.Save(t.Context(), Snapshot{}, writes("b\n"))
+	plain, err := s.Save(t.Context(), Snapshot{}, One(writes("b\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,11 +254,11 @@ func TestFindByIDOrName(t *testing.T) {
 func TestOpenGivesBackWhatWasSaved(t *testing.T) {
 	s := store(t)
 	dump := "-- dump\nCOPY orders FROM stdin;\n1001\tSencha\n\\.\n"
-	snap, err := s.Save(t.Context(), Snapshot{}, writes(dump))
+	snap, err := s.Save(t.Context(), Snapshot{}, One(writes(dump)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := s.Open(snap)
+	r, err := s.Open(snap, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,18 +273,18 @@ func TestOpenGivesBackWhatWasSaved(t *testing.T) {
 	if err := os.Remove(s.DataPath(snap)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Open(snap); err == nil || errs.Hint(err) == "" {
+	if _, err := s.Open(snap, ""); err == nil || errs.Hint(err) == "" {
 		t.Errorf("data gone: %v", err)
 	}
 }
 
 func TestRemove(t *testing.T) {
 	s := store(t)
-	keep, err := s.Save(t.Context(), Snapshot{Name: "keep"}, writes("a\n"))
+	keep, err := s.Save(t.Context(), Snapshot{Name: "keep"}, One(writes("a\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	gone, err := s.Save(t.Context(), Snapshot{Name: "gone"}, writes("b\n"))
+	gone, err := s.Save(t.Context(), Snapshot{Name: "gone"}, One(writes("b\n")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,5 +338,114 @@ func mkdirAll(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A snapshot of several databases is one file each, all or nothing.
+func TestSaveSeveralParts(t *testing.T) {
+	s := store(t)
+	snap, err := s.Save(t.Context(), Snapshot{Name: "two"}, []Dump{
+		{Service: "db", Write: writes("-- postgres\n")},
+		{Service: "analytics", Write: writes("-- mysql, a little longer\n")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Parts) != 2 || snap.Parts[0].Service != "db" || snap.Parts[1].Service != "analytics" {
+		t.Fatalf("Parts = %+v", snap.Parts)
+	}
+	if snap.Raw != int64(len("-- postgres\n")+len("-- mysql, a little longer\n")) || snap.Size != snap.Parts[0].Size+snap.Parts[1].Size {
+		t.Errorf("Raw %d, Size %d, parts %+v", snap.Raw, snap.Size, snap.Parts)
+	}
+	for service, want := range map[string]string{"db": "-- postgres\n", "analytics": "-- mysql, a little longer\n"} {
+		r, err := s.Open(snap, service)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := io.ReadAll(r)
+		_ = r.Close()
+		if string(got) != want {
+			t.Errorf("%s = %q, want %q", service, got, want)
+		}
+	}
+	want := []string{snap.ID + ".analytics.gz", snap.ID + ".db.gz", snap.ID + ".json"}
+	if got := files(t, s); !slices.Equal(got, want) {
+		t.Errorf("files = %v, want %v", got, want)
+	}
+
+	if err := s.Remove(snap); err != nil {
+		t.Fatal(err)
+	}
+	if got := files(t, s); len(got) != 0 {
+		t.Errorf("after Remove: %v", got)
+	}
+}
+
+// The second database failing leaves the first one's dump behind no
+// more than its own.
+func TestSaveSeveralPartsIsAllOrNothing(t *testing.T) {
+	s := store(t)
+	_, err := s.Save(t.Context(), Snapshot{}, []Dump{
+		{Service: "db", Write: writes("-- postgres\n")},
+		{Service: "analytics", Write: func(_ context.Context, w io.Writer) error {
+			_, _ = io.WriteString(w, "-- half\n")
+			return errors.New("mysqldump: access denied")
+		}},
+	})
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if got := files(t, s); len(got) != 0 {
+		t.Errorf("left behind: %v", got)
+	}
+
+	_, err = s.Save(t.Context(), Snapshot{}, []Dump{
+		{Service: "db", Write: writes("-- postgres\n")},
+		{Service: "analytics", Write: writes("")},
+	})
+	if err == nil || !strings.Contains(err.Error(), "analytics") {
+		t.Errorf("an empty part: %v; it should name the service", err)
+	}
+	if got := files(t, s); len(got) != 0 {
+		t.Errorf("left behind: %v", got)
+	}
+}
+
+// A snapshot saved before parts were recorded is one part, its data the
+// single file pit wrote then.
+func TestASnapshotFromBeforePartsIsOnePart(t *testing.T) {
+	s := store(t)
+	mkdirAll(t, s.Dir)
+	record := `{"id": "sn_0a1b2c", "pr": 7, "sha": "abc", "size": 30, "raw": 11, "took": 1000000, "createdAt": "2026-09-24T12:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(s.Dir, "sn_0a1b2c.json"), []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(s.Dir, "sn_0a1b2c.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	z := gzip.NewWriter(f)
+	_, _ = io.WriteString(z, "-- old dump\n")
+	_ = z.Close()
+	_ = f.Close()
+
+	snap, err := s.Find("sn_0a1b2c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pieces := snap.Pieces(); len(pieces) != 1 || pieces[0].Service != "" {
+		t.Errorf("Pieces = %+v", pieces)
+	}
+	r, err := s.Open(snap, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(r)
+	_ = r.Close()
+	if string(got) != "-- old dump\n" {
+		t.Errorf("read %q", got)
+	}
+	if err := s.Remove(snap); err != nil || len(files(t, s)) != 0 {
+		t.Errorf("Remove: %v, left %v", err, files(t, s))
 	}
 }

@@ -2,9 +2,12 @@ package config
 
 import (
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/hooks"
@@ -81,7 +84,7 @@ func TestSuggestedSnapshotRoundTrips(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load:\n%s\n%v", src, err)
 			}
-			if c.Data.Snapshot != want {
+			if !reflect.DeepEqual(c.Data.Snapshot, want) {
 				t.Errorf("pasted\n got %#v\nwant %#v", c.Data.Snapshot, want)
 			}
 			for _, line := range []string{want.Save, want.Restore} {
@@ -116,7 +119,7 @@ func TestSnapshotCommands(t *testing.T) {
 	t.Run("configured", func(t *testing.T) {
 		c := &Config{Data: Data{Snapshot: Snapshot{Save: "a", Restore: "b"}}}
 		got, err := c.SnapshotCommands(nil)
-		if err != nil || got != c.Data.Snapshot {
+		if err != nil || !reflect.DeepEqual(got, c.Data.Snapshot) {
 			t.Errorf("= %v, %v", got, err)
 		}
 	})
@@ -239,5 +242,117 @@ func TestSuggestedRestoresReplaceTheWholeDatabase(t *testing.T) {
 		if s := SuggestSnapshot("db", e).Save; !strings.Contains(s, "--routines") || !strings.Contains(s, "--events") {
 			t.Errorf("%s: %q leaves routines or events out", e, s)
 		}
+	}
+}
+
+// Several databases are several pairs of commands, each named by its
+// service; the single form stays what it was.
+func TestSnapshotListForm(t *testing.T) {
+	src := `version: 1
+web:
+  service: web
+  port: 3000
+data:
+  snapshot:
+    - service: db
+      save: "compose exec -T db pg_dump -U app app"
+      restore: "compose exec -T db psql -U app -d app"
+    - service: analytics
+      save: "compose exec -T analytics mysqldump shop"
+      restore: "compose exec -T analytics mysql"
+`
+	root := project(t, map[string]string{FileName: src, "docker-compose.yml": "services:\n  web:\n    image: web\n"})
+	c, err := Load(filepath.Join(root, FileName))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	parts := c.Data.Snapshot.Each()
+	if len(parts) != 2 || parts[0].Service != "db" || parts[1].Service != "analytics" || !c.Data.Snapshot.Configured() {
+		t.Fatalf("parts = %+v", parts)
+	}
+	// The commands in the list are checked and asked about like any
+	// other: a host command in an entry is still a host command.
+	var paths []string
+	for _, cmd := range c.commands() {
+		paths = append(paths, cmd.Path)
+	}
+	for _, want := range []string{"data.snapshot[0].save", "data.snapshot[1].restore"} {
+		if !slices.Contains(paths, want) {
+			t.Errorf("commands %v lack %s", paths, want)
+		}
+	}
+
+	// And it reads back as it was written, for comparing two files.
+	out, err := yaml.Marshal(c.Data.Snapshot)
+	if err != nil || !strings.HasPrefix(string(out), "- service: db") {
+		t.Errorf("marshalled:\n%s%v", out, err)
+	}
+}
+
+func TestSnapshotListFormProblems(t *testing.T) {
+	for name, tc := range map[string]struct{ snapshot, want string }{
+		"no service": {`
+    - save: "compose exec -T db pg_dump"
+      restore: "compose exec -T db psql"`, "data.snapshot[0].service"},
+		"twice": {`
+    - {service: db, save: "a", restore: "b"}
+    - {service: db, save: "c", restore: "d"}`, `"db" is listed twice`},
+		"no restore": {`
+    - {service: db, save: "a"}`, "data.snapshot[0].restore"},
+		"unknown key": {`
+    - {service: db, save: "a", restor: "b"}`, `unknown field "restor"`},
+		"unknown key, single form": {`
+    save: "a"
+    restor: "b"`, `unknown field "restor"`},
+		"not a mapping": {`
+    - "compose exec -T db pg_dump"`, "is not a mapping"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := "version: 1\nweb:\n  service: web\n  port: 3000\ndata:\n  snapshot:" + tc.snapshot + "\n"
+			root := project(t, map[string]string{FileName: src, "docker-compose.yml": "services:\n  web:\n    image: web\n"})
+			_, err := Load(filepath.Join(root, FileName))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want one saying %s", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSnapshotPartTarget(t *testing.T) {
+	for part, want := range map[SnapshotPart]string{
+		{Service: "store", Save: "compose exec -T db pg_dump"}: "store",
+		{Save: "compose exec -T -u postgres db pg_dump"}:       "db",
+		{Save: "pg_dump -h localhost"}:                         "",
+	} {
+		if got, ok := part.Target(); got != want || ok != (want != "") {
+			t.Errorf("%+v: Target() = %q, %v; want %q", part, got, ok, want)
+		}
+	}
+}
+
+// Two databases and nothing saying which: the hint is the list form,
+// one entry each, and pasted in it is what .pit.yaml then holds.
+func TestSnapshotCommandsSuggestTheListForTwoDatabases(t *testing.T) {
+	c := &Config{}
+	_, err := c.SnapshotCommands([]Database{{"web", ""}, {"db", "postgres:17"}, {"analytics", "mysql:8.4"}})
+	hint := errs.Hint(err)
+	for _, want := range []string{"db is PostgreSQL, analytics is MySQL", "- service: db", "- service: analytics", "mysqldump"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint lacks %q:\n%s", want, hint)
+		}
+	}
+	_, lines, ok := strings.Cut(hint, "\n\n")
+	if !ok {
+		t.Fatalf("hint has no lines to paste:\n%s", hint)
+	}
+	src := "version: 1\nweb:\n  service: web\n  port: 3000\n" + dedent(lines) + "\n"
+	root := project(t, map[string]string{FileName: src, "docker-compose.yml": "services:\n  web:\n    image: web\n"})
+	loaded, err := Load(filepath.Join(root, FileName))
+	if err != nil {
+		t.Fatalf("pasted:\n%s\n%v", src, err)
+	}
+	parts := loaded.Data.Snapshot.Each()
+	if len(parts) != 2 || parts[1].Save != SuggestSnapshot("analytics", MySQL).Save {
+		t.Errorf("parts = %+v", parts)
 	}
 }

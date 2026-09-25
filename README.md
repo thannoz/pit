@@ -246,7 +246,7 @@ old. `pit down 482` and `pit 482` start that service afresh.
 | `pit logs <n> [service]` | Show what a service says. Default: the one a reviewer opens. |
 | `pit shell <n> [service] [-- cmd]` | A shell, or a command, inside a service. |
 | `pit data reset <n>` | Load a scenario into a running sandbox again. |
-| `pit snap save <n> [name]` | Save the data a sandbox is in. |
+| `pit snap save <n> [name]` | Save the data a sandbox is in. `--consistent` pauses the other services meanwhile. |
 | `pit snap restore <n> <snapshot>` | Put a sandbox's data back into a saved state, by ID or name. |
 | `pit snap ls` | List the snapshots of every repository: name, pull request, size, age. |
 | `pit snap rm <snapshot>...` | Remove snapshots by ID or name. `--older-than=30d` removes every one older than that, after asking. |
@@ -404,6 +404,29 @@ exactly as they are written.
 When a pull request brings its own `.pit.yaml` without snapshot commands, the
 ones in your checkout's `.pit.yaml` are used.
 
+A project with several databases lists a pair of commands for each, named by
+its service, and a snapshot then holds all of them, one file each. When pit
+recognises more than one database, the lines it suggests are already this list:
+
+```yaml
+data:
+  snapshot:
+    - service: db
+      save: "compose exec -T db pg_dump -U app app"
+      restore: "compose exec -T db psql -U app -d app"
+    - service: analytics
+      save: "compose exec -T analytics mysqldump shop"
+      restore: "compose exec -T analytics mysql"
+```
+
+The databases are saved one after the other. An application that writes to
+both meanwhile can leave them describing different moments: an order in one
+that the other has never heard of. `pit snap save 482 --consistent` pauses
+every other service while the databases are saved, so that nothing writes in
+between, and lets them go on afterwards, also when saving fails. To know which
+services to keep running, it reads them from `service`, or from the
+`compose exec <service>` of each save command.
+
 `pit snap ls` lists the snapshots, newest first, and `pit snap rm` removes
 them, by ID or name. `pit snap rm --older-than=30d` clears out old ones; it
 lists them and asks first.
@@ -442,6 +465,8 @@ machine, in the sandbox's worktree.
 | `data.service` | from the images | The service holding the database, for when `pit` cannot tell from the images which one it is. |
 | `data.snapshot.save` | none | A command that writes a dump of the database to stdout. See [Snapshots](#snapshots). |
 | `data.snapshot.restore` | none | A command that reads such a dump from stdin and replaces the database with it. Set together with `save`. |
+| `data.snapshot.service` | from the command | The service the commands work on, for `--consistent`, when it is not a `compose exec`. |
+| `data.snapshot[]` | none | Instead, a list of `service`, `save` and `restore`, one for each of several databases. |
 | `review.routes.framework` | `auto` | `auto`, `nextjs`, `go` or `sveltekit`. |
 | `review.ignore` | none | Glob patterns for files that never belong on the checklist, e.g. `"**/*.test.ts"`. |
 | `env.set` | none | Environment variables set on the web service, as a map: `NODE_ENV: development`. |

@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -32,16 +33,25 @@ says which to add when there are none.`,
 }
 
 func newSnapSaveCmd(opts *globalOptions) *cobra.Command {
-	return &cobra.Command{
+	var consistent bool
+	cmd := &cobra.Command{
 		Use:   "save <pull request number> [name]",
 		Short: "Save the data a sandbox is in",
 		Long: `Run data.snapshot.save in a running sandbox and keep what it writes,
 compressed, where pit keeps its state.
 
 The snapshot gets an ID, like sn_7f3a1b, and the name if you give one.
-The ID is printed on stdout, so a script can hold on to it.`,
+The ID is printed on stdout, so a script can hold on to it.
+
+A project with several databases lists commands for each under
+data.snapshot, and a snapshot then holds all of them. They are saved one
+after the other, and an application writing meanwhile can leave them
+describing different moments. --consistent pauses every other service
+while they are saved, so that nothing writes in between, and lets them
+go on afterwards.`,
 		Example: `  pit snap save 482
-  pit snap save 482 cart-with-voucher`,
+  pit snap save 482 cart-with-voucher
+  pit snap save 482 two-warehouses --consistent`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(c *cobra.Command, args []string) error {
 			name := ""
@@ -74,11 +84,18 @@ The ID is printed on stdout, so a script can hold on to it.`,
 
 			progress := ui.NewProgress(c.ErrOrStderr())
 			progress.Begin("snapshot", true)
-			snap, err := m.SaveSnapshot(c.Context(), box, name, c.ErrOrStderr())
+			snap, paused, err := m.SaveSnapshot(c.Context(), box, name, consistent, c.ErrOrStderr())
 			if err != nil {
 				return err
 			}
-			progress.Finish("%s  %s, %s", snap.Label(), ui.Size(snap.Size), ui.Took(snap.Took))
+			detail := fmt.Sprintf("%s  %s, %s", snap.Label(), ui.Size(snap.Size), ui.Took(snap.Took))
+			if services := snapServices(snap); len(services) > 1 {
+				detail += "; " + strings.Join(services, ", ")
+			}
+			if len(paused) > 0 {
+				detail += "; " + strings.Join(paused, ", ") + " paused meanwhile"
+			}
+			progress.Finish("%s", detail)
 
 			if opts.jsonOutput {
 				return writeSnapJSON(out, snap)
@@ -87,6 +104,19 @@ The ID is printed on stdout, so a script can hold on to it.`,
 			return out.Err()
 		},
 	}
+	cmd.Flags().BoolVar(&consistent, "consistent", false, "pause every other service while the databases are saved")
+	return cmd
+}
+
+// snapServices are the services a snapshot holds, where it names them.
+func snapServices(s snapshot.Snapshot) []string {
+	var out []string
+	for _, p := range s.Pieces() {
+		if p.Service != "" {
+			out = append(out, p.Service)
+		}
+	}
+	return out
 }
 
 func newSnapRestoreCmd(_ *globalOptions) *cobra.Command {

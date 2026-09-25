@@ -59,8 +59,10 @@ type Fake struct {
 	// they are up. A project that is absent has no containers at all,
 	// which is what compose reports after a down.
 	running map[string]bool
-	calls   []Call
-	ready   int
+	// paused holds, per project, the services Pause froze.
+	paused map[string]map[string]bool
+	calls  []Call
+	ready  int
 }
 
 // New returns a Fake that behaves like a working single-service
@@ -73,6 +75,7 @@ func New(services ...string) *Fake {
 		Declared:  services,
 		Published: map[string]int{services[0] + ":80": 49580},
 		running:   map[string]bool{},
+		paused:    map[string]map[string]bool{},
 		Fail:      map[string]error{},
 		Prebuilt:  map[string]bool{},
 	}
@@ -240,8 +243,14 @@ func (f *Fake) Status(_ context.Context, s runtime.Sandbox) ([]runtime.Status, e
 	}
 
 	out := make([]runtime.Status, 0, len(f.Declared))
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, svc := range f.Declared {
-		out = append(out, runtime.Status{Service: svc, State: state, ExitCode: code})
+		st := state
+		if up && f.paused[s.Project][svc] {
+			st = "paused"
+		}
+		out = append(out, runtime.Status{Service: svc, State: st, ExitCode: code})
 	}
 	return out, nil
 }
@@ -299,4 +308,52 @@ func (f *Fake) failure(method string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.Fail[method]
+}
+
+// Pause freezes the named services, as compose does.
+func (f *Fake) Pause(_ context.Context, s runtime.Sandbox, services []string) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, Call{Method: "Pause", Project: s.Project, Services: services})
+	f.mu.Unlock()
+	if err := f.failure("Pause"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.paused[s.Project] == nil {
+		f.paused[s.Project] = map[string]bool{}
+	}
+	for _, svc := range services {
+		f.paused[s.Project][svc] = true
+	}
+	return nil
+}
+
+// Unpause lets them carry on.
+func (f *Fake) Unpause(_ context.Context, s runtime.Sandbox, services []string) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, Call{Method: "Unpause", Project: s.Project, Services: services})
+	f.mu.Unlock()
+	if err := f.failure("Unpause"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, svc := range services {
+		delete(f.paused[s.Project], svc)
+	}
+	return nil
+}
+
+// Paused lists the services of a project that are frozen now.
+func (f *Fake) Paused(project string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, svc := range f.Declared {
+		if f.paused[project][svc] {
+			out = append(out, svc)
+		}
+	}
+	return out
 }

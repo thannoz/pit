@@ -111,7 +111,24 @@ type Data struct {
 // Snapshot holds the two commands that make snapshots work for any
 // database: one that writes a dump to stdout, one that reads it back
 // from stdin. pit needs to know nothing else about the database.
+//
+// A project with more than one database lists a pair for each, named by
+// its service; a snapshot of it is then one part per service. The
+// single form and the list are written differently in .pit.yaml and
+// are read by UnmarshalYAML.
 type Snapshot struct {
+	// Save and Restore are the single form's commands, and Service,
+	// optionally, the service they work on.
+	Save    string
+	Restore string
+	Service string
+	// Parts is the list form: one pair of commands for each database.
+	Parts []SnapshotPart
+}
+
+// SnapshotPart is the commands for one of several databases.
+type SnapshotPart struct {
+	Service string `yaml:"service"`
 	Save    string `yaml:"save"`
 	Restore string `yaml:"restore"`
 }

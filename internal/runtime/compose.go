@@ -124,6 +124,23 @@ func (c Compose) Down(ctx context.Context, s Sandbox, stdout, stderr io.Writer) 
 	return nil
 }
 
+// Pause freezes the named services.
+func (c Compose) Pause(ctx context.Context, s Sandbox, services []string) error {
+	if _, err := c.Runner.Output(ctx, c.command(s, append([]string{"pause"}, services...)...)); err != nil {
+		return errs.Wrap(err, "cannot pause %s", strings.Join(services, ", "))
+	}
+	return nil
+}
+
+// Unpause lets the named services carry on.
+func (c Compose) Unpause(ctx context.Context, s Sandbox, services []string) error {
+	if _, err := c.Runner.Output(ctx, c.command(s, append([]string{"unpause"}, services...)...)); err != nil {
+		return errs.Wrap(err, "cannot unpause %s", strings.Join(services, ", ")).
+			WithHint("they are still frozen; `docker compose -p %s unpause` lets them go on", s.Project)
+	}
+	return nil
+}
+
 // Services lists the names of the services the compose files define.
 func (c Compose) Services(ctx context.Context, s Sandbox) ([]string, error) {
 	out, err := c.Runner.Output(ctx, c.command(s, "config", "--services"))

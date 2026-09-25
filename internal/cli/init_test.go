@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -366,7 +367,7 @@ func TestInitWritesSnapshotCommandsForTheDatabase(t *testing.T) {
 	if c.Data.Service != "store" {
 		t.Errorf("Service = %q, want store", c.Data.Service)
 	}
-	if want := config.SuggestSnapshot("store", config.MariaDB); c.Data.Snapshot != want {
+	if want := config.SuggestSnapshot("store", config.MariaDB); !reflect.DeepEqual(c.Data.Snapshot, want) {
 		t.Errorf("Snapshot\n got %#v\nwant %#v", c.Data.Snapshot, want)
 	}
 }

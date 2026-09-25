@@ -2,8 +2,10 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/errs"
@@ -40,26 +42,91 @@ func (m *Manager) snapshotRoot() string { return filepath.Join(m.StateDir, "snap
 // That is the file someone adds them to when pit says they are
 // missing, and it would be no help to add them there and be told the
 // same again because the pull request carries a .pit.yaml of its own.
-func (m *Manager) SaveSnapshot(ctx context.Context, box state.Sandbox, name string, stderr io.Writer) (snapshot.Snapshot, error) {
+//
+// With consistent, every service that is not one of the databases is
+// paused while they are saved, and let go on afterwards whatever
+// happened. Nothing then writes between one database's dump and the
+// next, so the parts of the snapshot are one moment of the application,
+// not several. The services it paused are returned.
+func (m *Manager) SaveSnapshot(ctx context.Context, box state.Sandbox, name string, consistent bool, stderr io.Writer) (snapshot.Snapshot, []string, error) {
 	cfg, commands, err := snapshotCommands(box)
 	if err != nil {
-		return snapshot.Snapshot{}, err
+		return snapshot.Snapshot{}, nil, err
 	}
 	db, _ := config.FindDatabase(cfg.Data.Service, composeDatabases(box.ComposeFiles))
+	parts := commands.Each()
 
 	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
-	save := hooks.List{Path: "data.snapshot.save", Lines: []string{commands.Save}}
+	var dumps []snapshot.Dump
+	for i, part := range parts {
+		path := "data.snapshot.save"
+		if len(commands.Parts) > 0 {
+			path = fmt.Sprintf("data.snapshot[%d].save", i)
+		}
+		save := hooks.List{Path: path, Lines: []string{part.Save}}
+		dumps = append(dumps, snapshot.Dump{Service: part.Service, Write: func(ctx context.Context, w io.Writer) error {
+			return hooks.Run(ctx, m.Proc, save, target, w, stderr)
+		}})
+	}
+
+	var paused []string
+	if consistent {
+		paused, err = m.pauseAllBut(ctx, box, parts)
+		if err != nil {
+			return snapshot.Snapshot{}, nil, err
+		}
+		defer func() {
+			if len(paused) == 0 {
+				return
+			}
+			// Let them go on even when saving was cancelled: a sandbox
+			// left frozen is one the reviewer cannot use and cannot
+			// see why.
+			if uerr := m.Runtime.Unpause(context.WithoutCancel(ctx), RuntimeSandbox(box), paused); uerr != nil && err == nil {
+				err = uerr
+			}
+		}()
+	}
 
 	snap, err := m.Snapshots(box).Save(ctx, snapshot.Snapshot{
 		Name: name, Repo: box.Repo, PR: box.PR, SHA: box.SHA, Scenario: box.Scenario, Service: db.Service,
-	}, func(ctx context.Context, w io.Writer) error {
-		return hooks.Run(ctx, m.Proc, save, target, w, stderr)
-	})
+	}, dumps)
 	if err != nil && errs.Hint(err) == "" && ctx.Err() == nil {
 		err = errs.Hinted(err, "the command runs in #%d's containers: `pit ls` shows which are running, `pit logs %d <service>` what they say",
 			box.PR, box.PR)
 	}
-	return snap, err
+	return snap, paused, err
+}
+
+// pauseAllBut pauses every running service of a sandbox that is not one
+// of the databases being saved, and says which it paused.
+func (m *Manager) pauseAllBut(ctx context.Context, box state.Sandbox, parts []config.SnapshotPart) ([]string, error) {
+	keep := map[string]bool{}
+	for _, p := range parts {
+		svc, ok := p.Target()
+		if !ok {
+			return nil, errs.New("--consistent needs to know which service %q saves, to keep it running", p.Save).
+				WithHint("add `service: <name>` to data.snapshot, or save with `compose exec <service> ...`")
+		}
+		keep[svc] = true
+	}
+	statuses, err := m.Runtime.Status(ctx, RuntimeSandbox(box))
+	if err != nil {
+		return nil, err
+	}
+	var pause []string
+	for _, st := range statuses {
+		if st.Running() && !keep[st.Service] {
+			pause = append(pause, st.Service)
+		}
+	}
+	if len(pause) == 0 {
+		return nil, nil
+	}
+	if err := m.Runtime.Pause(ctx, RuntimeSandbox(box), pause); err != nil {
+		return nil, err
+	}
+	return pause, nil
 }
 
 // snapshotCommands finds the snapshot commands for a sandbox: in the
@@ -128,23 +195,18 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, box state.Sandbox, snap s
 	if err != nil {
 		return err
 	}
-	data, err := m.Snapshots(box).Open(snap)
+	pairs, err := restorePairs(snap, commands)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = data.Close() }()
 
 	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
-	cmd, err := hooks.Expand(commands.Restore, target)
-	if err != nil {
-		return errs.Wrap(err, "cannot run data.snapshot.restore")
-	}
-	cmd.Stdin = data
-
 	rep.Begin("restore", streaming)
-	if err := m.Proc.Stream(ctx, cmd, rep.Stdout(), rep.Stderr()); err != nil {
-		return errs.Wrap(err, "restoring %s into #%d failed", snap.Label(), box.PR).
-			WithHint("the data of #%d may be half replaced; restoring again, or `pit data reset %d`, puts it into a known state", box.PR, box.PR)
+	for _, pair := range pairs {
+		if err := m.restorePart(ctx, box, snap, pair, target, rep); err != nil {
+			return errs.Wrap(err, "restoring %s into #%d failed", snap.Label(), box.PR).
+				WithHint("the data of #%d may be half replaced; restoring again, or `pit data reset %d`, puts it into a known state", box.PR, box.PR)
+		}
 	}
 	rep.Done("%s", snap.Label())
 
@@ -185,4 +247,53 @@ func ownConfig(box state.Sandbox) (*config.Config, error) {
 	}
 	return nil, errs.New("cannot read the configuration of #%d", box.PR).
 		WithHint("the sandbox was created from %s, which has to still be there", box.RepoRoot)
+}
+
+// restorePair is one part of a snapshot and the command that reads it
+// back.
+type restorePair struct {
+	part    snapshot.Part
+	restore string
+}
+
+// restorePairs matches a snapshot's parts to the restore commands the
+// configuration has. A snapshot of one database goes to the one restore
+// command there is, whatever either calls the service; with several,
+// each part goes to its service's.
+func restorePairs(snap snapshot.Snapshot, commands config.Snapshot) ([]restorePair, error) {
+	pieces, parts := snap.Pieces(), commands.Each()
+	if len(pieces) == 1 && len(parts) == 1 {
+		return []restorePair{{part: pieces[0], restore: parts[0].Restore}}, nil
+	}
+	var out []restorePair
+	for _, piece := range pieces {
+		i := slices.IndexFunc(parts, func(p config.SnapshotPart) bool { return p.Service == piece.Service })
+		if i < 0 {
+			return nil, errs.New("%s holds %s, which data.snapshot has no restore command for", snap.Label(), orUnnamed(piece.Service)).
+				WithHint("it was saved with other snapshot commands than the ones .pit.yaml has now")
+		}
+		out = append(out, restorePair{part: piece, restore: parts[i].Restore})
+	}
+	return out, nil
+}
+
+func orUnnamed(service string) string {
+	if service == "" {
+		return "a database without a service name"
+	}
+	return service
+}
+
+func (m *Manager) restorePart(ctx context.Context, box state.Sandbox, snap snapshot.Snapshot, pair restorePair, target hooks.Sandbox, rep Reporter) error {
+	data, err := m.Snapshots(box).Open(snap, pair.part.Service)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = data.Close() }()
+	cmd, err := hooks.Expand(pair.restore, target)
+	if err != nil {
+		return errs.Wrap(err, "cannot run data.snapshot's restore")
+	}
+	cmd.Stdin = data
+	return m.Proc.Stream(ctx, cmd, rep.Stdout(), rep.Stderr())
 }

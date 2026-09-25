@@ -5,6 +5,8 @@
 package hooks
 
 import (
+	"strings"
+
 	"github.com/thannoz/pit/internal/proc"
 )
 
@@ -100,4 +102,33 @@ func ExpandAll(l List, s Sandbox) ([]proc.Command, error) {
 		cmds = append(cmds, c)
 	}
 	return cmds, nil
+}
+
+// execFlags are the options of `docker compose exec` that take a value,
+// in their short and long spellings.
+var execFlags = map[string]bool{
+	"-u": true, "--user": true, "-w": true, "--workdir": true,
+	"-e": true, "--env": true, "--index": true,
+}
+
+// ExecService reads the service a `compose exec` line runs in:
+// "compose exec -T -u app db pg_dump" is db. Any other line, and one
+// that cannot be read, has none.
+func ExecService(line string) (string, bool) {
+	args, err := tokenize(line)
+	if err != nil || len(args) < 3 || args[0] != Shorthand || args[1] != "exec" {
+		return "", false
+	}
+	for i := 2; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case execFlags[a]:
+			i++ // its value
+		case strings.HasPrefix(a, "-"):
+			// -T, --detach, --privileged, --user=app: nothing follows.
+		default:
+			return a, true
+		}
+	}
+	return "", false
 }

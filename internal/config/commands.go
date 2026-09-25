@@ -58,6 +58,19 @@ func (c *Config) commands() []command {
 		}
 	}
 
+	for i, part := range c.Data.Snapshot.Parts {
+		for _, cmd := range []struct{ name, line string }{{"save", part.Save}, {"restore", part.Restore}} {
+			if cmd.line == "" {
+				continue
+			}
+			out = append(out, command{
+				Path: fmt.Sprintf("data.snapshot[%d].%s", i, cmd.name),
+				Line: cmd.line,
+				at:   func(n *yaml.Node) int { return lineOfIndex(n, i, "data", "snapshot") },
+			})
+		}
+	}
+
 	for _, s := range []struct{ path, line string }{
 		{"data.snapshot.save", c.Data.Snapshot.Save},
 		{"data.snapshot.restore", c.Data.Snapshot.Restore},

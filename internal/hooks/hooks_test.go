@@ -188,3 +188,22 @@ func TestExpandAllNamesTheSettingTheLinesCameFrom(t *testing.T) {
 		t.Errorf("error = %q, want it to name the scenario's setting", err)
 	}
 }
+
+func TestExecService(t *testing.T) {
+	for line, want := range map[string]string{
+		"compose exec -T db pg_dump -U app app":                    "db",
+		"compose exec -T -u postgres db pg_dump":                   "db",
+		"compose exec --user=postgres -T store pg_dump":            "store",
+		"compose exec -e PGPASSWORD=x -w /tmp analytics mysqldump": "analytics",
+		"compose exec --index 2 -T db sh -c 'pg_dump'":             "db",
+		"compose run --rm db pg_dump":                              "",
+		"pg_dump -h localhost":                                     "",
+		"compose exec -T":                                          "",
+		"compose exec 'db":                                         "",
+	} {
+		got, ok := ExecService(line)
+		if got != want || ok != (want != "") {
+			t.Errorf("ExecService(%q) = %q, %v; want %q", line, got, ok, want)
+		}
+	}
+}

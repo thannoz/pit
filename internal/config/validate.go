@@ -281,6 +281,8 @@ func (c *Config) checkData(node *yaml.Node) []Problem {
 		})
 	}
 
+	p = append(p, checkSnapshotParts(node, d.Snapshot.Parts)...)
+
 	// Half a snapshot configuration is worse than none: save would
 	// appear to work and restore would fail when it is needed most.
 	if (d.Snapshot.Save == "") != (d.Snapshot.Restore == "") {
@@ -418,4 +420,34 @@ func (c *Config) checkEnv(node *yaml.Node, dir string) []Problem {
 		}}
 	}
 	return nil
+}
+
+// checkSnapshotParts checks the list form of data.snapshot: each entry
+// names its service, once, and has both commands.
+func checkSnapshotParts(node *yaml.Node, parts []SnapshotPart) []Problem {
+	var p []Problem
+	seen := map[string]bool{}
+	for i, part := range parts {
+		at := lineOfIndex(node, i, "data", "snapshot")
+		path := fmt.Sprintf("data.snapshot[%d]", i)
+		switch {
+		case part.Service == "":
+			p = append(p, Problem{Line: at, Path: path + ".service",
+				Msg:  "is not set; with several databases, each entry names the service it saves",
+				Hint: "service: db"})
+		case seen[part.Service]:
+			p = append(p, Problem{Line: at, Path: path + ".service",
+				Msg:  fmt.Sprintf("%q is listed twice", part.Service),
+				Hint: "one entry for each database service"})
+		}
+		seen[part.Service] = true
+		for _, missing := range []struct{ name, value string }{{"save", part.Save}, {"restore", part.Restore}} {
+			if missing.value == "" {
+				p = append(p, Problem{Line: at, Path: path + "." + missing.name,
+					Msg:  "is not set; snapshots need both commands",
+					Hint: "save writes a dump to stdout, restore reads one from stdin"})
+			}
+		}
+	}
+	return p
 }

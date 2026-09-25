@@ -48,8 +48,43 @@ type Snapshot struct {
 	Raw  int64 `json:"raw"`
 	// Took is how long saving took.
 	Took time.Duration `json:"took"`
+	// Parts are the databases it holds, one file each, when it was
+	// saved from several. A snapshot of one database has one part, and
+	// one saved before there were parts has none recorded: its data is
+	// the single file pit always wrote.
+	Parts []Part `json:"parts,omitempty"`
 	// CreatedAt is when it was saved.
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Part is the data of one database in a snapshot.
+type Part struct {
+	// Service is the compose service it was saved from; empty for the
+	// one database of a project that does not name it.
+	Service string `json:"service,omitempty"`
+	Size    int64  `json:"size"`
+	Raw     int64  `json:"raw"`
+}
+
+// Pieces are the parts of a snapshot, including the one implied by a
+// snapshot saved before parts were recorded.
+func (s Snapshot) Pieces() []Part {
+	if len(s.Parts) > 0 {
+		return s.Parts
+	}
+	return []Part{{Size: s.Size, Raw: s.Raw}}
+}
+
+// Dump writes one part of a snapshot: what the save command for Service
+// prints.
+type Dump struct {
+	Service string
+	Write   func(ctx context.Context, w io.Writer) error
+}
+
+// One is the dump of a project with a single, unnamed database.
+func One(write func(ctx context.Context, w io.Writer) error) []Dump {
+	return []Dump{{Write: write}}
 }
 
 // Label is how a snapshot is shown: its name where it has one.
@@ -121,13 +156,14 @@ func (s Store) List() ([]Snapshot, error) {
 	return out, nil
 }
 
-// Save runs a save command, through dump, into a new snapshot.
+// Save runs the save commands, through dumps, into a new snapshot:
+// one part for each.
 //
-// The data is written to a temporary file and only takes its place when
-// the command has finished and written something: a snapshot that
+// The data is written to temporary files and only takes its place when
+// every command has finished and written something: a snapshot that
 // exists is a complete one. Failing, being cancelled or writing nothing
 // leaves nothing behind.
-func (s Store) Save(ctx context.Context, meta Snapshot, dump func(ctx context.Context, w io.Writer) error) (Snapshot, error) {
+func (s Store) Save(ctx context.Context, meta Snapshot, dumps []Dump) (Snapshot, error) {
 	if meta.Name != "" {
 		if err := CheckName(meta.Name); err != nil {
 			return Snapshot{}, err
@@ -153,50 +189,98 @@ func (s Store) Save(ctx context.Context, meta Snapshot, dump func(ctx context.Co
 	if err != nil {
 		return Snapshot{}, err
 	}
-	tmp, err := os.CreateTemp(s.Dir, "."+meta.ID+"-*")
-	if err != nil {
-		return Snapshot{}, errs.Wrap(err, "cannot write in %s", s.Dir)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }() // gone once renamed; a leftover otherwise
 
 	start := s.now()
-	counted := &counter{}
-	z := gzip.NewWriter(tmp)
-	err = dump(ctx, io.MultiWriter(z, counted))
-	if cerr := z.Close(); err == nil {
-		err = cerr
-	}
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if counted.n == 0 {
-		return Snapshot{}, errs.New("the save command wrote nothing").
-			WithHint("data.snapshot.save has to write the dump to stdout; check it by running it yourself")
+	var temps []string
+	defer func() {
+		for _, t := range temps {
+			_ = os.Remove(t) // gone once renamed; a leftover otherwise
+		}
+	}()
+	meta.Parts, meta.Size, meta.Raw = nil, 0, 0
+	for _, d := range dumps {
+		tmp, raw, err := s.dump(ctx, meta.ID, d)
+		if tmp != "" {
+			temps = append(temps, tmp)
+		}
+		if err != nil {
+			return Snapshot{}, err
+		}
+		meta.Parts = append(meta.Parts, Part{Service: d.Service, Raw: raw})
 	}
 	meta.Took = s.now().Sub(start)
-	meta.Raw = counted.n
 	meta.CreatedAt = s.now().UTC()
 
-	data := filepath.Join(s.Dir, meta.ID+dataSuffix)
-	if err := os.Rename(tmp.Name(), data); err != nil {
-		return Snapshot{}, errs.Wrap(err, "cannot store the snapshot")
+	var placed []string
+	for i, part := range meta.Parts {
+		data := s.partPath(meta.ID, part.Service)
+		if err := os.Rename(temps[i], data); err != nil {
+			removeAll(placed)
+			return Snapshot{}, errs.Wrap(err, "cannot store the snapshot")
+		}
+		placed = append(placed, data)
+		info, err := os.Stat(data)
+		if err != nil {
+			removeAll(placed)
+			return Snapshot{}, errs.Wrap(err, "cannot store the snapshot")
+		}
+		meta.Parts[i].Size = info.Size()
+		meta.Size += info.Size()
+		meta.Raw += part.Raw
 	}
-	info, err := os.Stat(data)
-	if err != nil {
-		return Snapshot{}, errs.Wrap(err, "cannot store the snapshot")
-	}
-	meta.Size = info.Size()
 
-	// The record last: a data file without one is not listed, and a
-	// record never points at data that is not there.
+	// The record last: data without one is not listed, and a record
+	// never points at data that is not there.
 	if err := writeRecord(s.Dir, meta); err != nil {
-		_ = os.Remove(data)
+		removeAll(placed)
 		return Snapshot{}, err
 	}
 	return meta, nil
+}
+
+// dump runs one save command into a temporary file, compressed, and
+// says how much it wrote.
+func (s Store) dump(ctx context.Context, id string, d Dump) (tmp string, raw int64, err error) {
+	f, err := os.CreateTemp(s.Dir, "."+id+"-*")
+	if err != nil {
+		return "", 0, errs.Wrap(err, "cannot write in %s", s.Dir)
+	}
+	counted := &counter{}
+	z := gzip.NewWriter(f)
+	err = d.Write(ctx, io.MultiWriter(z, counted))
+	if cerr := z.Close(); err == nil {
+		err = cerr
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return f.Name(), 0, err
+	}
+	if counted.n == 0 {
+		what := "the save command"
+		if d.Service != "" {
+			what = "the save command for " + d.Service
+		}
+		return f.Name(), 0, errs.New("%s wrote nothing", what).
+			WithHint("data.snapshot's save has to write the dump to stdout; check it by running it yourself")
+	}
+	return f.Name(), counted.n, nil
+}
+
+// partPath is where one part's data is: sn_7f3a1b.db.gz, or
+// sn_7f3a1b.gz for the one database of a project that does not name it.
+func (s Store) partPath(id, service string) string {
+	if service == "" {
+		return filepath.Join(s.Dir, id+dataSuffix)
+	}
+	return filepath.Join(s.Dir, id+"."+service+dataSuffix)
+}
+
+func removeAll(paths []string) {
+	for _, p := range paths {
+		_ = os.Remove(p)
+	}
 }
 
 // Find looks a snapshot up by its ID or its name.
@@ -221,9 +305,9 @@ func (s Store) Find(ref string) (Snapshot, error) {
 	return Snapshot{}, errs.Hinted(err, "the latest are %s", strings.Join(known, ", "))
 }
 
-// Open reads a snapshot's data back, as the save command wrote it.
-func (s Store) Open(snap Snapshot) (io.ReadCloser, error) {
-	f, err := os.Open(s.DataPath(snap))
+// Open reads one part of a snapshot back, as its save command wrote it.
+func (s Store) Open(snap Snapshot, service string) (io.ReadCloser, error) {
+	f, err := os.Open(s.partPath(snap.ID, service))
 	if err != nil {
 		return nil, errs.Wrap(err, "cannot read snapshot %s", snap.ID).
 			WithHint("its record is there, its data is not; the snapshot cannot be restored")
@@ -250,9 +334,12 @@ func (s Store) Remove(snap Snapshot) error {
 	if err := os.Remove(filepath.Join(s.Dir, snap.ID+recordSuffix)); err != nil {
 		return errs.Wrap(err, "cannot remove snapshot %s", snap.ID)
 	}
-	if err := os.Remove(s.DataPath(snap)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return errs.Wrap(err, "cannot remove the data of snapshot %s", snap.ID).
-			WithHint("it is no longer listed; the file %s can be deleted by hand", s.DataPath(snap))
+	for _, part := range snap.Pieces() {
+		data := s.partPath(snap.ID, part.Service)
+		if err := os.Remove(data); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return errs.Wrap(err, "cannot remove the data of snapshot %s", snap.ID).
+				WithHint("it is no longer listed; the file %s can be deleted by hand", data)
+		}
 	}
 	return nil
 }
@@ -275,9 +362,10 @@ func Stores(root string) ([]Store, error) {
 	return out, nil
 }
 
-// DataPath is where a snapshot's data is.
+// DataPath is where a snapshot's data is, the first part's where it has
+// several.
 func (s Store) DataPath(snap Snapshot) string {
-	return filepath.Join(s.Dir, snap.ID+dataSuffix)
+	return s.partPath(snap.ID, snap.Pieces()[0].Service)
 }
 
 func writeRecord(dir string, meta Snapshot) error {

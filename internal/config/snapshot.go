@@ -11,7 +11,12 @@ import (
 
 // Configured reports whether both snapshot commands are set. Validation
 // has already refused one without the other.
-func (s Snapshot) Configured() bool { return s.Save != "" && s.Restore != "" }
+func (s Snapshot) Configured() bool {
+	if len(s.Parts) > 0 {
+		return true
+	}
+	return s.Save != "" && s.Restore != ""
+}
 
 // Engine is a database whose own dump tools pit can write the snapshot
 // commands for.
@@ -160,6 +165,23 @@ func (c *Config) SnapshotCommands(services []Database) (Snapshot, error) {
 
 	db, found := FindDatabase(c.Data.Service, services)
 	engine, known := EngineOf(db.Image)
+	if !found && c.Data.Service == "" {
+		// Several databases: one entry for each, which the list form
+		// is for.
+		var parts []SnapshotPart
+		var names []string
+		for _, s := range services {
+			if e, ok := EngineOf(s.Image); ok {
+				one := SuggestSnapshot(s.Service, e)
+				parts = append(parts, SnapshotPart{Service: s.Service, Save: one.Save, Restore: one.Restore})
+				names = append(names, fmt.Sprintf("%s is %s", s.Service, e))
+			}
+		}
+		if len(parts) > 1 {
+			return Snapshot{}, err.WithHint("add this to %s; %s:\n\n%s",
+				FileName, strings.Join(names, ", "), snapshotYAML(Snapshot{Parts: parts}))
+		}
+	}
 	if !found || !known {
 		example := SuggestSnapshot(orElse(db.Service, "db"), Postgres)
 		return Snapshot{}, err.WithHint(
@@ -174,6 +196,15 @@ func (c *Config) SnapshotCommands(services []Database) (Snapshot, error) {
 // scalar takes them as they are: they hold both kinds of quote, which
 // either quoted YAML style would have to escape.
 func snapshotYAML(s Snapshot) string {
+	if len(s.Parts) > 0 {
+		out := "  data:\n    snapshot:"
+		for _, p := range s.Parts {
+			out += "\n      - service: " + p.Service +
+				"\n        save: >-\n          " + p.Save +
+				"\n        restore: >-\n          " + p.Restore
+		}
+		return out
+	}
 	return "  data:\n" +
 		"    snapshot:\n" +
 		"      save: >-\n" +

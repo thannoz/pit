@@ -21,10 +21,10 @@ func snapAt(t *testing.T, m *sandbox.Manager, ref, repo, name string, pr int, ag
 	at := time.Now().Add(-age)
 	st := snapshot.Store{Dir: filepath.Join(m.StateDir, "snapshots", ref), Now: func() time.Time { return at }}
 	snap, err := st.Save(t.Context(), snapshot.Snapshot{Name: name, Repo: repo, PR: pr, SHA: "a3f91c2e4b7d"},
-		func(_ context.Context, w io.Writer) error {
+		snapshot.One(func(_ context.Context, w io.Writer) error {
 			_, err := io.WriteString(w, "-- dump of "+name+"\n")
 			return err
-		})
+		}))
 	if err != nil {
 		t.Fatal(err)
 	}

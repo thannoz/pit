@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/proc"
+	"github.com/thannoz/pit/internal/runtime/runtimetest"
 	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/state"
 )
@@ -268,7 +270,7 @@ data:
 // its ID.
 func saved(t *testing.T, m *sandbox.Manager, box state.Sandbox, name string) string {
 	t.Helper()
-	snap, err := m.SaveSnapshot(t.Context(), box, name, io.Discard)
+	snap, _, err := m.SaveSnapshot(t.Context(), box, name, false, io.Discard)
 	if err != nil {
 		t.Fatalf("SaveSnapshot: %v", err)
 	}
@@ -423,5 +425,165 @@ func TestSnapRestoreNeedsARunningSandbox(t *testing.T) {
 	}
 	if len(d.ran) != 0 {
 		t.Errorf("ran %v", d.ran)
+	}
+}
+
+const withTwoDatabases = `version: 1
+web:
+  service: web
+  port: 80
+data:
+  snapshot:
+    - service: db
+      save: "compose exec -T db pg_dump -U app app"
+      restore: "compose exec -T db psql -U app -d app"
+    - service: analytics
+      save: "compose exec -T analytics mysqldump shop"
+      restore: "compose exec -T analytics mysql"
+`
+
+// pausedWhileDumping records, at each save command, which services the
+// runtime had frozen at that moment.
+type pausedWhileDumping struct {
+	*dumper
+	fake    *runtimetest.Fake
+	project string
+	seen    [][]string
+}
+
+func (p *pausedWhileDumping) Stream(ctx context.Context, c proc.Command, stdout, stderr io.Writer) error {
+	if c.Stdin == nil {
+		p.seen = append(p.seen, p.fake.Paused(p.project))
+	}
+	return p.dumper.Stream(ctx, c, stdout, stderr)
+}
+
+func consistentFixture(t *testing.T) (*sandbox.Manager, *runtimetest.Fake, *pausedWhileDumping, state.Sandbox) {
+	t.Helper()
+	box := snapBox(t, withTwoDatabases, "")
+	m, d := snapManager(t, box, true)
+	fake := m.Runtime.(*runtimetest.Fake)
+	fake.Declared = []string{"web", "worker", "db", "analytics"}
+	p := &pausedWhileDumping{dumper: d, fake: fake, project: box.Project}
+	m.Proc = p
+	return m, fake, p, box
+}
+
+// TestSnapSaveConsistentPausesTheWriters is the acceptance criterion
+// for T-705 as far as pit's part goes: while the two databases are
+// saved, nothing else runs, and afterwards everything does again. That
+// this makes the two dumps one moment was shown against real databases
+// with an application writing to both.
+func TestSnapSaveConsistentPausesTheWriters(t *testing.T) {
+	m, fake, p, box := consistentFixture(t)
+
+	_, stderr, err := run(t, "snap", "save", "482", "--consistent")
+	if err != nil {
+		t.Fatalf("pit snap save --consistent: %v\n%s", err, stderr)
+	}
+	if len(p.seen) != 2 {
+		t.Fatalf("ran %d save commands, want one for each database", len(p.seen))
+	}
+	for i, paused := range p.seen {
+		if !slices.Equal(paused, []string{"web", "worker"}) {
+			t.Errorf("save %d ran with %v paused, want web and worker and not the databases", i+1, paused)
+		}
+	}
+	if left := fake.Paused(box.Project); len(left) != 0 {
+		t.Errorf("still paused afterwards: %v", left)
+	}
+	for _, want := range []string{"db, analytics", "web, worker paused meanwhile"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	list, _ := m.Snapshots(box).List()
+	if len(list) != 1 || len(list[0].Parts) != 2 {
+		t.Errorf("recorded %+v", list)
+	}
+}
+
+func TestSnapSaveWithoutConsistentPausesNothing(t *testing.T) {
+	_, _, p, _ := consistentFixture(t)
+	if _, _, err := run(t, "snap", "save", "482"); err != nil {
+		t.Fatal(err)
+	}
+	for _, paused := range p.seen {
+		if len(paused) != 0 {
+			t.Errorf("paused %v without --consistent", paused)
+		}
+	}
+}
+
+// A save that fails still lets the paused services go on: a sandbox left
+// frozen is one the reviewer cannot use and cannot tell why.
+func TestSnapSaveConsistentUnpausesWhenSavingFails(t *testing.T) {
+	_, fake, p, box := consistentFixture(t)
+	p.fail = errors.New("mysqldump: access denied")
+	// Fail only the save commands, which the dumper does for commands
+	// without stdin when fail is set.
+	if _, _, err := run(t, "snap", "save", "482", "--consistent"); err == nil {
+		t.Fatal("no error")
+	}
+	if left := fake.Paused(box.Project); len(left) != 0 {
+		t.Errorf("still paused after a failed save: %v", left)
+	}
+}
+
+// Which service a save command works on has to be known to keep it
+// running; a command that does not say is refused before anything is
+// paused.
+func TestSnapSaveConsistentNeedsToKnowTheDatabase(t *testing.T) {
+	box := snapBox(t, strings.ReplaceAll(withSnapshot, "compose exec -T db pg_dump -U app app", "pg_dump -h localhost -U app app"), "")
+	m, _ := snapManager(t, box, true)
+	fake := m.Runtime.(*runtimetest.Fake)
+
+	_, _, err := run(t, "snap", "save", "482", "--consistent")
+	if err == nil || !strings.Contains(errs.Hint(err), "service:") {
+		t.Errorf("err = %v, hint %q", err, errs.Hint(err))
+	}
+	if left := fake.Paused(box.Project); len(left) != 0 {
+		t.Errorf("paused %v", left)
+	}
+}
+
+// Each part goes back to its own database's restore command.
+func TestSnapRestoreOfSeveralParts(t *testing.T) {
+	m, _, p, box := consistentFixture(t)
+	p.dump = "-- the dump\n"
+	id := saved(t, m, box, "two")
+	p.ran, p.fed = nil, nil
+
+	if _, stderr, err := run(t, "snap", "restore", "482", id, "--yes"); err != nil {
+		t.Fatalf("restore: %v\n%s", err, stderr)
+	}
+	var got []string
+	for i, c := range p.ran {
+		got = append(got, strings.Join(c.Args[len(c.Args)-2:], " ")+" <- "+strings.TrimSpace(p.fed[i]))
+	}
+	want := []string{"db psql -U app -d app <- -- the dump", "analytics mysql <- -- the dump"}
+	if len(got) != 2 {
+		t.Fatalf("ran %v", got)
+	}
+	for i := range want {
+		if !strings.HasSuffix(strings.Join(p.ran[i].Args, " "), strings.Split(want[i], " <- ")[0]) || strings.TrimSpace(p.fed[i]) != "-- the dump" {
+			t.Errorf("restore %d: %s, want %s", i+1, got[i], want[i])
+		}
+	}
+}
+
+// A snapshot holding a database the configuration no longer restores is
+// refused rather than half restored.
+func TestSnapRestoreOfAPartWithoutACommand(t *testing.T) {
+	m, _, _, box := consistentFixture(t)
+	id := saved(t, m, box, "two")
+	// The configuration loses the analytics entry.
+	one := strings.Split(withTwoDatabases, "    - service: analytics")[0]
+	if err := os.WriteFile(filepath.Join(box.Worktree, ".pit.yaml"), []byte(one), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := run(t, "snap", "restore", "482", id, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "analytics") {
+		t.Errorf("err = %v", err)
 	}
 }

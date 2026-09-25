@@ -66,6 +66,13 @@ type Runtime interface {
 	LogsSince(ctx context.Context, s Sandbox, service string, since time.Time) ([]LogLine, error)
 	// Status reports what each service is doing.
 	Status(ctx context.Context, s Sandbox) ([]Status, error)
+	// Pause freezes the named services' processes and Unpause lets
+	// them carry on. A paused service keeps its memory and its
+	// connections; it only stops running for a while, which is what
+	// makes it the way to keep an application from writing while its
+	// databases are saved.
+	Pause(ctx context.Context, s Sandbox, services []string) error
+	Unpause(ctx context.Context, s Sandbox, services []string) error
 	// WaitReady polls until the sandbox answers as expected.
 	WaitReady(ctx context.Context, s Sandbox, service string, p Probe) error
 }
