@@ -14,10 +14,14 @@ import (
 	"github.com/thannoz/pit/internal/ui"
 )
 
+// gifLength is how much of the end of a recording its GIF shows: the
+// seconds before the reviewer stopped, where what they found is.
+const gifLength = 10 * time.Second
+
 // recordBrowser opens a browser the reviewer uses and writes down what
 // they do; a variable so that tests need no window.
-var recordBrowser = func(ctx context.Context, address string, onStep func(inspect.Step)) ([]inspect.Step, error) {
-	return inspect.Record(ctx, address, inspect.RecordOptions{OnStep: onStep})
+var recordBrowser = func(ctx context.Context, address string, onStep func(inspect.Step)) (inspect.Recorded, error) {
+	return inspect.Record(ctx, address, inspect.RecordOptions{OnStep: onStep, GIF: gifLength})
 }
 
 // recordSandbox is pit open --record: a browser pit watches, and the
@@ -48,22 +52,26 @@ func recordSandbox(c *cobra.Command, out *ui.Printer, box state.Sandbox) error {
 	out.Printf("Recording in the browser that opened. Do what leads to what you found; close the browser to stop.\n")
 	start := time.Now()
 	n := 0
-	steps, err := recordBrowser(c.Context(), box.URL, func(s inspect.Step) {
+	recorded, err := recordBrowser(c.Context(), box.URL, func(s inspect.Step) {
 		n++
 		out.Printf("  %d. %s\n", n, s)
 	})
 	if err != nil {
 		return err
 	}
+	steps := recorded.Steps
 	if len(steps) == 0 {
 		out.Printf("Nothing was recorded.\n")
 		return out.Err()
 	}
 	err = m.Notes(box.Repo, box.RepoRef, box.PR).KeepRecording(notes.Recording{
 		SHA: box.SHA, Scenario: box.Scenario, Edited: edited, At: start, Steps: steps,
-	})
+	}, recorded.GIF)
 	if err != nil {
 		return err
+	}
+	if recorded.GIFError != nil {
+		out.Warnf("no GIF of the last seconds: %v", recorded.GIFError)
 	}
 	out.Printf("Recorded %s. `pit note %d \"what you found\"` keeps them with the note.\n", plural(len(steps), "step", "steps"), box.PR)
 	return out.Err()

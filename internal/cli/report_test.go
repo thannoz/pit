@@ -68,7 +68,7 @@ func noted(t *testing.T, box state.Sandbox, list ...notes.Note) {
 		t.Fatal(err)
 	}
 	for _, n := range list {
-		if _, err := m.Notes(box.Repo, box.RepoRef, box.PR).Add(n, nil); err != nil {
+		if _, err := m.Notes(box.Repo, box.RepoRef, box.PR).Add(n, notes.Files{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -148,11 +148,11 @@ func threeNotes(t *testing.T) (notes.Book, state.Sandbox) {
 	m, box := runningBox(t)
 	b := m.Notes(box.Repo, box.RepoRef, box.PR)
 	for i, text := range []string{"The refund total ignores the voucher", "Totals overlap", "Checkout button does nothing"} {
-		var png []byte
+		var files notes.Files
 		if i == 0 {
-			png = []byte("\x89PNG")
+			files = notes.Files{Screenshot: []byte("\x89PNG"), GIF: []byte("GIF89a")}
 		}
-		if _, err := b.Add(notes.Note{Text: text, URL: "http://localhost:41234/", SHA: "3701136aa94"}, png); err != nil {
+		if _, err := b.Add(notes.Note{Text: text, URL: "http://localhost:41234/", SHA: "3701136aa94"}, files); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -216,7 +216,9 @@ func TestReportPreview(t *testing.T) {
 		"This comment would go on #482 in github.com/acme/shop:\n\n────",
 		"────\n### Review notes\n",
 		"#### 3. Checkout button does nothing\n\nPage: `/`\n\nThe browser reported no errors on the page.\n────",
-		"Screenshots are not posted; drag them into the comment if they help:\n  note 1  ",
+		"Screenshots and GIFs are not posted; drag them into the comment if they help:\n  note 1  ",
+		"1.png\n  note 1  ",
+		"1.gif\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("preview lacks %q:\n%s", want, out)

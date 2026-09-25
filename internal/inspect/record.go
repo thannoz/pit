@@ -61,6 +61,19 @@ type RecordOptions struct {
 	Drive    func(ctx context.Context) error
 	// OnStep hears of each step as it is taken.
 	OnStep func(Step)
+	// GIF is how much of the end of the recording to keep as a GIF:
+	// the seconds before the reviewer stopped, which is where what they
+	// found happened. Zero keeps none.
+	GIF time.Duration
+}
+
+// Recorded is what a recording brings back.
+type Recorded struct {
+	Steps []Step
+	// GIF shows the last seconds, when it was asked for and could be
+	// made; GIFError says why not, when it could not.
+	GIF      []byte
+	GIFError error
 }
 
 // binding is the name the page reports what the reviewer did under.
@@ -73,14 +86,14 @@ const binding = "__pitRecord"
 // What it writes down is meant to be done again, on another machine,
 // by Replay: steps a person can read, with a way to find each element
 // that does not depend on the reviewer's screen.
-func Record(ctx context.Context, address string, o RecordOptions) ([]Step, error) {
+func Record(ctx context.Context, address string, o RecordOptions) (Recorded, error) {
 	base, err := url.Parse(address)
 	if err != nil {
-		return nil, err
+		return Recorded{}, err
 	}
 	bctx, cancel, browser, err := startBrowser(ctx, o.Browser, o.Headless)
 	if err != nil {
-		return nil, err
+		return Recorded{}, err
 	}
 	defer cancel()
 
@@ -94,24 +107,38 @@ func Record(ctx context.Context, address string, o RecordOptions) ([]Step, error
 			_, err := page.AddScriptToEvaluateOnNewDocument(recorderJS).Do(ctx)
 			return err
 		}),
-		chromedp.Navigate(address),
 	); err != nil {
+		return Recorded{}, loadFailure(err, browser, address)
+	}
+	var cast *screencast
+	var castErr error
+	if o.GIF > 0 {
+		cast, castErr = startCast(bctx, o.GIF, 960, 600)
+	}
+	if err := chromedp.Run(bctx, chromedp.Navigate(address)); err != nil {
 		if ctx.Err() != nil {
-			return rec.done(), nil
+			return Recorded{Steps: rec.done()}, nil
 		}
-		return nil, loadFailure(err, browser, address)
+		return Recorded{}, loadFailure(err, browser, address)
 	}
 
 	if o.Drive != nil {
 		if err := o.Drive(bctx); err != nil {
-			return nil, err
+			return Recorded{}, err
 		}
 		// What the page reports arrives a moment after it happens.
 		time.Sleep(300 * time.Millisecond)
-		return rec.done(), nil
+	} else {
+		waitForClose(ctx, bctx)
 	}
-	waitForClose(ctx, bctx)
-	return rec.done(), nil
+	out := Recorded{Steps: rec.done()}
+	switch {
+	case castErr != nil:
+		out.GIFError = castErr
+	case cast != nil:
+		out.GIF, out.GIFError = cast.gif(time.Now())
+	}
+	return out, nil
 }
 
 // waitForClose returns when the reviewer has closed every window of the

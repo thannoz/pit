@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -347,5 +348,53 @@ func TestNoLogsFromAStoppedSandbox(t *testing.T) {
 	}
 	if list, _ := m.Notes("github.com/acme/shop", "acme-shop-c56680", 482).List(); len(list[0].Logs) != 0 {
 		t.Errorf("logs = %+v", list[0].Logs)
+	}
+}
+
+// The logs of a note that took a recording reach back to where the
+// recording began: what the reviewer did is where the server answered.
+func TestNoteLogsReachBackToTheRecording(t *testing.T) {
+	m, box := runningBox(t)
+	fake := m.Runtime.(*runtimetest.Fake)
+	fake.Declared = []string{"web"}
+	now := time.Now()
+	fake.ServiceLines = map[string][]runtime.LogLine{"web": {
+		{At: now.Add(-10 * time.Minute), Text: "GET / 200 (before the recording)"},
+		{At: now.Add(-90 * time.Second), Text: "POST /orders 500 (while recording)"},
+	}}
+	b := m.Notes(box.Repo, box.RepoRef, box.PR)
+	if err := b.KeepRecording(notes.Recording{At: now.Add(-2 * time.Minute), Steps: orderSteps}, nil); err != nil {
+		t.Fatal(err)
+	}
+	withPage(t, nil, nil)
+	if _, _, err := run(t, "note", "482", "Ordering fails"); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := b.List()
+	if logs := list[0].Logs; len(logs) != 1 || len(logs[0].Lines) != 1 || !strings.Contains(logs[0].Lines[0].Text, "while recording") {
+		t.Errorf("logs = %+v", logs)
+	}
+}
+
+// A note that cannot be taken leaves the recording for the next one.
+func TestARecordingOutlivesAFailedNote(t *testing.T) {
+	m, box := runningBox(t)
+	b := m.Notes(box.Repo, box.RepoRef, box.PR)
+	if err := b.KeepRecording(notes.Recording{At: time.Now(), Steps: orderSteps}, []byte("GIF89a")); err != nil {
+		t.Fatal(err)
+	}
+	withPage(t, nil, context.Canceled)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"note", "482", "Ordering fails"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetContext(ctx)
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("a note taken with the command cancelled")
+	}
+	if r, gif, _ := b.TakeRecording(); r == nil || string(gif) != "GIF89a" {
+		t.Errorf("the recording went: %+v, %q", r, gif)
 	}
 }

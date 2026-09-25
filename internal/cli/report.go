@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -146,17 +147,16 @@ them, for you to drag into the comment if they help.`,
 func writePreview(out *ui.Printer, b notes.Book, list []notes.Note, body string) {
 	rule := strings.Repeat("─", 60)
 	out.Printf("This comment would go on #%d in %s:\n\n%s\n%s%s\n", b.PR, b.Repo, rule, body, rule)
-	var shots []notes.Note
+	var files []string
 	for _, n := range list {
-		if n.Screenshot != "" {
-			shots = append(shots, n)
+		for _, f := range []string{n.Screenshot, n.GIF} {
+			if f != "" {
+				files = append(files, fmt.Sprintf("  note %d  %s", n.ID, f))
+			}
 		}
 	}
-	if len(shots) > 0 {
-		out.Printf("Screenshots are not posted; drag them into the comment if they help:\n")
-		for _, n := range shots {
-			out.Printf("  note %d  %s\n", n.ID, n.Screenshot)
-		}
+	if len(files) > 0 {
+		out.Printf("Screenshots and GIFs are not posted; drag them into the comment if they help:\n%s\n", strings.Join(files, "\n"))
 	}
 	out.Printf("\n")
 }

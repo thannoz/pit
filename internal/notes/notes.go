@@ -44,6 +44,8 @@ type Note struct {
 	Pending  []string          `json:"pending,omitempty"`
 	// Screenshot is the picture of the page, a PNG.
 	Screenshot string `json:"screenshot,omitempty"`
+	// GIF shows the last seconds of the recording that led here.
+	GIF string `json:"gif,omitempty"`
 	// Uncaptured says why the page was not loaded, when it was not:
 	// the sandbox was not running, there was no browser.
 	Uncaptured string `json:"uncaptured,omitempty"`
@@ -101,6 +103,7 @@ type Book struct {
 const (
 	recordName    = "notes.json"
 	recordingName = "recording.json"
+	recordingGIF  = "recording.gif"
 )
 
 // record is the file on disk.
@@ -111,9 +114,15 @@ type record struct {
 	Notes []Note `json:"notes"`
 }
 
-// Add keeps a note, and its picture when there is one, and returns it
-// numbered.
-func (b Book) Add(n Note, png []byte) (Note, error) {
+// Files are what a note keeps beside its record.
+type Files struct {
+	Screenshot []byte
+	GIF        []byte
+}
+
+// Add keeps a note, and its pictures when there are some, and returns
+// it numbered.
+func (b Book) Add(n Note, f Files) (Note, error) {
 	err := b.Lock(func() error {
 		r, err := b.read()
 		if err != nil {
@@ -121,16 +130,23 @@ func (b Book) Add(n Note, png []byte) (Note, error) {
 		}
 		r.Last++
 		n.ID = r.Last
-		n.Screenshot = ""
+		n.Screenshot, n.GIF = "", ""
 		if err := os.MkdirAll(b.Dir, 0o700); err != nil {
 			return errs.Wrap(err, "cannot create %s", b.Dir)
 		}
-		if len(png) > 0 {
-			name := strconv.Itoa(n.ID) + ".png"
-			if err := writeFile(filepath.Join(b.Dir, name), png); err != nil {
+		for _, file := range []struct {
+			data []byte
+			ext  string
+			name *string
+		}{{f.Screenshot, ".png", &n.Screenshot}, {f.GIF, ".gif", &n.GIF}} {
+			if len(file.data) == 0 {
+				continue
+			}
+			name := strconv.Itoa(n.ID) + file.ext
+			if err := writeFile(filepath.Join(b.Dir, name), file.data); err != nil {
 				return err
 			}
-			n.Screenshot = name
+			*file.name = name
 		}
 		r.Notes = append(r.Notes, n)
 		return b.write(r)
@@ -184,8 +200,10 @@ func (b Book) Remove(ids ...int) ([]Note, error) {
 			return err
 		}
 		for _, n := range removed {
-			if n.Screenshot != "" {
-				_ = os.Remove(n.Screenshot)
+			for _, file := range []string{n.Screenshot, n.GIF} {
+				if file != "" {
+					_ = os.Remove(file)
+				}
 			}
 		}
 		return nil
@@ -210,10 +228,10 @@ func (b Book) MarkPosted(ids []int, comment string) error {
 	})
 }
 
-// KeepRecording keeps a recording until the next note takes it. A newer
-// one replaces it: it is the one that led to what the reviewer is
-// about to note.
-func (b Book) KeepRecording(r Recording) error {
+// KeepRecording keeps a recording, and its GIF when there is one, until
+// the next note takes them. A newer one replaces it: it is the one that
+// led to what the reviewer is about to note.
+func (b Book) KeepRecording(r Recording, gif []byte) error {
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return errs.Wrap(err, "cannot write the recording")
@@ -222,14 +240,21 @@ func (b Book) KeepRecording(r Recording) error {
 		if err := os.MkdirAll(b.Dir, 0o700); err != nil {
 			return errs.Wrap(err, "cannot create %s", b.Dir)
 		}
+		_ = os.Remove(filepath.Join(b.Dir, recordingGIF))
+		if len(gif) > 0 {
+			if err := writeFile(filepath.Join(b.Dir, recordingGIF), gif); err != nil {
+				return err
+			}
+		}
 		return writeFile(filepath.Join(b.Dir, recordingName), append(data, '\n'))
 	})
 }
 
-// TakeRecording hands over the recording kept, if there is one, and
-// forgets it: it belongs to one note.
-func (b Book) TakeRecording() (*Recording, error) {
+// TakeRecording hands over the recording kept and its GIF, if there is
+// one, and forgets them: they belong to one note.
+func (b Book) TakeRecording() (*Recording, []byte, error) {
 	var out *Recording
+	var gif []byte
 	err := b.Lock(func() error {
 		path := filepath.Join(b.Dir, recordingName)
 		data, err := os.ReadFile(path)
@@ -244,15 +269,22 @@ func (b Book) TakeRecording() (*Recording, error) {
 			return errs.Wrap(err, "%s is not readable", path).WithHint("remove it to go on without it")
 		}
 		out = &r
+		gifPath := filepath.Join(b.Dir, recordingGIF)
+		if gif, err = os.ReadFile(gifPath); err == nil {
+			_ = os.Remove(gifPath)
+		}
 		return os.Remove(path)
 	})
-	return out, err
+	return out, gif, err
 }
 
 // resolve turns the picture's name into where it is.
 func (b Book) resolve(n Note) Note {
 	if n.Screenshot != "" {
 		n.Screenshot = filepath.Join(b.Dir, n.Screenshot)
+	}
+	if n.GIF != "" {
+		n.GIF = filepath.Join(b.Dir, n.GIF)
 	}
 	return n
 }

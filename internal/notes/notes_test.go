@@ -31,7 +31,7 @@ func TestNotesAreKeptInOrder(t *testing.T) {
 		t.Error("listing an empty book created its directory")
 	}
 	first, err := b.Add(Note{Text: "The refund total ignores the voucher", URL: "http://localhost:41234/orders/1001", SHA: "abc123",
-		Problems: []inspect.Problem{{Kind: inspect.Exception, Level: "error", Text: "TypeError"}}}, []byte("\x89PNG one"))
+		Problems: []inspect.Problem{{Kind: inspect.Exception, Level: "error", Text: "TypeError"}}}, Files{Screenshot: []byte("\x89PNG one")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,10 +41,10 @@ func TestNotesAreKeptInOrder(t *testing.T) {
 	if got, err := os.ReadFile(first.Screenshot); err != nil || string(got) != "\x89PNG one" {
 		t.Errorf("picture %q, %v", got, err)
 	}
-	if _, err := b.Add(Note{Text: "Totals overlap on a phone"}, nil); err != nil {
+	if _, err := b.Add(Note{Text: "Totals overlap on a phone"}, Files{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Add(Note{Text: "No way back from the order page", Uncaptured: "not asked to"}, nil); err != nil {
+	if _, err := b.Add(Note{Text: "No way back from the order page", Uncaptured: "not asked to"}, Files{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,7 +75,7 @@ func TestNotesAreKeptInOrder(t *testing.T) {
 func TestRemovedNumbersAreNotReused(t *testing.T) {
 	b := newBook(t)
 	for _, text := range []string{"one", "two"} {
-		if _, err := b.Add(Note{Text: text}, []byte("png "+text)); err != nil {
+		if _, err := b.Add(Note{Text: text}, Files{Screenshot: []byte("png " + text), GIF: []byte("gif " + text)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -86,10 +86,16 @@ func TestRemovedNumbersAreNotReused(t *testing.T) {
 	if _, err := os.Stat(removed[0].Screenshot); err == nil {
 		t.Error("the removed note's picture is still there")
 	}
+	if removed[0].GIF != filepath.Join(b.Dir, "2.gif") {
+		t.Errorf("the GIF is at %q", removed[0].GIF)
+	}
+	if _, err := os.Stat(removed[0].GIF); removed[0].GIF == "" || err == nil {
+		t.Errorf("the removed note's GIF %q is still there", removed[0].GIF)
+	}
 	if list, _ := b.List(); len(list) != 1 || list[0].Text != "one" {
 		t.Errorf("left %+v", list)
 	}
-	third, err := b.Add(Note{Text: "three"}, nil)
+	third, err := b.Add(Note{Text: "three"}, Files{})
 	if err != nil || third.ID != 3 {
 		t.Errorf("third = %+v, %v", third, err)
 	}
@@ -97,7 +103,7 @@ func TestRemovedNumbersAreNotReused(t *testing.T) {
 
 func TestRemovingANoteThatIsNotThere(t *testing.T) {
 	b := newBook(t)
-	if _, err := b.Add(Note{Text: "one"}, []byte("png")); err != nil {
+	if _, err := b.Add(Note{Text: "one"}, Files{Screenshot: []byte("png")}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := b.Remove(1, 7)
@@ -115,7 +121,7 @@ func TestNotesTakenAtOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Go(func() {
-			if _, err := b.Add(Note{Text: "at once", At: time.Now()}, nil); err != nil {
+			if _, err := b.Add(Note{Text: "at once", At: time.Now()}, Files{}); err != nil {
 				t.Error(err)
 			}
 		})
@@ -150,7 +156,7 @@ func TestAnUnreadableRecord(t *testing.T) {
 func TestMarkPosted(t *testing.T) {
 	b := newBook(t)
 	for _, text := range []string{"one", "two", "three"} {
-		if _, err := b.Add(Note{Text: text}, nil); err != nil {
+		if _, err := b.Add(Note{Text: text}, Files{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -168,23 +174,38 @@ func TestMarkPosted(t *testing.T) {
 // replaces it.
 func TestARecordingGoesToTheNextNote(t *testing.T) {
 	b := newBook(t)
-	if r, err := b.TakeRecording(); err != nil || r != nil {
+	if r, _, err := b.TakeRecording(); err != nil || r != nil {
 		t.Fatalf("nothing recorded: %v, %v", r, err)
 	}
 	first := Recording{SHA: "abc", Scenario: "standard", Steps: []inspect.Step{{Action: inspect.Goto, Path: "/"}}}
 	second := first
 	second.Steps = append(second.Steps, inspect.Step{Action: inspect.Click, Selector: "button", Text: "Order it"})
-	if err := b.KeepRecording(first); err != nil {
+	if err := b.KeepRecording(first, []byte("GIF89a first")); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.KeepRecording(second); err != nil {
+	if err := b.KeepRecording(second, nil); err != nil {
 		t.Fatal(err)
 	}
-	r, err := b.TakeRecording()
+	r, gif, err := b.TakeRecording()
 	if err != nil || r == nil || len(r.Steps) != 2 || r.Steps[1].Text != "Order it" {
 		t.Fatalf("took %+v, %v", r, err)
 	}
-	if again, _ := b.TakeRecording(); again != nil {
+	if gif != nil {
+		t.Errorf("the older recording's GIF went with the newer: %q", gif)
+	}
+	if again, _, _ := b.TakeRecording(); again != nil {
 		t.Error("a recording went to two notes")
+	}
+	if err := b.KeepRecording(first, []byte("GIF89a first")); err != nil {
+		t.Fatal(err)
+	}
+	if _, gif, _ := b.TakeRecording(); string(gif) != "GIF89a first" {
+		t.Errorf("gif = %q", gif)
+	}
+	if _, err := os.Stat(filepath.Join(b.Dir, recordingGIF)); err == nil {
+		t.Error("the GIF stayed for the next note too")
+	}
+	if _, gif, _ := b.TakeRecording(); gif != nil {
+		t.Error("a GIF went to two notes")
 	}
 }

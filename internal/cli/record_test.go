@@ -30,12 +30,16 @@ func withRecorder(t *testing.T, steps []inspect.Step, err error) *[]string {
 	t.Helper()
 	var opened []string
 	previous := recordBrowser
-	recordBrowser = func(_ context.Context, address string, onStep func(inspect.Step)) ([]inspect.Step, error) {
+	recordBrowser = func(_ context.Context, address string, onStep func(inspect.Step)) (inspect.Recorded, error) {
 		opened = append(opened, address)
 		for _, s := range steps {
 			onStep(s)
 		}
-		return steps, err
+		r := inspect.Recorded{Steps: steps}
+		if len(steps) > 0 {
+			r.GIF = []byte("GIF89a the last seconds")
+		}
+		return r, err
 	}
 	t.Cleanup(func() { recordBrowser = previous })
 	return &opened
@@ -75,13 +79,16 @@ func TestOpenRecordKeepsTheStepsForTheNextNote(t *testing.T) {
 
 	withPage(t, nil, nil)
 	out, _, err = run(t, "note", "482", "A new order shows no refund line")
-	if err != nil || !strings.Contains(out, "steps 3 recorded") {
+	if err != nil || !strings.Contains(out, "steps 3 recorded") || !strings.Contains(out, "gif ") {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 	list, _ := m.Notes(box.Repo, box.RepoRef, 482).List()
 	r := list[0].Recording
 	if r == nil || r.SHA != "c56680aa11" || r.Scenario != "standard" || r.Edited || len(r.Steps) != 3 || r.Steps[1].Value != "Genmaicha" {
 		t.Errorf("recording = %+v", r)
+	}
+	if gif, err := os.ReadFile(list[0].GIF); err != nil || string(gif) != "GIF89a the last seconds" {
+		t.Errorf("gif %q, %v", gif, err)
 	}
 	// It went to that note, not the next.
 	if _, _, err := run(t, "note", "482", "Another"); err != nil {
@@ -105,7 +112,7 @@ func TestOpenRecordOnChangedData(t *testing.T) {
 		if got := store.Applied(); len(got) != 1 || got[0] != "standard" {
 			t.Errorf("applied %v:\n%s", got, out)
 		}
-		r, _ := m.Notes(box.Repo, box.RepoRef, 482).TakeRecording()
+		r, _, _ := m.Notes(box.Repo, box.RepoRef, 482).TakeRecording()
 		if r == nil || r.Edited {
 			t.Errorf("recording = %+v", r)
 		}
@@ -120,7 +127,7 @@ func TestOpenRecordOnChangedData(t *testing.T) {
 		if got := store.Applied(); len(got) != 0 {
 			t.Errorf("applied %v:\n%s", got, out)
 		}
-		r, _ := m.Notes(box.Repo, box.RepoRef, 482).TakeRecording()
+		r, _, _ := m.Notes(box.Repo, box.RepoRef, 482).TakeRecording()
 		if r == nil || !r.Edited {
 			t.Errorf("recording = %+v", r)
 		}
@@ -134,7 +141,7 @@ func TestOpenRecordOfNothing(t *testing.T) {
 	if err != nil || !strings.Contains(out, "Nothing was recorded.") {
 		t.Errorf("%v:\n%s", err, out)
 	}
-	if r, _ := m.Notes(box.Repo, box.RepoRef, 482).TakeRecording(); r != nil {
+	if r, _, _ := m.Notes(box.Repo, box.RepoRef, 482).TakeRecording(); r != nil {
 		t.Errorf("kept %+v", r)
 	}
 }

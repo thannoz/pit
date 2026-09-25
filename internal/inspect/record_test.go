@@ -125,7 +125,7 @@ func reviewer(srv string) func(ctx context.Context) error {
 func TestRecord(t *testing.T) {
 	path := browser(t)
 	_, srv := newShop(t)
-	steps, err := Record(t.Context(), srv.URL+"/", RecordOptions{Browser: path, Headless: true, Drive: reviewer(srv.URL)})
+	steps, err := recordSteps(t, srv.URL+"/", RecordOptions{Browser: path, Headless: true, Drive: reviewer(srv.URL)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func dump(steps []Step) string {
 func TestReplay(t *testing.T) {
 	path := browser(t)
 	_, recorded := newShop(t)
-	steps, err := Record(t.Context(), recorded.URL+"/", RecordOptions{Browser: path, Headless: true, Drive: reviewer(recorded.URL)})
+	steps, err := recordSteps(t, recorded.URL+"/", RecordOptions{Browser: path, Headless: true, Drive: reviewer(recorded.URL)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestRecordingTellsTypedFromRequested(t *testing.T) {
 func TestRecordAnAddressTypedWhileAPageWasLoading(t *testing.T) {
 	path := browser(t)
 	_, srv := newShop(t)
-	steps, err := Record(t.Context(), srv.URL+"/", RecordOptions{Browser: path, Headless: true, Drive: func(ctx context.Context) error {
+	steps, err := recordSteps(t, srv.URL+"/", RecordOptions{Browser: path, Headless: true, Drive: func(ctx context.Context) error {
 		return chromedp.Run(ctx,
 			chromedp.WaitVisible("#item"),
 			chromedp.Click(`a[href="/slow"]`),
@@ -333,4 +333,11 @@ func TestRecordingEndsWhenTheWindowCloses(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("still recording after the window closed")
 	}
+}
+
+// recordSteps is Record for a test about the steps alone.
+func recordSteps(t *testing.T, address string, o RecordOptions) ([]Step, error) {
+	t.Helper()
+	r, err := Record(t.Context(), address, o)
+	return r.Steps, err
 }

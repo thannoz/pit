@@ -69,20 +69,28 @@ the sandbox is taken down, until they are removed.`,
 				Text: text, URL: address, SHA: box.SHA,
 				Scenario: box.Scenario, Snapshot: box.Snapshot, At: time.Now(),
 			}
+			// The recording first: what the services logged while it
+			// was made belongs with the note.
+			b := m.Notes(box.Repo, box.RepoRef, box.PR)
+			var gif []byte
+			if n.Recording, gif, err = b.TakeRecording(); err != nil {
+				return err
+			}
+			// Not lost with a note that could not be taken: the next one
+			// takes it.
+			putBack := func() {
+				if n.Recording != nil {
+					_ = b.KeepRecording(*n.Recording, gif)
+				}
+			}
 			png, err := captureForNote(c, m, box, &n, noCapture, fullPage)
 			if err != nil {
+				putBack()
 				return err
 			}
-			b := m.Notes(box.Repo, box.RepoRef, box.PR)
-			if n.Recording, err = b.TakeRecording(); err != nil {
-				return err
-			}
-			added, err := b.Add(n, png)
+			added, err := b.Add(n, notes.Files{Screenshot: png, GIF: gif})
 			if err != nil {
-				if n.Recording != nil {
-					// Not lost with the note: the next one takes it.
-					_ = b.KeepRecording(*n.Recording)
-				}
+				putBack()
 				return err
 			}
 			n = added
@@ -122,7 +130,7 @@ func captureForNote(c *cobra.Command, m *sandbox.Manager, box state.Sandbox, n *
 		return nil, nil
 	case skip:
 		n.Uncaptured = "not asked to"
-		n.Logs = logsAround(c.Context(), m, box, time.Now().Add(-logLookback), time.Now())
+		n.Logs = logsAround(c.Context(), m, box, logsFrom(n, time.Now()), time.Now())
 		return nil, nil
 	}
 
@@ -137,7 +145,7 @@ func captureForNote(c *cobra.Command, m *sandbox.Manager, box state.Sandbox, n *
 		return nil, rerr
 	}
 	// Docker's clock and this one can be a moment apart.
-	n.Logs = logsAround(c.Context(), m, box, from.Add(-logLookback), to.Add(time.Second))
+	n.Logs = logsAround(c.Context(), m, box, logsFrom(n, from), to.Add(time.Second))
 	if err != nil {
 		if c.Context().Err() != nil {
 			return nil, err
@@ -156,6 +164,18 @@ func captureForNote(c *cobra.Command, m *sandbox.Manager, box state.Sandbox, n *
 // logLookback is how far back before a note its logs reach: what the
 // reviewer did just before is as likely the cause as what pit loaded.
 const logLookback = 30 * time.Second
+
+// logsFrom is where a note's logs begin: a while before pit loaded the
+// page, or where the recording that led to it began, when that was
+// earlier -- what the reviewer did is where the server said what it
+// thought of it.
+func logsFrom(n *notes.Note, loaded time.Time) time.Time {
+	from := loaded.Add(-logLookback)
+	if r := n.Recording; r != nil && !r.At.IsZero() && r.At.Add(-time.Second).Before(from) {
+		from = r.At.Add(-time.Second)
+	}
+	return from
+}
 
 // maxLogLines is as many lines of each service as a note keeps: the
 // ones nearest the note, not the whole log.
@@ -319,6 +339,9 @@ func writeNote(out *ui.Printer, n notes.Note, fresh bool) {
 	}
 	if n.Screenshot != "" {
 		out.Printf("     screenshot %s\n", n.Screenshot)
+	}
+	if n.GIF != "" {
+		out.Printf("     gif %s\n", n.GIF)
 	}
 	if n.Recording != nil {
 		out.Printf("     steps %d recorded\n", len(n.Recording.Steps))
