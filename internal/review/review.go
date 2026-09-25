@@ -76,6 +76,10 @@ type Input struct {
 	Config     *config.Config
 	// Scenario names the data the sandbox holds.
 	Scenario string
+	// Params are its example values, where they come from another
+	// file than Config: a scenario only the reviewer's .pit.yaml has.
+	// Nil means Config's.
+	Params map[string]string
 	// URL is the sandbox's root.
 	URL string
 	// Analyzers and Linkers are the heuristics to use.
@@ -100,8 +104,11 @@ func Build(ctx context.Context, in Input) (Checklist, error) {
 		return Checklist{}, err
 	}
 
-	values := map[string]string{}
-	if in.Scenario != "" {
+	values := in.Params
+	if values == nil {
+		values = map[string]string{}
+	}
+	if in.Params == nil && in.Scenario != "" {
 		if v, err := in.Config.Params(in.Scenario); err == nil {
 			values = v
 		}

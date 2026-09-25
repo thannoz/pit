@@ -63,6 +63,7 @@ func (c *Config) validate(node *yaml.Node, dir, file string) error {
 	p = append(p, c.checkHealthcheck(node)...)
 	p = append(p, c.checkBuild(node)...)
 	p = append(p, c.checkData(node)...)
+	p = append(p, c.checkScenarioSnapshots(node, dir)...)
 	p = append(p, c.checkCommands(node)...)
 	p = append(p, c.checkIgnore(node)...)
 	p = append(p, c.checkEnv(node, dir)...)

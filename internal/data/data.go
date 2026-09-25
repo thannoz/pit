@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
+	"github.com/thannoz/pit/internal/config"
+	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/hooks"
 )
 
@@ -33,6 +36,10 @@ type Scenario struct {
 	// Steps are the scenarios it is made of, base first. A scenario
 	// without extends has exactly one.
 	Steps []Step
+	// Migrate are the migrations, run again after a snapshot is
+	// loaded: it holds the schema of the commit it was saved at, and
+	// the code under review expects its own.
+	Migrate []string
 }
 
 // Step is one stage of an extends chain.
@@ -44,6 +51,9 @@ type Scenario struct {
 type Step struct {
 	// Scenario is the name the commands are configured under.
 	Scenario string
+	// Restores are the dumps it loads before its commands run, for a
+	// scenario that was a snapshot once.
+	Restores []config.Restore
 	// Apply are its commands, in the author's order.
 	Apply []string
 }
@@ -53,7 +63,7 @@ type Step struct {
 // data concept is exactly that.
 func (s Scenario) Empty() bool {
 	for _, step := range s.Steps {
-		if len(step.Apply) > 0 {
+		if len(step.Apply) > 0 || len(step.Restores) > 0 {
 			return false
 		}
 	}
@@ -65,6 +75,9 @@ func (s Scenario) Empty() bool {
 func (s Scenario) Commands() []string {
 	var out []string
 	for _, step := range s.Steps {
+		for _, r := range step.Restores {
+			out = append(out, r.Command+" < "+r.File)
+		}
 		out = append(out, step.Apply...)
 	}
 	return out
@@ -122,6 +135,11 @@ func (c Commands) Apply(ctx context.Context, s Sandbox, sc Scenario, stdout, std
 	box := hooks.Sandbox{Project: s.Project, Files: s.Files, Dir: s.Dir}
 
 	for _, step := range sc.Steps {
+		if len(step.Restores) > 0 {
+			if err := c.restore(ctx, box, step, sc.Migrate, stdout, stderr); err != nil {
+				return err
+			}
+		}
 		if len(step.Apply) == 0 {
 			continue
 		}
@@ -133,6 +151,38 @@ func (c Commands) Apply(ctx context.Context, s Sandbox, sc Scenario, stdout, std
 		if err := hooks.Run(ctx, c.Runner, list, box, stdout, stderr); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// restore loads a step's dumps, each into its restore command's stdin,
+// and runs the migrations after them.
+func (c Commands) restore(ctx context.Context, box hooks.Sandbox, step Step, migrate []string, stdout, stderr io.Writer) error {
+	for _, r := range step.Restores {
+		if err := c.load(ctx, box, step.Scenario, r, stdout, stderr); err != nil {
+			return err
+		}
+	}
+	return hooks.Run(ctx, c.Runner, hooks.Migrations(migrate), box, stdout, stderr)
+}
+
+func (c Commands) load(ctx context.Context, box hooks.Sandbox, scenario string, r config.Restore, stdout, stderr io.Writer) error {
+	name := filepath.Base(r.File)
+	f, err := r.Open()
+	if err != nil {
+		return errs.Wrap(err, "scenario %q loads %s, which cannot be read", scenario, name).
+			WithHint("it is named under data.scenarios[%q].snapshot, relative to .pit.yaml", scenario)
+	}
+	defer func() { _ = f.Close() }()
+
+	cmd, err := hooks.Expand(r.Command, box)
+	if err != nil {
+		return errs.Wrap(err, "cannot run data.snapshot's restore")
+	}
+	cmd.Stdin = f
+	if err := c.Runner.Stream(ctx, cmd, stdout, stderr); err != nil {
+		return errs.Wrap(err, "loading %s for scenario %q failed", name, scenario).
+			WithHint("it goes through data.snapshot's restore command; `pit logs` shows what the database said")
 	}
 	return nil
 }

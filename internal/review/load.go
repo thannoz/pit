@@ -54,9 +54,18 @@ func Load(ctx context.Context, git workspace.Runner, box state.Sandbox) (Input, 
 		return Input{}, err
 	}
 
+	// A scenario the pull request's file does not have was loaded from
+	// the reviewer's (T-706), and its example values are there too.
+	var params map[string]string
+	if _, ok := cfg.Scenario(box.Scenario); !ok && box.Scenario != "" {
+		if mine, _, err := config.LoadFrom(box.RepoRoot); err == nil {
+			params, _ = mine.Params(box.Scenario)
+		}
+	}
+
 	return Input{
 		Diff: d, Base: before, Head: os.DirFS(box.Worktree), Config: cfg,
-		Scenario: box.Scenario, URL: box.URL,
+		Scenario: box.Scenario, Params: params, URL: box.URL,
 		Analyzers: analyzers, Linkers: routes.Linkers(),
 	}, nil
 }

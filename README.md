@@ -166,16 +166,25 @@ pit snap restore 7 refunded-order
 ```
 
 It asks first, since whatever is in the database now is replaced.
-Snapshots are kept when the sandbox goes. The containers, volumes, worktree
-and generated compose file go away with:
+Snapshots are kept when the sandbox goes, but only on your machine. To make one
+a scenario every reviewer can start from, promote it into the repository:
+
+```bash
+pit snap promote refunded-order
+```
+
+It writes the dump to `fixtures/refunded-order.sql` and adds a scenario of that
+name to `.pit.yaml`; `git diff` shows the lines it added.
+
+The containers, volumes, worktree and generated compose file go away with:
 
 ```bash
 pit down 7
 ```
 
-Your checkout of the demo was never touched: the sandbox ran in a worktree of
-its own. The demo directory itself is yours to delete, and so is the image
-Docker built (`docker image ls 'pit-*'`).
+Apart from what `pit snap promote` wrote, your checkout of the demo was never
+touched: the sandbox ran in a worktree of its own. The demo directory itself is
+yours to delete, and so is the image Docker built (`docker image ls 'pit-*'`).
 
 ## Use it on your project
 
@@ -250,6 +259,7 @@ old. `pit down 482` and `pit 482` start that service afresh.
 | `pit snap restore <n> <snapshot>` | Put a sandbox's data back into a saved state, by ID or name. |
 | `pit snap ls` | List the snapshots of every repository: name, pull request, size, age. |
 | `pit snap rm <snapshot>...` | Remove snapshots by ID or name. `--older-than=30d` removes every one older than that, after asking. |
+| `pit snap promote <snapshot>` | Write a snapshot into the repository, with a scenario in `.pit.yaml` that loads it. |
 | `pit scenarios` | List the data states this repository declares. |
 | `pit timing <n>` | Show where the time went while a sandbox was built. |
 | `pit down <n>` | Remove a sandbox: containers, volumes, worktree. `--all` removes every one. |
@@ -257,8 +267,8 @@ old. `pit down 482` and `pit 482` start that service afresh.
 | `pit doctor` | Check whether this machine can run `pit`. |
 | `pit version` | Print the version. |
 
-`what`, `ls`, `scenarios`, `timing`, `doctor`, `version`, `snap save` and
-`snap ls` print JSON with `--json`, for scripts. `-v` adds diagnostic logging
+`what`, `ls`, `scenarios`, `timing`, `doctor`, `version`, `snap save`,
+`snap ls` and `snap promote` print JSON with `--json`, for scripts. `-v` adds diagnostic logging
 to any command, and `pit <command> --help` explains each one.
 
 ## What to look at: `pit what`
@@ -431,6 +441,31 @@ services to keep running, it reads them from `service`, or from the
 them, by ID or name. `pit snap rm --older-than=30d` clears out old ones; it
 lists them and asks first.
 
+A snapshot stays on your machine. `pit snap promote cart-with-voucher` makes
+it a scenario of the repository, which every reviewer can start from: the dump
+goes to `fixtures/cart-with-voucher.sql`, or one file for each database, and
+`.pit.yaml` gets a scenario that loads it. Only those lines are added; the
+rest of the file keeps its comments and its formatting. `--as` names the
+scenario, `--description` describes it, and `--dir` puts the files elsewhere.
+
+```yaml
+    - name: cart-with-voucher
+      description: "Saved in #482 at 1a2b3c4"
+      snapshot: fixtures/cart-with-voucher.sql
+```
+
+A scenario with `snapshot` is loaded by `data.snapshot.restore`, and then
+`data.migrate` runs, since the dump has the schema of the commit it was saved
+at. With several databases, `snapshot` maps each service to its file. Other
+scenarios can extend it; it cannot extend one itself, because it replaces all
+the data. Promoting again under the same name replaces the files, after
+asking, which is how a scenario that no longer fits is renewed.
+
+Review what it wrote and commit it. A dump is data: check that nothing in it
+should stay out of the repository. Until the pull requests you review contain
+that commit, `pit` loads a scenario their `.pit.yaml` does not have from yours,
+and says so.
+
 ## `.pit.yaml` reference
 
 `pit` looks for `.pit.yaml` from the current directory upwards; `--config`
@@ -460,6 +495,7 @@ machine, in the sandbox's worktree.
 | `data.scenarios[].description` | none | Shown by `pit scenarios`. |
 | `data.scenarios[].extends` | none | A scenario to load first. |
 | `data.scenarios[].apply` | none | Commands that produce this state. |
+| `data.scenarios[].snapshot` | none | A dump to load with `data.snapshot.restore` before `apply`, relative to `.pit.yaml`; with several databases, a map from service to file. `pit snap promote` writes it. |
 | `data.scenarios[].params` | none | Example values for placeholders in addresses: `id: "1001"` for `/orders/{id}`. |
 | `data.default` | none | The scenario loaded when none is asked for. |
 | `data.service` | from the images | The service holding the database, for when `pit` cannot tell from the images which one it is. |
@@ -519,7 +555,7 @@ a pull request adds or changes one, `pit` shows it and asks before running it.
 ## Status
 
 Early, and in use. The core works: sandboxes, data scenarios and the review
-checklist, and saving and restoring snapshots. Comments back into the pull
+checklist, and saving, restoring and promoting snapshots. Comments back into the pull
 request and prebuilt binaries are planned. Interfaces and the `.pit.yaml`
 schema may still change before a first release.
 

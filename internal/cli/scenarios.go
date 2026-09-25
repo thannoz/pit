@@ -56,17 +56,29 @@ type scenarioRow struct {
 	Description string   `json:"description,omitempty"`
 	Extends     string   `json:"extends,omitempty"`
 	Apply       []string `json:"apply,omitempty"`
-	Default     bool     `json:"default,omitempty"`
+	// Snapshot are the files it loads, by service where there are
+	// several: "orders: fixtures/x.orders.sql".
+	Snapshot []string `json:"snapshot,omitempty"`
+	Default  bool     `json:"default,omitempty"`
 }
 
 func writeScenariosJSON(out *ui.Printer, c *config.Config) error {
 	rows := make([]scenarioRow, 0, len(c.Data.Scenarios))
 	for _, s := range c.Data.Scenarios {
+		var files []string
+		for _, f := range s.Snapshot.Each() {
+			if f.Service != "" {
+				files = append(files, f.Service+": "+f.File)
+			} else {
+				files = append(files, f.File)
+			}
+		}
 		rows = append(rows, scenarioRow{
 			Name:        s.Name,
 			Description: s.Description,
 			Extends:     s.Extends,
 			Apply:       s.Apply,
+			Snapshot:    files,
 			Default:     s.Name == c.Data.Default,
 		})
 	}

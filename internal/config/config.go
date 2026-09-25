@@ -19,6 +19,12 @@ type Config struct {
 	Data        Data        `yaml:"data"`
 	Review      Review      `yaml:"review"`
 	Env         Env         `yaml:"env"`
+
+	// Dir is the directory the file was read from. The paths a scenario
+	// loads are relative to it, and it is not the same directory for
+	// every configuration pit reads: a pull request's is in its
+	// worktree, the reviewer's in their checkout.
+	Dir string `yaml:"-"`
 }
 
 // Compose says which compose files describe the services.
@@ -144,11 +150,31 @@ type Scenario struct {
 	Extends string `yaml:"extends"`
 	// Apply are the commands that produce this state.
 	Apply []string `yaml:"apply"`
+	// Snapshot names a dump in the repository to load, by the
+	// restore commands of data.snapshot, before Apply runs. It is what
+	// `pit snap promote` writes: a state someone clicked together once,
+	// kept for everyone.
+	Snapshot ScenarioSnapshot `yaml:"snapshot"`
 	// Params are example values for the placeholders in the addresses
 	// a review leads to: the slug in /partners/{slug}. They belong to a
 	// scenario because they name data it loads -- an order that exists
 	// in this state and not in the empty one.
 	Params map[string]string `yaml:"params"`
+}
+
+// ScenarioSnapshot is the dump a scenario loads: one file, or with
+// several databases one for each service. It is written as a path, or
+// as a mapping from service to path, and read by UnmarshalYAML.
+type ScenarioSnapshot struct {
+	File  string
+	Files []SnapshotFile
+}
+
+// SnapshotFile is the dump of one service, relative to the directory
+// of the .pit.yaml.
+type SnapshotFile struct {
+	Service string
+	File    string
 }
 
 // ProductionLike fetches a dump from a pipeline the team already has.

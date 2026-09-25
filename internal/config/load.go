@@ -54,9 +54,14 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if err := c.validate(node, filepath.Dir(path), path); err != nil {
+	dir, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return nil, errs.Wrap(err, "cannot resolve %s", path)
+	}
+	if err := c.validate(node, dir, path); err != nil {
 		return nil, err
 	}
+	c.Dir = dir
 	return c, nil
 }
 

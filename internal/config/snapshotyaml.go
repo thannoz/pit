@@ -95,3 +95,64 @@ func (s Snapshot) Each() []SnapshotPart {
 	}
 	return []SnapshotPart{{Service: s.Service, Save: s.Save, Restore: s.Restore}}
 }
+
+// UnmarshalYAML reads a scenario's snapshot: a path, or a mapping from
+// each service to its path. The mapping is read in the file's order, so
+// that the databases are loaded in the order the author wrote them.
+func (s *ScenarioSnapshot) UnmarshalYAML(n *yaml.Node) error {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		if n.Tag == "!!null" {
+			*s = ScenarioSnapshot{}
+			return nil
+		}
+		*s = ScenarioSnapshot{File: n.Value}
+		return nil
+	case yaml.MappingNode:
+		files := make([]SnapshotFile, 0, len(n.Content)/2)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			key, value := n.Content[i], n.Content[i+1]
+			if value.Kind != yaml.ScalarNode {
+				return &yaml.TypeError{Errors: []string{fmt.Sprintf(
+					"line %d: the snapshot of %q is not a path", value.Line, key.Value)}}
+			}
+			files = append(files, SnapshotFile{Service: key.Value, File: value.Value})
+		}
+		*s = ScenarioSnapshot{Files: files}
+		return nil
+	}
+	return &yaml.TypeError{Errors: []string{fmt.Sprintf(
+		"line %d: a scenario's snapshot is a path, or a mapping from each service to its path", n.Line)}}
+}
+
+// MarshalYAML writes the form it was read in.
+func (s ScenarioSnapshot) MarshalYAML() (any, error) {
+	if len(s.Files) == 0 {
+		if s.File == "" {
+			return nil, nil
+		}
+		return s.File, nil
+	}
+	m := &yaml.Node{Kind: yaml.MappingNode}
+	for _, f := range s.Files {
+		m.Content = append(m.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: f.Service},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: f.File})
+	}
+	return m, nil
+}
+
+// IsZero lets a scenario without a snapshot leave the key out.
+func (s ScenarioSnapshot) IsZero() bool { return s.File == "" && len(s.Files) == 0 }
+
+// Each is every file, whichever form they were written in. The one file
+// of the single form names no service.
+func (s ScenarioSnapshot) Each() []SnapshotFile {
+	if len(s.Files) > 0 {
+		return s.Files
+	}
+	if s.File == "" {
+		return nil
+	}
+	return []SnapshotFile{{File: s.File}}
+}

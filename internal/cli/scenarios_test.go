@@ -228,3 +228,18 @@ func gitInit(t *testing.T, dir string) {
 		t.Fatalf("git init: %v", err)
 	}
 }
+
+func TestScenariosJSONNamesTheFilesAPromotedScenarioLoads(t *testing.T) {
+	atConfiguredRepo(t, "version: 1\nweb: {service: web, port: 80}\ndata:\n  snapshot:\n    - {service: db, save: a, restore: b}\n  scenarios:\n    - {name: voucher, snapshot: {db: voucher.sql}}\n")
+	write(t, "voucher.sql", "-- dump\n")
+
+	out, _, err := run(t, "scenarios", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"snapshot": [
+      "db: voucher.sql"
+    ]`) {
+		t.Errorf("output:\n%s", out)
+	}
+}

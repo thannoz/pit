@@ -1546,3 +1546,58 @@ func TestUpReplacesARestoredSnapshotWithTheScenarioOfTheSameName(t *testing.T) {
 		})
 	}
 }
+
+// A scenario only the reviewer's file has -- one promoted a minute ago
+// -- is loaded from there, even for a pull request with a file of its
+// own. The pull request's file does not have it, so nothing it says is
+// overruled (T-706).
+func TestUpLoadsAScenarioOnlyTheReviewerHas(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	store := scenario(t, m, req)
+	req.Config.Data.Scenarios = append(req.Config.Data.Scenarios, config.Scenario{
+		Name: "voucher", Apply: []string{"compose exec -T db psql -f /fixtures/voucher.sql"},
+	})
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		".pit.yaml": "version: 1\nweb:\n  service: web\n  port: 80\ndata:\n  scenarios:\n    - name: standard\n      apply: [\"compose exec -T db theirs\"]\n",
+	})
+
+	req.Scenario = "voucher"
+	rep := &quietReporter{}
+	record, err := m.Up(t.Context(), req, rep)
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	calls := store.Calls()
+	if len(calls) != 1 || calls[0].Scenario != "voucher" || !slices.Equal(calls[0].Commands, []string{"compose exec -T db psql -f /fixtures/voucher.sql"}) {
+		t.Errorf("applied %+v", calls)
+	}
+	if record.Scenario != "voucher" {
+		t.Errorf("Scenario = %q", record.Scenario)
+	}
+	if !slices.ContainsFunc(rep.notes, func(n string) bool { return strings.Contains(n, `has no scenario "voucher"; loading it from yours`) }) {
+		t.Errorf("nothing said where the scenario came from:\n%v", rep.notes)
+	}
+}
+
+// A scenario both files have is the pull request's: that one is under
+// review.
+func TestUpPrefersThePullRequestsScenarioOfTheSameName(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	store := scenario(t, m, req)
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{
+		".pit.yaml": "version: 1\nweb:\n  service: web\n  port: 80\ndata:\n  scenarios:\n    - name: standard\n      apply: [\"compose exec -T db theirs\"]\n",
+	})
+	req.Scenario = "standard"
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if calls := store.Calls(); len(calls) != 1 || !slices.Equal(calls[0].Commands, []string{"compose exec -T db theirs"}) {
+		t.Errorf("applied %+v", calls)
+	}
+}

@@ -28,7 +28,7 @@ Snapshots are made by the repository's own commands, data.snapshot in
 .pit.yaml: one writes a dump to stdout, the other reads it back. pit
 says which to add when there are none.`,
 	}
-	cmd.AddCommand(newSnapSaveCmd(opts), newSnapRestoreCmd(opts), newSnapLsCmd(opts), newSnapRmCmd(opts))
+	cmd.AddCommand(newSnapSaveCmd(opts), newSnapRestoreCmd(opts), newSnapLsCmd(opts), newSnapRmCmd(opts), newSnapPromoteCmd(opts))
 	return cmd
 }
 

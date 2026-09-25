@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thannoz/pit/internal/config"
+	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
 )
 
@@ -109,4 +110,31 @@ func pick(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// selectScenario picks the scenario to load from the configuration that
+// governs the sandbox, and from the reviewer's where that one does not
+// have it.
+//
+// The pull request's file governs, but a scenario it lacks is not one
+// it changed: it is usually one the reviewer added since the branch was
+// cut -- a snapshot promoted a minute ago, which is no use if it can
+// only be loaded once every open pull request has been rebased.
+func selectScenario(mine, governing *config.Config, requested string, pr int, rep Reporter) (data.Scenario, error) {
+	sc, err := data.Select(governing, requested)
+	if err == nil || requested == "" || mine == nil || mine == governing {
+		return sc, err
+	}
+	if _, ok := governing.Scenario(requested); ok {
+		return sc, err
+	}
+	if _, ok := mine.Scenario(requested); !ok {
+		return sc, err
+	}
+	sc, err = data.Select(mine, requested)
+	if err != nil {
+		return data.Scenario{}, err
+	}
+	rep.Note("#%d's %s has no scenario %q; loading it from yours", pr, config.FileName, requested)
+	return sc, nil
 }

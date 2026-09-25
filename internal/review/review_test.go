@@ -114,3 +114,27 @@ func TestIgnoredFilesAndMigrationsAreNotUnplaced(t *testing.T) {
 		t.Errorf("warnings %+v, want the migration", c.Warnings)
 	}
 }
+
+// A scenario loaded from the reviewer's file brings its example values
+// from there; the pull request's file does not have it (T-706).
+func TestLinksAreFilledFromValuesGivenApart(t *testing.T) {
+	cfg, err := config.Parse([]byte(shop))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := review.Build(context.Background(), review.Input{
+		Diff:      diff.Diff{Files: []diff.File{{Path: "app/orders/[id]/page.tsx", Change: diff.Modified}}},
+		Head:      fstest.MapFS{},
+		Config:    cfg,
+		Scenario:  "voucher",
+		Params:    map[string]string{"id": "1002"},
+		URL:       "http://localhost:41234/",
+		Analyzers: []analysis.Analyzer{analysistest.New("Fake", analysis.Route{Path: "/orders/{id}", File: "app/orders/[id]/page.tsx", Kind: analysis.Page})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u := c.Items[0].URL; u != "http://localhost:41234/orders/1002" {
+		t.Errorf("URL = %q", u)
+	}
+}

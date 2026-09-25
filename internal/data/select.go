@@ -42,7 +42,14 @@ func Select(c *config.Config, requested string) (Scenario, error) {
 		Steps:       make([]Step, 0, len(chain)),
 	}
 	for _, s := range chain {
-		sc.Steps = append(sc.Steps, Step{Scenario: s.Name, Apply: s.Apply})
+		restores, err := c.Restores(s)
+		if err != nil {
+			return Scenario{}, err
+		}
+		if len(restores) > 0 {
+			sc.Migrate = c.Data.Migrate
+		}
+		sc.Steps = append(sc.Steps, Step{Scenario: s.Name, Restores: restores, Apply: s.Apply})
 	}
 	return sc, nil
 }

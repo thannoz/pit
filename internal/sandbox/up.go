@@ -115,9 +115,10 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		if err != nil {
 			return state.Sandbox{}, err
 		}
+		mine := req.Config
 		req.Config = adopted
 
-		scenario, err := data.Select(req.Config, req.Scenario)
+		scenario, err := selectScenario(mine, req.Config, req.Scenario, pr, rep)
 		if err != nil {
 			return state.Sandbox{}, err
 		}
@@ -152,13 +153,15 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	if err != nil {
 		return state.Sandbox{}, err
 	}
+	mine := req.Config
 	req.Config = adopted
 
 	// The scenario is selected against the adopted file, not the
 	// reviewer's: a pull request that adds the scenario someone asked
 	// for is exactly the case the reviewer's file cannot answer. Still
 	// long before anything is built, which is what the check is for.
-	scenario, err := data.Select(req.Config, req.Scenario)
+	// A scenario only the reviewer's file has comes from there.
+	scenario, err := selectScenario(mine, req.Config, req.Scenario, pr, rep)
 	if err != nil {
 		return state.Sandbox{}, err
 	}
