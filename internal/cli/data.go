@@ -6,6 +6,7 @@ import (
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
 )
@@ -102,6 +103,11 @@ func runDataReset(c *cobra.Command, o *dataResetOptions, arg string) error {
 		}
 	}
 
+	if m.EditedNow(c.Context(), box) == sandbox.Edited {
+		if err := saveBeforeReplacing(c, m, out, box, !o.yes); err != nil {
+			return err
+		}
+	}
 	rep := newStepReporter(out, c.ErrOrStderr())
 	return m.ResetData(c.Context(), box, scenario, rep)
 }

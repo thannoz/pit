@@ -141,6 +141,14 @@ func (c Compose) Unpause(ctx context.Context, s Sandbox, services []string) erro
 	return nil
 }
 
+// Stop ends the named services and keeps their containers.
+func (c Compose) Stop(ctx context.Context, s Sandbox, services []string) error {
+	if _, err := c.Runner.Output(ctx, c.command(s, append([]string{"stop"}, services...)...)); err != nil {
+		return errs.Wrap(err, "cannot stop %s", strings.Join(services, ", "))
+	}
+	return nil
+}
+
 // Services lists the names of the services the compose files define.
 func (c Compose) Services(ctx context.Context, s Sandbox) ([]string, error) {
 	out, err := c.Runner.Output(ctx, c.command(s, "config", "--services"))

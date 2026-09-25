@@ -99,6 +99,14 @@ func (m *Manager) editedSince(ctx context.Context, box state.Sandbox) Edit {
 	return m.edited(ctx, box)
 }
 
+// EditedNow says whether a running sandbox's data was changed since it
+// was loaded, as pit ls would. Nothing is stopped for it, so a write
+// PostgreSQL has not accounted for yet can be missing; for a sandbox
+// that is about to go, EditedBeforeDown is exact.
+func (m *Manager) EditedNow(ctx context.Context, box state.Sandbox) Edit {
+	return m.editedSince(ctx, box)
+}
+
 // edited compares a sandbox's count of writes now with the one taken
 // when its data was loaded, or since then when an update kept it.
 func (m *Manager) edited(ctx context.Context, box state.Sandbox) Edit {
@@ -131,4 +139,59 @@ func compareWrites(baseline, now []int64) Edit {
 		}
 	}
 	return result
+}
+
+// EditedBeforeDown says whether removing a sandbox loses data written
+// since it was loaded, and whether it is running, which saving it
+// needs.
+//
+// The services that are not its databases are stopped first. An
+// application keeps its connections open, and a database may account
+// for what a connection wrote only later: PostgreSQL within ten seconds
+// of the connection going idle, or when it closes. A count taken while
+// the application runs could miss the order entered a moment ago, and
+// that is exactly the one someone removing a sandbox forgets. The
+// sandbox is about to go, so stopping them costs nothing, and a
+// snapshot saved afterwards is of one moment.
+func (m *Manager) EditedBeforeDown(ctx context.Context, box state.Sandbox) (Edit, bool) {
+	statuses, err := m.Runtime.Status(ctx, RuntimeSandbox(box))
+	running := err == nil && (Entry{Services: statuses}).AnyRunning()
+	switch {
+	case box.Edited:
+		return Edited, running
+	case len(box.Writes) == 0 || !running:
+		return EditUnknown, running
+	}
+	if keep, ok := databaseServices(box); ok {
+		var stop []string
+		for _, st := range statuses {
+			if st.Running() && !keep[st.Service] {
+				stop = append(stop, st.Service)
+			}
+		}
+		if len(stop) > 0 {
+			// Counting without stopping them is still worth more than
+			// not counting.
+			_ = m.Runtime.Stop(ctx, RuntimeSandbox(box), stop)
+		}
+	}
+	return m.edited(ctx, box), running
+}
+
+// databaseServices are the services data.snapshot works on, when each
+// of its entries says which.
+func databaseServices(box state.Sandbox) (map[string]bool, bool) {
+	_, commands, err := snapshotCommands(box)
+	if err != nil {
+		return nil, false
+	}
+	keep := map[string]bool{}
+	for _, part := range commands.Each() {
+		svc, ok := part.Target()
+		if !ok {
+			return nil, false
+		}
+		keep[svc] = true
+	}
+	return keep, len(keep) > 0
 }

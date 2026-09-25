@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -243,11 +244,21 @@ func interactive(c *cobra.Command) bool {
 func prompt(c *cobra.Command, out *ui.Printer, question string) string {
 	out.Printf("%s", question)
 
-	line, err := bufio.NewReader(c.InOrStdin()).ReadString('\n')
+	line, err := lineReader(c.InOrStdin()).ReadString('\n')
 	if err != nil && err != io.EOF {
 		return ""
 	}
 	return strings.TrimSpace(line)
+}
+
+// readers keeps one buffered reader for each input, so that a command
+// asking twice gets the second answer too: a reader of its own for each
+// question would have buffered it away with the first.
+var readers sync.Map
+
+func lineReader(in io.Reader) *bufio.Reader {
+	r, _ := readers.LoadOrStore(in, bufio.NewReader(in))
+	return r.(*bufio.Reader)
 }
 
 func find(services []runtime.Service, name string) (runtime.Service, bool) {

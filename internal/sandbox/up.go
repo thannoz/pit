@@ -68,6 +68,12 @@ type UpRequest struct {
 	// throw away someone's work on the grounds that nobody was there
 	// to object.
 	Confirm func(question string) bool
+	// OfferSave is called before the data of a running sandbox is
+	// replaced by another scenario, when it was changed since it was
+	// loaded: the one moment to keep what the reviewer entered. An
+	// error leaves the data alone and stops. Nil replaces it without
+	// offering anything.
+	OfferSave func(box state.Sandbox) error
 }
 
 // Up builds a sandbox for a pull request and records it.
@@ -124,7 +130,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		}
 
 		undo.disarm()
-		return m.reuse(ctx, previous, scenario, st)
+		return m.reuse(ctx, previous, scenario, st, req.OfferSave)
 	}
 
 	// Nothing that already exists is registered for undoing. A failed
@@ -306,6 +312,13 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		st.begin("data", quiet)
 		st.done(ctx, "kept as it was")
 	default:
+		// Replacing what an update would have kept. What it holds was
+		// counted before this commit's migrations wrote to it.
+		if updating && before == Edited && req.OfferSave != nil {
+			if err := req.OfferSave(previous); err != nil {
+				return state.Sandbox{}, err
+			}
+		}
 		st.begin("data", streaming)
 		target := data.Sandbox{Project: project, Files: files, Dir: wt.Path}
 		if err := m.Data.Apply(ctx, target, scenario, rep.Stdout(), rep.Stderr()); err != nil {

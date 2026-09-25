@@ -1736,3 +1736,92 @@ func TestAnUpdateOfDataPitCannotTellAbout(t *testing.T) {
 		t.Errorf("Writes = %v, Edited = %v", updated.Writes, updated.Edited)
 	}
 }
+
+// withStandard gives the counter's configuration a scenario to switch
+// to, and the store that records loading it.
+func withStandard(t *testing.T, m *sandbox.Manager, req *sandbox.UpRequest) *datatest.Fake {
+	t.Helper()
+	req.Config.Data.Scenarios = []config.Scenario{{Name: "standard", Apply: []string{"compose exec -T db load"}}}
+	return m.Data.(*datatest.Fake)
+}
+
+// Asking a running sandbox for another scenario replaces its data
+// without a question -- asking was the question. Data that was changed
+// since it was loaded is offered to be saved first (T-708).
+func TestSwitchingScenarioOffersToSaveChangedData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	for _, tc := range []struct {
+		name    string
+		written bool
+		refuse  bool
+	}{
+		{"unchanged", false, false},
+		{"changed", true, false},
+		{"changed, and saving fails", true, true},
+	} {
+		m, req, _ := upFixture(t)
+		counter := withCounter(t, &req)
+		store := withStandard(t, m, &req)
+		if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+			t.Fatal(err)
+		}
+		if tc.written {
+			writeFile(t, counter, "40\n")
+		}
+		var offered []int
+		req.OfferSave = func(box state.Sandbox) error {
+			offered = append(offered, box.PR)
+			if tc.refuse {
+				return errors.New("no room")
+			}
+			return nil
+		}
+		req.Scenario = "standard"
+		_, err := m.Up(t.Context(), req, &quietReporter{})
+		if (len(offered) == 1) != tc.written {
+			t.Errorf("%s: offered %v", tc.name, offered)
+		}
+		loaded := slices.Contains(store.Applied(), "standard")
+		if tc.refuse {
+			if err == nil || loaded {
+				t.Errorf("%s: err = %v, loaded %v", tc.name, err, loaded)
+			}
+			continue
+		}
+		if err != nil || !loaded {
+			t.Errorf("%s: err = %v, loaded %v", tc.name, err, loaded)
+		}
+	}
+}
+
+// An update that loads the scenario again offers too, going by what was
+// written before its migrations ran -- they write as well.
+func TestAnUpdateThatReloadsOffersToSaveChangedData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	for _, written := range []bool{false, true} {
+		m, req, _ := upFixture(t)
+		counter := withCounter(t, &req)
+		withStandard(t, m, &req)
+		req.Scenario = "standard"
+		if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+			t.Fatal(err)
+		}
+		if written {
+			writeFile(t, counter, "40\n")
+		}
+		var offered int
+		req.OfferSave = func(state.Sandbox) error { offered++; return nil }
+		req.Confirm = func(string) bool { return true } // load it again
+		pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{"CHANGELOG": "a new commit\n"})
+		if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+			t.Fatal(err)
+		}
+		if (offered == 1) != written {
+			t.Errorf("written %v: offered %d times", written, offered)
+		}
+	}
+}

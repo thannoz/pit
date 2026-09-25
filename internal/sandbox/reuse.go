@@ -47,7 +47,7 @@ func (m *Manager) answers(ctx context.Context, box state.Sandbox, c *config.Conf
 //
 // The containers are left alone even then: they are the expensive
 // part, and the data is seconds.
-func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario, st *steps) (state.Sandbox, error) {
+func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario, st *steps, offer func(state.Sandbox) error) (state.Sandbox, error) {
 	st.begin("reuse", quiet)
 	st.done(ctx, "already running, %s old", shortAge(box.Age()))
 
@@ -71,6 +71,11 @@ func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario
 		return box, nil
 	}
 
+	if offer != nil && m.EditedNow(ctx, box) == Edited {
+		if err := offer(box); err != nil {
+			return state.Sandbox{}, err
+		}
+	}
 	if err := m.ResetData(ctx, box, sc, st.rep); err != nil {
 		return state.Sandbox{}, err
 	}

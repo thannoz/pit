@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/snapshot"
 	"github.com/thannoz/pit/internal/ui"
 )
@@ -171,6 +172,11 @@ migrations of this one run after it.`,
 				}
 			}
 
+			if m.EditedNow(c.Context(), box) == sandbox.Edited {
+				if err := saveBeforeReplacing(c, m, out, box, !yes); err != nil {
+					return err
+				}
+			}
 			rep := newStepReporter(out, c.ErrOrStderr())
 			return m.RestoreSnapshot(c.Context(), box, snap, rep)
 		},

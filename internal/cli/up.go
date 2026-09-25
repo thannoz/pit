@@ -11,6 +11,7 @@ import (
 	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/sandbox"
+	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
 	"github.com/thannoz/pit/internal/workspace"
 )
@@ -81,6 +82,9 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 		Config:   cfg,
 		Scenario: o.scenario,
 		Confirm:  func(question string) bool { return ask(c, out, question) },
+		OfferSave: func(box state.Sandbox) error {
+			return saveBeforeReplacing(c, m, out, box, true)
+		},
 	}, rep)
 	if err != nil {
 		return err

@@ -73,6 +73,10 @@ type Runtime interface {
 	// databases are saved.
 	Pause(ctx context.Context, s Sandbox, services []string) error
 	Unpause(ctx context.Context, s Sandbox, services []string) error
+	// Stop ends the named services' processes and leaves their
+	// containers. Unlike Pause it closes their connections, which is
+	// what makes a database account for everything they wrote.
+	Stop(ctx context.Context, s Sandbox, services []string) error
 	// WaitReady polls until the sandbox answers as expected.
 	WaitReady(ctx context.Context, s Sandbox, service string, p Probe) error
 }

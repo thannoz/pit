@@ -2,6 +2,7 @@ package cli
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -26,6 +27,9 @@ func newDownCmd(_ *globalOptions) *cobra.Command {
 		Long: `Stop a sandbox's services and remove its containers, networks, volumes,
 worktree and generated files, leaving nothing behind.
 
+When the sandbox's data was changed since it was loaded -- something
+entered in the browser -- pit offers to save it as a snapshot first.
+
 Without a number, pass --all to remove every sandbox.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
@@ -36,7 +40,7 @@ Without a number, pass --all to remove every sandbox.`,
 	f := cmd.Flags()
 	f.BoolVar(&o.all, "all", false, "remove every sandbox, from every repository")
 	f.BoolVar(&o.gone, "gone", false, "remove only the sandboxes whose containers no longer exist")
-	f.BoolVarP(&o.yes, "yes", "y", false, "do not ask for confirmation")
+	f.BoolVarP(&o.yes, "yes", "y", false, "do not ask for confirmation, nor whether to save changed data")
 
 	return cmd
 }
@@ -63,15 +67,15 @@ func runDown(c *cobra.Command, o *downOptions, args []string) error {
 	if o.all || o.gone {
 		return downMany(c, m, out, o)
 	}
-	return downOne(c, m, out, args[0])
+	return downOne(c, m, out, o, args[0])
 }
 
-func downOne(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, arg string) error {
+func downOne(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, o *downOptions, arg string) error {
 	box, err := sandboxFor(c, arg)
 	if err != nil {
 		return err
 	}
-	return removeOne(c, m, out, box)
+	return removeOne(c, m, out, box, !o.yes)
 }
 
 func downMany(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, o *downOptions) error {
@@ -88,8 +92,13 @@ func downMany(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, o *downOpti
 		out.Printf("This removes %s, with %s containers, volumes and worktrees:\n",
 			plural(len(targets), "sandbox", "sandboxes"),
 			pick(len(targets), "its", "their"))
+		edited := editedNow(c, m)
 		for _, box := range targets {
-			out.Printf("  %s\n", box.Describe())
+			line := box.Describe()
+			if edited[box.Key()] {
+				line += "  (its data was changed since it was loaded)"
+			}
+			out.Printf("  %s\n", line)
 		}
 		if !confirm(c, out, "Remove "+pick(len(targets), "it", "them all")+"?") {
 			out.Println("Nothing was removed.")
@@ -99,7 +108,7 @@ func downMany(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, o *downOpti
 
 	var failed int
 	for _, box := range targets {
-		if err := removeOne(c, m, out, box); err != nil {
+		if err := removeOne(c, m, out, box, !o.yes); err != nil {
 			out.Error(err)
 			failed++
 		}
@@ -133,12 +142,92 @@ func bulkTargets(c *cobra.Command, m *sandbox.Manager, o *downOptions) ([]state.
 	return targets, nil
 }
 
-func removeOne(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, box state.Sandbox) error {
+// editedNow is which sandboxes pit ls would show as edited, for the
+// list a bulk removal asks about. Nothing is stopped for it: the
+// reviewer may still say no.
+func editedNow(c *cobra.Command, m *sandbox.Manager) map[string]bool {
+	entries, err := m.List(c.Context())
+	if err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, e := range entries {
+		out[e.Key()] = e.Edited == sandbox.Edited
+	}
+	return out
+}
+
+func removeOne(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, box state.Sandbox, offer bool) error {
+	if err := keepEdits(c, m, out, box, offer); err != nil {
+		return err
+	}
 	if err := m.Down(c.Context(), box, c.ErrOrStderr(), c.ErrOrStderr()); err != nil {
 		return err
 	}
 	out.Printf("Removed %s\n", box.Describe())
 	return nil
+}
+
+// keepEdits offers to save a sandbox's data before it goes, when it was
+// changed since it was loaded: then it is something no scenario and no
+// snapshot can bring back, and removing the sandbox removes it for
+// good. Data that is still what was loaded is not asked about; it can
+// be loaded again.
+//
+// Saving failing stops the removal. The reviewer asked to keep it.
+func keepEdits(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, box state.Sandbox, offer bool) error {
+	edit, running := m.EditedBeforeDown(c.Context(), box)
+	if edit != sandbox.Edited {
+		return nil
+	}
+	if !running {
+		out.Printf("#%d's data was changed since it was loaded, and goes with the sandbox.\n", box.PR)
+		out.Printf("It is not running, so pit cannot save it; `pit %d` starts it again.\n", box.PR)
+		return nil
+	}
+	if err := offerSave(c, m, out, box, offer, "goes with the sandbox"); err != nil {
+		return errs.Wrap(err, "saving #%d's data failed, so it was not removed", box.PR).
+			WithHint("`pit down %d --yes` removes it without saving", box.PR)
+	}
+	return nil
+}
+
+// offerSave says that a sandbox's changed data is about to be lost, and
+// offers to save it as a snapshot. With no offer to make -- --yes, or
+// nobody to answer -- it says so and how to keep it next time. The
+// error is saving's; the caller decides what not to do then.
+func offerSave(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, box state.Sandbox, offer bool, fate string) error {
+	out.Printf("#%d's data was changed since it was loaded, and %s.\n", box.PR, fate)
+	if !offer || !interactive(c) {
+		out.Printf("It was not saved; `pit snap save %d` beforehand keeps it.\n", box.PR)
+		return nil
+	}
+	if !askYes(c, out, "Save it as a snapshot first?") {
+		return nil
+	}
+	snap, _, err := m.SaveSnapshot(c.Context(), box, "", false, c.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	out.Printf("Saved it as %s: `pit snap restore <n> %s` loads it into a sandbox, `pit snap promote %s` makes it a scenario.\n",
+		snap.ID, snap.ID, snap.ID)
+	return nil
+}
+
+// saveBeforeReplacing offers to save a running sandbox's changed data
+// before it is replaced, and stops the replacing when saving fails.
+func saveBeforeReplacing(c *cobra.Command, m *sandbox.Manager, out *ui.Printer, box state.Sandbox, offer bool) error {
+	if err := offerSave(c, m, out, box, offer, "is about to be replaced"); err != nil {
+		return errs.Wrap(err, "saving #%d's data failed, so it was left as it is", box.PR).
+			WithHint("`pit snap save %d` says what goes wrong", box.PR)
+	}
+	return nil
+}
+
+// askYes asks a question whose answer is yes unless someone says no.
+func askYes(c *cobra.Command, out *ui.Printer, question string) bool {
+	answer := strings.ToLower(prompt(c, out, question+" [Y/n]: "))
+	return answer != "n" && answer != "no"
 }
 
 // confirm asks a yes-or-no question, refusing when there is nobody to

@@ -120,7 +120,7 @@ func TestStatusAfterTheServicesStop(t *testing.T) {
 	if err := f.Up(t.Context(), sandbox(), nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
-	f.Stop(sandbox().Project)
+	f.StopAll(sandbox().Project)
 
 	statuses, err := f.Status(t.Context(), sandbox())
 	if err != nil {

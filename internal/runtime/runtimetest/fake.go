@@ -61,8 +61,10 @@ type Fake struct {
 	running map[string]bool
 	// paused holds, per project, the services Pause froze.
 	paused map[string]map[string]bool
-	calls  []Call
-	ready  int
+	// stopped holds, per project, the services Stop ended.
+	stopped map[string]map[string]bool
+	calls   []Call
+	ready   int
 }
 
 // New returns a Fake that behaves like a working single-service
@@ -76,6 +78,7 @@ func New(services ...string) *Fake {
 		Published: map[string]int{services[0] + ":80": 49580},
 		running:   map[string]bool{},
 		paused:    map[string]map[string]bool{},
+		stopped:   map[string]map[string]bool{},
 		Fail:      map[string]error{},
 		Prebuilt:  map[string]bool{},
 	}
@@ -162,9 +165,9 @@ func (f *Fake) Down(_ context.Context, s runtime.Sandbox, _, _ io.Writer) error 
 	return nil
 }
 
-// Stop models `compose stop`: the containers are still there, and none
-// of them is running.
-func (f *Fake) Stop(project string) {
+// StopAll models `compose stop` of a whole project: the containers are
+// still there, and none of them is running.
+func (f *Fake) StopAll(project string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.running[project] = false
@@ -247,7 +250,10 @@ func (f *Fake) Status(_ context.Context, s runtime.Sandbox) ([]runtime.Status, e
 	defer f.mu.Unlock()
 	for _, svc := range f.Declared {
 		st := state
-		if up && f.paused[s.Project][svc] {
+		switch {
+		case up && f.stopped[s.Project][svc]:
+			st = "exited"
+		case up && f.paused[s.Project][svc]:
 			st = "paused"
 		}
 		out = append(out, runtime.Status{Service: svc, State: st, ExitCode: code})
@@ -343,6 +349,38 @@ func (f *Fake) Unpause(_ context.Context, s runtime.Sandbox, services []string) 
 		delete(f.paused[s.Project], svc)
 	}
 	return nil
+}
+
+// Stop records the request and marks the services as exited.
+func (f *Fake) Stop(_ context.Context, s runtime.Sandbox, services []string) error {
+	f.mu.Lock()
+	f.calls = append(f.calls, Call{Method: "Stop", Project: s.Project, Services: services})
+	f.mu.Unlock()
+	if err := f.failure("Stop"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.stopped[s.Project] == nil {
+		f.stopped[s.Project] = map[string]bool{}
+	}
+	for _, svc := range services {
+		f.stopped[s.Project][svc] = true
+	}
+	return nil
+}
+
+// Stopped lists the services Stop ended, in declaration order.
+func (f *Fake) Stopped(project string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, svc := range f.Declared {
+		if f.stopped[project][svc] {
+			out = append(out, svc)
+		}
+	}
+	return out
 }
 
 // Paused lists the services of a project that are frozen now.
