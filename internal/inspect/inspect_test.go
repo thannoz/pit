@@ -56,6 +56,14 @@ func site(t *testing.T, pages map[string]string) *httptest.Server {
 		time.Sleep(1200 * time.Millisecond)
 		http.Error(w, "upstream timed out", http.StatusBadGateway)
 	})
+	// A favicon that takes its time, as one on a slow machine does.
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(3 * time.Second):
+		case <-r.Context().Done():
+		}
+		http.NotFound(w, r)
+	})
 	mux.HandleFunc("GET /api/broken", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	})

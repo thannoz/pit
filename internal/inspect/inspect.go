@@ -347,6 +347,11 @@ func (r *recorder) handle(ev any) {
 
 	case *network.EventRequestWillBeSent:
 		r.requests[e.RequestID] = e.Request
+		// The browser asks for /favicon.ico on its own; the page is not
+		// waiting for it, and neither is pit.
+		if strings.HasSuffix(e.Request.URL, "/favicon.ico") && e.Type == network.ResourceTypeOther {
+			return
+		}
 		r.inflight[e.RequestID] = true
 		r.changed = time.Now()
 
