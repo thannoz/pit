@@ -47,7 +47,8 @@ func (m *Manager) answers(ctx context.Context, box state.Sandbox, c *config.Conf
 //
 // The containers are left alone even then: they are the expensive
 // part, and the data is seconds.
-func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario, st *steps, offer func(state.Sandbox) error) (state.Sandbox, error) {
+func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario, st *steps, req UpRequest) (state.Sandbox, error) {
+	offer := req.OfferSave
 	st.begin("reuse", quiet)
 	st.done(ctx, "already running, %s old", shortAge(box.Age()))
 
@@ -63,6 +64,22 @@ func (m *Manager) reuse(ctx context.Context, box state.Sandbox, sc data.Scenario
 		return nil
 	}); err != nil {
 		return state.Sandbox{}, err
+	}
+
+	if snap := req.Snapshot; snap != nil {
+		if box.Snapshot == snap.ID {
+			return box, nil
+		}
+		if offer != nil && m.EditedNow(ctx, box) == Edited {
+			if err := offer(box); err != nil {
+				return state.Sandbox{}, err
+			}
+		}
+		if err := m.RestoreSnapshot(ctx, box, *snap, st.rep); err != nil {
+			return state.Sandbox{}, err
+		}
+		box.Scenario, box.Snapshot = snap.Scenario, snap.ID
+		return box, nil
 	}
 
 	// A restored snapshot is not the scenario it was taken on, even

@@ -23,6 +23,7 @@ import (
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime/runtimetest"
 	"github.com/thannoz/pit/internal/sandbox"
+	"github.com/thannoz/pit/internal/snapshot"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/workspace"
 )
@@ -1823,5 +1824,164 @@ func TestAnUpdateThatReloadsOffersToSaveChangedData(t *testing.T) {
 		if (offered == 1) != written {
 			t.Errorf("written %v: offered %d times", written, offered)
 		}
+	}
+}
+
+// withRestore makes the counter's configuration restore into a file,
+// and saves a snapshot of the repository at sha. It returns the file
+// and the snapshot.
+func withRestore(t *testing.T, m *sandbox.Manager, req *sandbox.UpRequest, sha string) (string, snapshot.Snapshot) {
+	t.Helper()
+	counter := withCounter(t, req)
+	restored := filepath.Join(t.TempDir(), "restored")
+	yaml := strings.Replace(mustRead(t, filepath.Join(req.Repo.Root, ".pit.yaml")),
+		`restore: "true"`, `restore: "sh -c 'cat > `+restored+`'"`, 1)
+	writeFile(t, filepath.Join(req.Repo.Root, ".pit.yaml"), yaml)
+	cfg, err := config.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Config = cfg
+	_ = counter
+	store := m.Snapshots(state.Sandbox{RepoRef: req.Repo.Identity.Ref()})
+	snap, err := store.Save(t.Context(), snapshot.Snapshot{Name: "voucher", PR: 3, SHA: sha, Scenario: "standard"},
+		snapshot.One(func(_ context.Context, w io.Writer) error {
+			_, err := io.WriteString(w, "-- the voucher case\n")
+			return err
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return restored, snap
+}
+
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestUpStartsFromASnapshot is the acceptance criterion for T-709: the
+// sandbox comes up with the saved data, and says where it came from.
+func TestUpStartsFromASnapshot(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	restored, snap := withRestore(t, m, &req, "an-older-commit")
+	store := m.Data.(*datatest.Fake)
+	req.Snapshot = &snap
+	rep := &quietReporter{}
+
+	record, err := m.Up(t.Context(), req, rep)
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if got := mustRead(t, restored); got != "-- the voucher case\n" {
+		t.Errorf("restored %q", got)
+	}
+	if record.Snapshot != snap.ID || record.Scenario != "standard" || len(store.Applied()) != 0 {
+		t.Errorf("Snapshot %q, Scenario %q, applied %v", record.Snapshot, record.Scenario, store.Applied())
+	}
+	// The migrations ran once for the empty database and once more for
+	// the snapshot's older schema: 5 → 6 → 7.
+	if !slices.Equal(record.Writes, []int64{7}) {
+		t.Errorf("Writes = %v", record.Writes)
+	}
+	done := strings.Join(rep.steps, "\n")
+	for _, want := range []string{"snapshot voucher (" + snap.ID + "), saved in #3 at an-olde", "1 migration again, as the snapshot is from an-olde"} {
+		if !strings.Contains(done, want) {
+			t.Errorf("steps lack %q:\n%s", want, done)
+		}
+	}
+}
+
+// Asked for on a sandbox that is running, the snapshot replaces its
+// data; asked for again, nothing happens.
+func TestUpRestoresASnapshotIntoARunningSandbox(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	restored, snap := withRestore(t, m, &req, "an-older-commit")
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(restored); err == nil {
+		t.Fatal("restored before it was asked for")
+	}
+	req.Snapshot = &snap
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if mustRead(t, restored) != "-- the voucher case\n" || record.Snapshot != snap.ID {
+		t.Errorf("Snapshot %q", record.Snapshot)
+	}
+	f, _ := m.Store.Load()
+	if got, _ := f.Find(record.RepoRef, record.PR); got.Snapshot != snap.ID {
+		t.Errorf("recorded %q", got.Snapshot)
+	}
+
+	if err := os.Remove(restored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(restored); err == nil {
+		t.Error("restored the snapshot the data already came from")
+	}
+}
+
+// A new commit keeps the data; the snapshot it came from is loaded again
+// only when asked, and another one without asking.
+func TestAnUpdateKeepsTheSnapshotItCameFrom(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, _ := upFixture(t)
+	restored, snap := withRestore(t, m, &req, "an-older-commit")
+	req.Snapshot = &snap
+	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(restored); err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	req.Confirm = func(q string) bool { asked = append(asked, q); return false }
+	pushToPullRequest(t, req.Repo.Root, req.PR.Number, map[string]string{"CHANGELOG": "a new commit\n"})
+	record, err := m.Up(t.Context(), req, &quietReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || !strings.Contains(asked[0], "Restore voucher ("+snap.ID+") again?") {
+		t.Errorf("asked %q", asked)
+	}
+	if _, err := os.Stat(restored); err == nil || record.Snapshot != snap.ID {
+		t.Errorf("restored again, or forgot where the data came from: %q", record.Snapshot)
+	}
+}
+
+// A snapshot the configuration cannot restore is refused before
+// anything is built.
+func TestUpRefusesASnapshotItCannotRestore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping: talks to the git binary")
+	}
+	m, req, fake := upFixture(t)
+	_, snap := withRestore(t, m, &req, "abc")
+	snap.Parts = []snapshot.Part{{Service: "orders"}, {Service: "stock"}}
+	req.Snapshot = &snap
+	_, err := m.Up(t.Context(), req, &quietReporter{})
+	if err == nil || !strings.Contains(err.Error(), "#7 cannot load voucher") {
+		t.Errorf("err = %v", err)
+	}
+	if slices.Contains(fake.Methods(), "Up") {
+		t.Error("the services were started for a snapshot that cannot be loaded")
 	}
 }

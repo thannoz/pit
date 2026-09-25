@@ -228,3 +228,24 @@ func TestSnapPromoteKeepsTheValuesOfThePullRequestsScenario(t *testing.T) {
 		t.Errorf("params = %v", sc.Params)
 	}
 }
+
+func TestUpTakesAScenarioOrASnapshot(t *testing.T) {
+	withManager(t)
+	inRepo(t, promoteConfig)
+	_, _, err := run(t, "482", "--scenario=standard", "--snapshot=voucher")
+	if err == nil || !strings.Contains(err.Error(), "--scenario and --snapshot both say where the data comes from") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// A snapshot that does not exist is said before the pull request is
+// even looked up.
+func TestUpWithASnapshotThatDoesNotExist(t *testing.T) {
+	m, _ := withManager(t)
+	_, id := inRepo(t, promoteConfig)
+	savedIn(t, m, id, "voucher", "-- dump\n")
+	_, _, err := run(t, "482", "--snapshot=vocher")
+	if err == nil || !strings.Contains(err.Error(), `there is no snapshot "vocher"`) || !strings.Contains(errs.Hint(err), "voucher") {
+		t.Errorf("err = %v, hint %q", err, errs.Hint(err))
+	}
+}

@@ -76,6 +76,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&up.open, "open", false, "open the sandbox in a browser once it is ready")
 	cmd.Flags().StringVar(&up.scenario, "scenario", "", "data state to load (default: the one configured as data.default)")
+	cmd.Flags().StringVar(&up.snapshot, "snapshot", "", "load a saved snapshot, by ID or name, instead of a scenario")
 
 	f := cmd.PersistentFlags()
 	f.BoolVarP(&opts.verbose, "verbose", "v", false, "print diagnostic logging to stderr")

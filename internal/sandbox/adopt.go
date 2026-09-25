@@ -9,6 +9,7 @@ import (
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/state"
 )
 
 // adopt reads the configuration the pull request brings with it.
@@ -110,6 +111,20 @@ func pick(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// selectData picks what a sandbox's data is loaded from: the snapshot
+// asked for, checked against the restore commands of the configuration
+// that governs, or else a scenario.
+func (m *Manager) selectData(mine *config.Config, req UpRequest, worktree string, rep Reporter) (data.Scenario, error) {
+	if req.Snapshot == nil {
+		return selectScenario(mine, req.Config, req.Scenario, req.PR.Number, rep)
+	}
+	box := state.Sandbox{PR: req.PR.Number, RepoRoot: req.Repo.Root, Worktree: worktree}
+	if err := CheckSnapshot(box, *req.Snapshot); err != nil {
+		return data.Scenario{}, errs.Wrap(err, "#%d cannot load %s", req.PR.Number, req.Snapshot.Label())
+	}
+	return data.Scenario{}, nil
 }
 
 // selectScenario picks the scenario to load from the configuration that

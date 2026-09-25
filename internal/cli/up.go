@@ -11,6 +11,7 @@ import (
 	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/sandbox"
+	"github.com/thannoz/pit/internal/snapshot"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/ui"
 	"github.com/thannoz/pit/internal/workspace"
@@ -21,6 +22,8 @@ type upOptions struct {
 	// scenario is the data state to load. Empty means the one the
 	// repository configured as its default.
 	scenario string
+	// snapshot is a saved state to load instead.
+	snapshot string
 }
 
 // runUp builds the sandbox for a pull request. It is what `pit 482`
@@ -32,12 +35,31 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 			WithHint("run `pit --help` to see the available commands")
 	}
 
+	if o.scenario != "" && o.snapshot != "" {
+		return errs.New("--scenario and --snapshot both say where the data comes from").
+			WithHint("pick one: a scenario the repository describes, or a snapshot someone saved")
+	}
+
 	ctx := c.Context()
 	out := ui.New(c.OutOrStdout(), c.ErrOrStderr())
 
 	repo, err := currentRepo(ctx)
 	if err != nil {
 		return err
+	}
+	// Looked up before anything else happens: a mistyped ID is cheaper
+	// to hear about now than after a build.
+	m, err := manager()
+	if err != nil {
+		return err
+	}
+	var snap *snapshot.Snapshot
+	if o.snapshot != "" {
+		found, err := m.Snapshots(state.Sandbox{RepoRef: repo.Identity.Ref()}).Find(o.snapshot)
+		if err != nil {
+			return err
+		}
+		snap = &found
 	}
 	cfg, _, err := config.LoadFrom(repo.Root)
 	if err != nil {
@@ -70,17 +92,13 @@ func runUp(c *cobra.Command, o *upOptions, arg string) error {
 	out.Printf("%s\n", pull.Describe())
 	warnIfNotWorthReviewing(out, pull, repo.Identity.Host)
 
-	m, err := manager()
-	if err != nil {
-		return err
-	}
-
 	rep := newStepReporter(out, c.ErrOrStderr())
 	record, err := m.Up(ctx, sandbox.UpRequest{
 		Repo:     repo,
 		PR:       pull,
 		Config:   cfg,
 		Scenario: o.scenario,
+		Snapshot: snap,
 		Confirm:  func(question string) bool { return ask(c, out, question) },
 		OfferSave: func(box state.Sandbox) error {
 			return saveBeforeReplacing(c, m, out, box, true)

@@ -198,6 +198,18 @@ func (m *Manager) recordCommit(box state.Sandbox, sha string) error {
 // Asking for a particular scenario is an answer in itself: someone who
 // types --scenario has said what they want the sandbox to contain.
 // Otherwise the reviewer is asked, and silence keeps what is there.
+// wantsSnapshot is wants for a snapshot: one the sandbox's data did not
+// come from is what was asked for; the one it did, only when asked.
+func wantsSnapshot(req UpRequest, previous state.Sandbox) bool {
+	if previous.Snapshot != req.Snapshot.ID {
+		return true
+	}
+	if req.Confirm == nil {
+		return false
+	}
+	return req.Confirm(fmt.Sprintf("#%d kept the data it had. Restore %s again?", req.PR.Number, req.Snapshot.Label()))
+}
+
 func wants(req UpRequest, sc data.Scenario, previous state.Sandbox) bool {
 	if req.Scenario != "" && (req.Scenario != previous.Scenario || previous.Snapshot != "") {
 		return true

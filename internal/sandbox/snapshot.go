@@ -191,25 +191,16 @@ func composeDatabases(files []string) []config.Database {
 // migrations of this one run after it, as they would after a scenario,
 // so that the code under review meets the tables it expects.
 func (m *Manager) RestoreSnapshot(ctx context.Context, box state.Sandbox, snap snapshot.Snapshot, rep Reporter) error {
-	_, commands, err := snapshotCommands(box)
-	if err != nil {
+	if err := CheckSnapshot(box, snap); err != nil {
 		return err
 	}
-	pairs, err := restorePairs(snap, commands)
-	if err != nil {
-		return err
-	}
-
-	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
 	rep.Begin("restore", streaming)
-	for _, pair := range pairs {
-		if err := m.restorePart(ctx, box, snap, pair, target, rep); err != nil {
-			return errs.Wrap(err, "restoring %s into #%d failed", snap.Label(), box.PR).
-				WithHint("the data of #%d may be half replaced; restoring again, or `pit data reset %d`, puts it into a known state", box.PR, box.PR)
-		}
+	if err := m.restoreParts(ctx, box, snap, rep); err != nil {
+		return err
 	}
 	rep.Done("%s", snap.Label())
 
+	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
 	if snap.SHA != box.SHA {
 		cfg, err := ownConfig(box)
 		if err != nil {
@@ -236,6 +227,38 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, box state.Sandbox, snap s
 		f.Put(current)
 		return nil
 	})
+}
+
+// CheckSnapshot says whether a snapshot can be restored into a sandbox:
+// whether its configuration has a restore command for each part. It is
+// what a setup asks before building anything.
+func CheckSnapshot(box state.Sandbox, snap snapshot.Snapshot) error {
+	_, commands, err := snapshotCommands(box)
+	if err != nil {
+		return err
+	}
+	_, err = restorePairs(snap, commands)
+	return err
+}
+
+// restoreParts feeds each part of a snapshot to its restore command.
+func (m *Manager) restoreParts(ctx context.Context, box state.Sandbox, snap snapshot.Snapshot, rep Reporter) error {
+	_, commands, err := snapshotCommands(box)
+	if err != nil {
+		return err
+	}
+	pairs, err := restorePairs(snap, commands)
+	if err != nil {
+		return err
+	}
+	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	for _, pair := range pairs {
+		if err := m.restorePart(ctx, box, snap, pair, target, rep); err != nil {
+			return errs.Wrap(err, "restoring %s into #%d failed", snap.Label(), box.PR).
+				WithHint("the data of #%d may be half replaced; restoring again, or `pit data reset %d`, puts it into a known state", box.PR, box.PR)
+		}
+	}
+	return nil
 }
 
 // ownConfig is the configuration a sandbox was built with: the pull

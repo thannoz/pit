@@ -15,6 +15,7 @@ import (
 	"github.com/thannoz/pit/internal/hooks"
 	"github.com/thannoz/pit/internal/ports"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/snapshot"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/workspace"
 )
@@ -61,6 +62,9 @@ type UpRequest struct {
 	// Scenario is the data state the reviewer asked for. Empty means
 	// the one the repository configured as its default.
 	Scenario string
+	// Snapshot, when set, is loaded instead of any scenario: a state
+	// someone saved, to start from exactly there.
+	Snapshot *snapshot.Snapshot
 	// Confirm asks the reviewer a yes-or-no question.
 	//
 	// It is used in one place: whether to replace data a sandbox
@@ -124,13 +128,13 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		mine := req.Config
 		req.Config = adopted
 
-		scenario, err := selectScenario(mine, req.Config, req.Scenario, pr, rep)
+		scenario, err := m.selectData(mine, req, previous.Worktree, rep)
 		if err != nil {
 			return state.Sandbox{}, err
 		}
 
 		undo.disarm()
-		return m.reuse(ctx, previous, scenario, st, req.OfferSave)
+		return m.reuse(ctx, previous, scenario, st, req)
 	}
 
 	// Nothing that already exists is registered for undoing. A failed
@@ -167,7 +171,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// for is exactly the case the reviewer's file cannot answer. Still
 	// long before anything is built, which is what the check is for.
 	// A scenario only the reviewer's file has comes from there.
-	scenario, err := selectScenario(mine, req.Config, req.Scenario, pr, rep)
+	scenario, err := m.selectData(mine, req, wt.Path, rep)
 	if err != nil {
 		return state.Sandbox{}, err
 	}
@@ -301,10 +305,35 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// moment pit says the sandbox answers, it answers with data.
 	loaded, restored, kept := scenario.Name, "", false
 	switch {
+	case req.Snapshot != nil && (!updating || wantsSnapshot(req, previous)):
+		if updating && before == Edited && req.OfferSave != nil {
+			if err := req.OfferSave(previous); err != nil {
+				return state.Sandbox{}, err
+			}
+		}
+		snap := *req.Snapshot
+		st.begin("data", streaming)
+		into := state.Sandbox{PR: pr, RepoRef: id.Ref(), RepoRoot: req.Repo.Root, Project: project, ComposeFiles: files, Worktree: wt.Path, SHA: sha}
+		if err := m.restoreParts(ctx, into, snap, rep); err != nil {
+			return state.Sandbox{}, err
+		}
+		st.done(ctx, "snapshot %s, saved in #%d at %s", snap.Label(), snap.PR, short(snap.SHA))
+		// Its schema is that of the commit it was saved at.
+		if snap.SHA != sha && !migrations.Empty() {
+			st.begin("migrate", streaming)
+			if err := hooks.Run(ctx, m.Proc, migrations, h, rep.Stdout(), rep.Stderr()); err != nil {
+				return state.Sandbox{}, err
+			}
+			st.done(ctx, "%s again, as the snapshot is from %s", plural(len(migrations.Lines), "migration", "migrations"), short(snap.SHA))
+		}
+		loaded, restored = snap.Scenario, snap.ID
 	case scenario.Empty():
 		// Nothing configured, so nothing to say about it. What an
-		// update found is still there.
+		// update found is still there, and so is where it came from.
 		kept = updating
+		if updating {
+			loaded, restored = previous.Scenario, previous.Snapshot
+		}
 	case updating && !wants(req, scenario, previous):
 		// The data survived the update. Replacing it would throw away
 		// whatever the reviewer had done in the sandbox so far.
