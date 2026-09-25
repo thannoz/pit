@@ -105,6 +105,13 @@ type Data struct {
 	Migrate []string `yaml:"migrate"`
 	// Snapshot says how to dump and restore that service.
 	Snapshot Snapshot `yaml:"snapshot"`
+	// SnapshotLimit is how much a snapshot may hold, measured as what
+	// the save commands write, before pit stops saving it. Unset is
+	// DefaultSnapshotLimit, 0 no limit. A dump of gigabytes takes minutes to save and to restore,
+	// and a scenario that loads what the review needs is the better
+	// tool for that; the limit is there so that nobody finds out by
+	// filling a disk.
+	SnapshotLimit *ByteSize `yaml:"snapshot_limit,omitempty"`
 	// Scenarios are the named states a reviewer can start from.
 	Scenarios []Scenario `yaml:"scenarios"`
 	// Default names the scenario used when none is asked for.

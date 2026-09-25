@@ -88,7 +88,9 @@ func (m *Manager) SaveSnapshot(ctx context.Context, box state.Sandbox, name stri
 		}()
 	}
 
-	snap, err := m.Snapshots(box).Save(ctx, snapshot.Snapshot{
+	store := m.Snapshots(box)
+	store.Limit = cfg.Data.SnapshotMax()
+	snap, err := store.Save(ctx, snapshot.Snapshot{
 		Name: name, Repo: box.Repo, PR: box.PR, SHA: box.SHA, Scenario: box.Scenario, Service: db.Service,
 	}, dumps)
 	if err != nil && errs.Hint(err) == "" && ctx.Err() == nil {

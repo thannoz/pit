@@ -18,6 +18,7 @@ const (
 	DefaultHealthURL       = "http://{host}:{port}/"
 	DefaultRoutesFramework = "auto"
 	DefaultProductionTTL   = 24 * time.Hour
+	DefaultSnapshotLimit   = 500 * ByteSize(1e6)
 )
 
 // Parse reads a .pit.yaml and fills in the defaults. It does not check

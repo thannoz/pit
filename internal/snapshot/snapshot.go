@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/ui"
 )
 
 // Snapshot is what is known about one saved state.
@@ -101,6 +102,9 @@ type Store struct {
 	Dir string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// Limit is the most a snapshot may hold, counted as what its save
+	// commands write, before saving it is stopped. 0 is no limit.
+	Limit int64
 }
 
 const (
@@ -198,8 +202,14 @@ func (s Store) Save(ctx context.Context, meta Snapshot, dumps []Dump) (Snapshot,
 		}
 	}()
 	meta.Parts, meta.Size, meta.Raw = nil, 0, 0
+	var written int64
 	for _, d := range dumps {
-		tmp, raw, err := s.dump(ctx, meta.ID, d)
+		room := int64(0)
+		if s.Limit > 0 {
+			room = s.Limit - written
+		}
+		tmp, raw, err := s.dump(ctx, meta.ID, d, room)
+		written += raw
 		if tmp != "" {
 			temps = append(temps, tmp)
 		}
@@ -240,14 +250,26 @@ func (s Store) Save(ctx context.Context, meta Snapshot, dumps []Dump) (Snapshot,
 
 // dump runs one save command into a temporary file, compressed, and
 // says how much it wrote.
-func (s Store) dump(ctx context.Context, id string, d Dump) (tmp string, raw int64, err error) {
+//
+// With room, the command is stopped as soon as it has written more than
+// that: a dump of gigabytes is not left to fill the disk first.
+func (s Store) dump(ctx context.Context, id string, d Dump, room int64) (tmp string, raw int64, err error) {
 	f, err := os.CreateTemp(s.Dir, "."+id+"-*")
 	if err != nil {
 		return "", 0, errs.Wrap(err, "cannot write in %s", s.Dir)
 	}
-	counted := &counter{}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	counted := &counter{max: room, stop: cancel}
 	z := gzip.NewWriter(f)
-	err = d.Write(ctx, io.MultiWriter(z, counted))
+	err = d.Write(ctx, io.MultiWriter(counted, z))
+	if counted.over {
+		_ = z.Close()
+		_ = f.Close()
+		return f.Name(), counted.n, errs.New("the snapshot grew past %s and was stopped; nothing was saved", ui.Size(s.Limit)).
+			WithHint("a dump this size takes as long to restore as to save; a scenario that loads only what the review needs is quicker. " +
+				"data.snapshot_limit in .pit.yaml raises the limit, and 0 lifts it")
+	}
 	if cerr := z.Close(); err == nil {
 		err = cerr
 	}
@@ -416,9 +438,22 @@ func (s Store) now() time.Time {
 	return time.Now()
 }
 
-type counter struct{ n int64 }
+// counter counts what goes through it, and with a max refuses to pass
+// on more than that, stopping whoever writes.
+type counter struct {
+	n, max int64
+	stop   func()
+	over   bool
+}
+
+var errTooLarge = errors.New("the snapshot is larger than its limit")
 
 func (c *counter) Write(p []byte) (int, error) {
 	c.n += int64(len(p))
+	if c.max > 0 && c.n > c.max {
+		c.over = true
+		c.stop()
+		return 0, errTooLarge
+	}
 	return len(p), nil
 }

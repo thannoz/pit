@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/state"
 )
@@ -121,5 +123,38 @@ func TestEditedSince(t *testing.T) {
 	m.Proc = &counting{}
 	if got := m.editedSince(t.Context(), box); got != EditUnknown {
 		t.Errorf("got %v", got)
+	}
+}
+
+// TestATwoGigabyteDumpIsNotSavedQuietly is the acceptance criterion for
+// T-710, with a real process: a save command that would write 2 GB is
+// stopped once it passes the limit, quickly, and leaves nothing behind.
+func TestATwoGigabyteDumpIsNotSavedQuietly(t *testing.T) {
+	box := writesBox(t, `version: 1
+web: {service: web, port: 80}
+data:
+  snapshot_limit: 1MB
+  snapshot:
+    save: "sh -c 'yes 0123456789 | head -c 2000000000'"
+    restore: "true"
+`)
+	box.RepoRef = "acme-shop"
+	m := &Manager{Proc: proc.Exec{}, StateDir: t.TempDir()}
+
+	start := time.Now()
+	_, _, err := m.SaveSnapshot(t.Context(), box, "", false, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "the snapshot grew past 1.0 MB and was stopped; nothing was saved") {
+		t.Fatalf("err = %v", err)
+	}
+	if hint := errs.Hint(err); !strings.Contains(hint, "scenario") || !strings.Contains(hint, "data.snapshot_limit") {
+		t.Errorf("hint = %q", hint)
+	}
+	// Compressing 2 GB would take far longer than this.
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("took %v to stop", took)
+	}
+	entries, _ := os.ReadDir(m.Snapshots(box).Dir)
+	if len(entries) != 0 {
+		t.Errorf("left %v", entries)
 	}
 }

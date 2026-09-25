@@ -449,3 +449,53 @@ func TestASnapshotFromBeforePartsIsOnePart(t *testing.T) {
 		t.Errorf("Remove: %v, left %v", err, files(t, s))
 	}
 }
+
+// The limit is for the whole snapshot: a second part that takes it past
+// stops it, and neither part is kept.
+func TestSaveStopsAtTheLimit(t *testing.T) {
+	s := store(t)
+	s.Limit = 100
+	_, err := s.Save(t.Context(), Snapshot{PR: 1, SHA: "abc"}, []Dump{
+		{Service: "orders", Write: writes(strings.Repeat("o", 60))},
+		{Service: "stock", Write: writes(strings.Repeat("s", 60))},
+	})
+	if err == nil || !strings.Contains(err.Error(), "the snapshot grew past 100 B and was stopped") {
+		t.Fatalf("err = %v", err)
+	}
+	if left := files(t, s); len(left) != 0 {
+		t.Errorf("left %v", left)
+	}
+
+	// Under it, as before.
+	s.Limit = 1000
+	if _, err := s.Save(t.Context(), Snapshot{PR: 1, SHA: "abc"}, One(writes(strings.Repeat("x", 900)))); err != nil {
+		t.Errorf("under the limit: %v", err)
+	}
+}
+
+// The command writing is stopped where it passes the limit: its writes
+// fail and its context ends, so it is not left to write gigabytes that
+// go nowhere.
+func TestSaveStopsTheWriterAtTheLimit(t *testing.T) {
+	s := store(t)
+	s.Limit = 10_000
+	var attempted int
+	var cancelled bool
+	_, err := s.Save(t.Context(), Snapshot{PR: 1, SHA: "abc"}, One(func(ctx context.Context, w io.Writer) error {
+		chunk := []byte(strings.Repeat("x", 1000))
+		for range 10_000 { // 10 MB, if nobody stops it
+			attempted += len(chunk)
+			if _, err := w.Write(chunk); err != nil {
+				cancelled = ctx.Err() != nil
+				return err
+			}
+		}
+		return nil
+	}))
+	if err == nil {
+		t.Fatal("saved past the limit")
+	}
+	if attempted > 11_000 || !cancelled {
+		t.Errorf("wrote %d bytes before stopping, context ended: %v", attempted, cancelled)
+	}
+}
