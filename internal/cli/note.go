@@ -73,10 +73,19 @@ the sandbox is taken down, until they are removed.`,
 			if err != nil {
 				return err
 			}
-			n, err = m.Notes(box.Repo, box.RepoRef, box.PR).Add(n, png)
-			if err != nil {
+			b := m.Notes(box.Repo, box.RepoRef, box.PR)
+			if n.Recording, err = b.TakeRecording(); err != nil {
 				return err
 			}
+			added, err := b.Add(n, png)
+			if err != nil {
+				if n.Recording != nil {
+					// Not lost with the note: the next one takes it.
+					_ = b.KeepRecording(*n.Recording)
+				}
+				return err
+			}
+			n = added
 			if opts.jsonOutput {
 				return writeJSON(out, n)
 			}
@@ -310,6 +319,9 @@ func writeNote(out *ui.Printer, n notes.Note, fresh bool) {
 	}
 	if n.Screenshot != "" {
 		out.Printf("     screenshot %s\n", n.Screenshot)
+	}
+	if n.Recording != nil {
+		out.Printf("     steps %d recorded\n", len(n.Recording.Steps))
 	}
 	if len(n.Logs) > 0 {
 		var parts []string

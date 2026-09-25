@@ -85,6 +85,7 @@ func Comment(in Input) string {
 			fmt.Fprintf(&b, " · commit %s", shaRef(n.SHA, in.Head))
 		}
 		b.WriteString("\n")
+		writeSteps(&b, n)
 		writeFindings(&b, n)
 		writeLogs(&b, n)
 		if !sameScenario {
@@ -93,6 +94,7 @@ func Comment(in Input) string {
 		if !sameCaveats {
 			writeCaveats(&b, n)
 		}
+		writeRecipe(&b, in.PR, n)
 		if picture := in.Pictures[n.ID]; picture != "" {
 			fmt.Fprintf(&b, "\n![%s](%s)\n", "Screenshot of "+escapeAlt(page), picture)
 		}
@@ -130,6 +132,9 @@ func caveats(n notes.Note) []string {
 	}
 	if n.Edited {
 		out = append(out, "I had changed the data by hand before this; the scenario alone may not show it.")
+	}
+	if n.Recording != nil && n.Recording.Edited {
+		out = append(out, "The recording began on data I had changed by hand; the steps alone may not lead there.")
 	}
 	return out
 }

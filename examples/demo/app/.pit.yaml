@@ -10,6 +10,7 @@ data:
   scenarios:
     - name: empty
       description: "Only the schema, no orders"
+      apply: ["compose exec -T db psql -q -U shop -d shop -c 'TRUNCATE orders'"]
     - name: standard
       description: "Three orders"
       apply: ["compose exec -T db psql -q -U shop -d shop -f /fixtures/standard.sql"]

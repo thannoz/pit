@@ -144,39 +144,22 @@ const (
 // shown in the developer tools are collected instead of scrolling by
 // unread.
 func Capture(ctx context.Context, url string, o Options) (Report, error) {
-	browser := o.Browser
-	if browser == "" {
-		found, err := FindBrowser()
-		if err != nil {
-			return Report{}, err
-		}
-		browser = found
-	}
 	if o.Settle == 0 {
 		o.Settle = defaultSettle
 	}
 	if o.Quiet == 0 {
 		o.Quiet = defaultQuiet
 	}
-
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(browser),
-		chromedp.WindowSize(Width, Height),
-	)
-	// Chrome refuses to start its sandbox as root, which is what a
-	// container usually is.
-	if os.Geteuid() == 0 {
-		opts = append(opts, chromedp.NoSandbox)
+	bctx, cancel, browser, err := startBrowser(ctx, o.Browser, true)
+	if err != nil {
+		return Report{}, err
 	}
-	actx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
-	defer cancelAlloc()
-	bctx, cancelBrowser := chromedp.NewContext(actx)
-	defer cancelBrowser()
+	defer cancel()
 
 	rec := newRecorder()
 	chromedp.ListenTarget(bctx, rec.handle)
 
-	err := chromedp.Run(bctx,
+	err = chromedp.Run(bctx,
 		network.Enable(),
 		runtime.Enable(),
 		cdplog.Enable(),
@@ -189,12 +172,7 @@ func Capture(ctx context.Context, url string, o Options) (Report, error) {
 		if ctx.Err() != nil {
 			return Report{}, ctx.Err()
 		}
-		if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "executable file not found") {
-			return Report{}, errs.Wrap(err, "cannot start the browser at %s", browser).
-				WithHint("set PIT_BROWSER to a Chrome or Chromium executable")
-		}
-		return Report{}, errs.Wrap(err, "the browser could not load %s", url).
-			WithHint("`pit ls` shows whether the sandbox is running")
+		return Report{}, loadFailure(err, browser, url)
 	}
 	rec.settle(bctx, o.Settle, o.Quiet)
 	report := Report{URL: url, Problems: rec.problems(), Pending: rec.pending()}
@@ -240,6 +218,44 @@ func screenshot(bctx context.Context, full bool) (Screenshot, error) {
 	return shot, err
 }
 
+// startBrowser starts Chrome, headless or in a window, and returns a
+// context for its first tab.
+func startBrowser(ctx context.Context, browser string, headless bool) (context.Context, context.CancelFunc, string, error) {
+	if browser == "" {
+		found, err := FindBrowser()
+		if err != nil {
+			return nil, nil, "", err
+		}
+		browser = found
+	}
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(browser),
+		chromedp.WindowSize(Width, Height),
+	)
+	if !headless {
+		opts = append(opts, chromedp.Flag("headless", false))
+	}
+	// Chrome refuses to start its sandbox as root, which is what a
+	// container usually is.
+	if os.Geteuid() == 0 {
+		opts = append(opts, chromedp.NoSandbox)
+	}
+	actx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
+	bctx, cancelBrowser := chromedp.NewContext(actx)
+	return bctx, func() { cancelBrowser(); cancelAlloc() }, browser, nil
+}
+
+// loadFailure says why a page could not be loaded: no browser to load
+// it with, or nothing answering there.
+func loadFailure(err error, browser, url string) error {
+	if errors.Is(err, exec.ErrNotFound) || strings.Contains(err.Error(), "executable file not found") {
+		return errs.Wrap(err, "cannot start the browser at %s", browser).
+			WithHint("set PIT_BROWSER to a Chrome or Chromium executable")
+	}
+	return errs.Wrap(err, "the browser could not load %s", url).
+		WithHint("`pit ls` shows whether the sandbox is running")
+}
+
 // recorder turns the browser's events into problems.
 type recorder struct {
 	mu       sync.Mutex
@@ -266,6 +282,13 @@ func (r *recorder) problems() []Problem {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]Problem{}, r.found...)
+}
+
+// touch counts now as a moment something happened.
+func (r *recorder) touch() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.changed = time.Now()
 }
 
 func (r *recorder) pending() []string {

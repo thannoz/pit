@@ -163,3 +163,28 @@ func TestMarkPosted(t *testing.T) {
 		t.Errorf("list = %+v", list)
 	}
 }
+
+// A recording waits for the next note, which takes it; a newer one
+// replaces it.
+func TestARecordingGoesToTheNextNote(t *testing.T) {
+	b := newBook(t)
+	if r, err := b.TakeRecording(); err != nil || r != nil {
+		t.Fatalf("nothing recorded: %v, %v", r, err)
+	}
+	first := Recording{SHA: "abc", Scenario: "standard", Steps: []inspect.Step{{Action: inspect.Goto, Path: "/"}}}
+	second := first
+	second.Steps = append(second.Steps, inspect.Step{Action: inspect.Click, Selector: "button", Text: "Order it"})
+	if err := b.KeepRecording(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.KeepRecording(second); err != nil {
+		t.Fatal(err)
+	}
+	r, err := b.TakeRecording()
+	if err != nil || r == nil || len(r.Steps) != 2 || r.Steps[1].Text != "Order it" {
+		t.Fatalf("took %+v, %v", r, err)
+	}
+	if again, _ := b.TakeRecording(); again != nil {
+		t.Error("a recording went to two notes")
+	}
+}

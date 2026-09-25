@@ -50,8 +50,23 @@ type Note struct {
 	// Logs are what the services wrote around the time of the note:
 	// while pit loaded the page, and a little before.
 	Logs []Log `json:"logs,omitempty"`
+	// Recording is what the reviewer did before the note, when they
+	// recorded it: the way to the state the note is about.
+	Recording *Recording `json:"recording,omitempty"`
 	// Posted is the comment the note went into, once it did.
 	Posted string `json:"posted,omitempty"`
+}
+
+// Recording is what a reviewer did in a browser pit watched, and what
+// it started from.
+type Recording struct {
+	SHA      string `json:"sha"`
+	Scenario string `json:"scenario,omitempty"`
+	// Edited says the data had been changed by hand before the
+	// recording began: the scenario and the steps do not lead to it.
+	Edited bool           `json:"edited,omitempty"`
+	At     time.Time      `json:"at"`
+	Steps  []inspect.Step `json:"steps"`
 }
 
 // Log is what one service wrote around the time of a note.
@@ -83,7 +98,10 @@ type Book struct {
 	Lock func(func() error) error
 }
 
-const recordName = "notes.json"
+const (
+	recordName    = "notes.json"
+	recordingName = "recording.json"
+)
 
 // record is the file on disk.
 type record struct {
@@ -190,6 +208,45 @@ func (b Book) MarkPosted(ids []int, comment string) error {
 		}
 		return b.write(r)
 	})
+}
+
+// KeepRecording keeps a recording until the next note takes it. A newer
+// one replaces it: it is the one that led to what the reviewer is
+// about to note.
+func (b Book) KeepRecording(r Recording) error {
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return errs.Wrap(err, "cannot write the recording")
+	}
+	return b.Lock(func() error {
+		if err := os.MkdirAll(b.Dir, 0o700); err != nil {
+			return errs.Wrap(err, "cannot create %s", b.Dir)
+		}
+		return writeFile(filepath.Join(b.Dir, recordingName), append(data, '\n'))
+	})
+}
+
+// TakeRecording hands over the recording kept, if there is one, and
+// forgets it: it belongs to one note.
+func (b Book) TakeRecording() (*Recording, error) {
+	var out *Recording
+	err := b.Lock(func() error {
+		path := filepath.Join(b.Dir, recordingName)
+		data, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return errs.Wrap(err, "cannot read %s", path)
+		}
+		var r Recording
+		if err := json.Unmarshal(data, &r); err != nil {
+			return errs.Wrap(err, "%s is not readable", path).WithHint("remove it to go on without it")
+		}
+		out = &r
+		return os.Remove(path)
+	})
+	return out, err
 }
 
 // resolve turns the picture's name into where it is.
