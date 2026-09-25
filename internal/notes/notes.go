@@ -47,6 +47,8 @@ type Note struct {
 	// Uncaptured says why the page was not loaded, when it was not:
 	// the sandbox was not running, there was no browser.
 	Uncaptured string `json:"uncaptured,omitempty"`
+	// Posted is the comment the note went into, once it did.
+	Posted string `json:"posted,omitempty"`
 }
 
 // Captured reports whether the page was loaded for the note.
@@ -153,6 +155,23 @@ func (b Book) Remove(ids ...int) ([]Note, error) {
 		return nil
 	})
 	return removed, err
+}
+
+// MarkPosted records that notes went into a comment, so that the next
+// one does not tell them again.
+func (b Book) MarkPosted(ids []int, comment string) error {
+	return b.Lock(func() error {
+		r, err := b.read()
+		if err != nil {
+			return err
+		}
+		for i := range r.Notes {
+			if slices.Contains(ids, r.Notes[i].ID) {
+				r.Notes[i].Posted = comment
+			}
+		}
+		return b.write(r)
+	})
 }
 
 // resolve turns the picture's name into where it is.

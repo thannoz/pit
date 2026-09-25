@@ -146,3 +146,20 @@ func TestAnUnreadableRecord(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestMarkPosted(t *testing.T) {
+	b := newBook(t)
+	for _, text := range []string{"one", "two", "three"} {
+		if _, err := b.Add(Note{Text: text}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const url = "https://github.com/acme/shop/pull/482#issuecomment-1"
+	if err := b.MarkPosted([]int{1, 3}, url); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := b.List()
+	if list[0].Posted != url || list[1].Posted != "" || list[2].Posted != url {
+		t.Errorf("list = %+v", list)
+	}
+}

@@ -252,6 +252,9 @@ func writeNote(out *ui.Printer, n notes.Note, fresh bool) {
 	if n.Screenshot != "" {
 		out.Printf("     screenshot %s\n", n.Screenshot)
 	}
+	if n.Posted != "" {
+		out.Printf("     posted %s\n", n.Posted)
+	}
 }
 
 // pathOf is the part of a sandbox's address that stays when its port
