@@ -57,6 +57,25 @@ func EngineOf(image string) (Engine, bool) {
 	return "", false
 }
 
+// SuggestCheck writes the commands pit migrate-check counts with, for
+// the engines it knows them for: PostgreSQL. The tables are those of
+// the public schema, where applications keep theirs unless they say
+// otherwise; the counts are exact, which a scenario's data allows.
+func SuggestCheck(service string, e Engine) Check {
+	if e != Postgres {
+		return Check{}
+	}
+	psql := fmt.Sprintf(`compose exec -T %s sh -c 'exec psql -At -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}" -c "%%s"'`, service)
+	return Check{
+		Rows: fmt.Sprintf(psql, `SELECT table_name, (xpath(\$q\$/row/c/text()\$q\$, query_to_xml(format(\$q\$SELECT count(*) AS c FROM %I.%I\$q\$, table_schema, table_name), false, true, \$q\$\$q\$)))[1]::text `+
+			`FROM information_schema.tables WHERE table_schema = \$q\$public\$q\$ AND table_type = \$q\$BASE TABLE\$q\$ ORDER BY 1`),
+		Columns: fmt.Sprintf(psql, `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = \$q\$public\$q\$ ORDER BY 1, ordinal_position`),
+		Locks: fmt.Sprintf(psql, `SELECT c.relname, l.mode FROM pg_locks l JOIN pg_class c ON c.oid = l.relation `+
+			`WHERE l.granted AND c.relkind = \$q\$r\$q\$ AND c.relnamespace = \$q\$public\$q\$::regnamespace `+
+			`AND l.mode IN (\$q\$AccessExclusiveLock\$q\$, \$q\$ExclusiveLock\$q\$, \$q\$ShareRowExclusiveLock\$q\$, \$q\$ShareLock\$q\$)`),
+	}
+}
+
 // SuggestSnapshot writes the two commands for a database service.
 //
 // They read the credentials from the container's own environment --

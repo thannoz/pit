@@ -362,3 +362,10 @@ func TestMigrationPatternsAreChecked(t *testing.T) {
 		t.Errorf("message:\n%s", msg)
 	}
 }
+
+func TestCheckCommandsAreChecked(t *testing.T) {
+	err := loadBroken(t, "web:\n  service: web\n  port: 80\ndata:\n  check:\n    rows: \"compose exec -T db psql -c 'SELECT\"\n", nil)
+	if !strings.Contains(err.Error(), "data.check.rows") {
+		t.Errorf("message:\n%s", err)
+	}
+}

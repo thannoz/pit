@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thannoz/pit/internal/analysis"
+	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/workspace"
@@ -26,6 +27,16 @@ type MigrationCheck struct {
 	Took time.Duration
 	// Failed is why they failed; nil when they ran through.
 	Failed error
+	// Rows are the rows the base's data had, when data.check counts
+	// them.
+	Rows int64
+	// Losses are the data the migrations took away, and Locks the
+	// tables they made others wait for.
+	Losses []Loss
+	Locks  []Lock
+	// Unseen says why pit could not look at the data, when it could
+	// not: data.check is not configured, or its commands failed.
+	Unseen string
 }
 
 // Ran reports whether there was anything to run: a pull request that
@@ -94,15 +105,28 @@ func (m *Manager) CheckMigrations(ctx context.Context, req UpRequest, rep Report
 	}
 	check.Scenario = baseBox.Scenario
 
+	// What the data is before: to compare with after, and to say how
+	// much data the migrations ran on.
+	look := checkOf(baseBox.Worktree, req.Config)
+	before, seen := m.lookAt(ctx, baseBox, look, &check)
+	check.Rows = before.total()
+
 	// To the pull request, keeping the data: it is the scenario the
-	// base has, and nobody is asked whether to load it again.
+	// base has, and nobody is asked whether to load it again. The
+	// locks are watched while the migrations run, and only then.
 	req.Base = false
+	var watch *lockWatch
 	timer := &stepTimer{Reporter: rep, step: "migrate"}
+	if seen && look.Locks != "" {
+		timer.onBegin = func() { watch = m.watchLocks(ctx, baseBox, look.Locks, lockLook) }
+		timer.onEnd = func() { check.Locks = watch.locks() }
+	}
 	_, err = m.Up(ctx, req, timer)
 	switch {
 	case timer.done:
 		check.Took = timer.took
 	case timer.running:
+		timer.end()
 		check.Took, check.Failed = time.Since(timer.began), err
 		if ctx.Err() != nil {
 			return check, ctx.Err()
@@ -117,7 +141,44 @@ func (m *Manager) CheckMigrations(ctx context.Context, req UpRequest, rep Report
 		// request not answering -- is not theirs, and not this check's.
 		rep.Note("the migrations ran; after them: %v", err)
 	}
+	if seen && ctx.Err() == nil {
+		// The pull request's own commands, where it has them: it may
+		// be the one that adds them.
+		if after, ok := m.lookAt(ctx, baseBox, checkOf(baseBox.Worktree, &config.Config{Data: config.Data{Check: look}}), &check); ok {
+			check.Losses = losses(before, after)
+		}
+	}
 	return check, ctx.Err()
+}
+
+// lockLook is how often the locks are looked at while migrations run.
+const lockLook = 100 * time.Millisecond
+
+// checkOf is the data.check of the configuration in a worktree, or the
+// fallback's when it has none.
+func checkOf(worktree string, fallback *config.Config) config.Check {
+	if cfg, _, err := config.LoadFrom(worktree); err == nil && !cfg.Data.Check.Empty() {
+		return cfg.Data.Check
+	}
+	if fallback != nil {
+		return fallback.Data.Check
+	}
+	return config.Check{}
+}
+
+// lookAt asks what the data is, and says in the check why not when it
+// cannot.
+func (m *Manager) lookAt(ctx context.Context, box state.Sandbox, c config.Check, check *MigrationCheck) (shape, bool) {
+	if c.Rows == "" && c.Columns == "" {
+		check.Unseen = "data.check is not configured, so pit cannot count what the migrations do to the data"
+		return shape{}, false
+	}
+	s, err := m.shapeOf(ctx, box, c)
+	if err != nil {
+		check.Unseen = err.Error()
+		return shape{}, false
+	}
+	return s, true
 }
 
 // recorded is the sandbox in a slot, if there is one.
@@ -137,20 +198,26 @@ func (m *Manager) dropRefs(ctx context.Context, req UpRequest) {
 	}
 }
 
-// stepTimer times one step, passing everything on.
+// stepTimer times one step, passing everything on, and says when it
+// begins and ends.
 type stepTimer struct {
 	Reporter
-	step          string
-	current       string
-	began         time.Time
-	took          time.Duration
-	running, done bool
+	step           string
+	current        string
+	began          time.Time
+	took           time.Duration
+	running, done  bool
+	onBegin, onEnd func()
+	ended          bool
 }
 
 func (t *stepTimer) Begin(name string, streams bool) {
 	t.current = name
-	if name == t.step && !t.done {
+	if name == t.step && !t.done && !t.running {
 		t.began, t.running = time.Now(), true
+		if t.onBegin != nil {
+			t.onBegin()
+		}
 	}
 	t.Reporter.Begin(name, streams)
 }
@@ -158,6 +225,15 @@ func (t *stepTimer) Begin(name string, streams bool) {
 func (t *stepTimer) Done(format string, args ...any) {
 	if t.current == t.step && t.running {
 		t.took, t.running, t.done = time.Since(t.began), false, true
+		t.end()
 	}
 	t.Reporter.Done(format, args...)
+}
+
+// end says the step is over, once.
+func (t *stepTimer) end() {
+	if !t.ended && t.onEnd != nil && !t.began.IsZero() {
+		t.ended = true
+		t.onEnd()
+	}
 }

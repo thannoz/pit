@@ -75,6 +75,9 @@ func (c *Config) commands() []command {
 		{"data.snapshot.save", c.Data.Snapshot.Save},
 		{"data.snapshot.restore", c.Data.Snapshot.Restore},
 		{"data.snapshot.writes", c.Data.Snapshot.Writes},
+		{"data.check.rows", c.Data.Check.Rows},
+		{"data.check.columns", c.Data.Check.Columns},
+		{"data.check.locks", c.Data.Check.Locks},
 		{"data.production_like.fetch", c.Data.ProductionLike.Fetch},
 	} {
 		if s.line == "" {

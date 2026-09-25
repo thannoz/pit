@@ -383,3 +383,50 @@ func TestInitSnapshotExampleWithoutADatabase(t *testing.T) {
 		t.Errorf("the example claims to know the database:\n%s", written)
 	}
 }
+
+// For PostgreSQL the file suggests what pit migrate-check counts with;
+// uncommented, it is what .pit.yaml then holds.
+func TestInitWritesCheckCommandsForPostgres(t *testing.T) {
+	dir := inProject(t, "services:\n  db:\n    image: postgres:17\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n")
+	if _, err := runInitCmd(t, "", "--service", "web", "--port", "80"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	path := filepath.Join(dir, config.FileName)
+	written, _ := os.ReadFile(path)
+	lines := strings.Split(string(written), "\n")
+	found := false
+	for i, l := range lines {
+		if strings.HasPrefix(l, "  # check:") {
+			found = true
+			lines[i] = "  check:"
+			for j := i + 1; j < len(lines) && strings.HasPrefix(lines[j], "  #   "); j++ {
+				lines[j] = "  " + strings.TrimPrefix(lines[j], "  # ")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no check block:\n%s", written)
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("uncommented, the file does not validate: %v", err)
+	}
+	if want := config.SuggestCheck("db", config.Postgres); !reflect.DeepEqual(c.Data.Check, want) {
+		t.Errorf("Check\n got %#v\nwant %#v", c.Data.Check, want)
+	}
+}
+
+// For a database pit knows no counting commands for, none are suggested.
+func TestInitSuggestsNoCheckItCannotWrite(t *testing.T) {
+	dir := inProject(t, "services:\n  store:\n    image: mariadb:11\n  web:\n    image: nginx\n    ports: [\"8080:80\"]\n")
+	if _, err := runInitCmd(t, "", "--service", "web", "--port", "80"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if written, _ := os.ReadFile(filepath.Join(dir, config.FileName)); strings.Contains(string(written), "# check:") {
+		t.Errorf("a check for MariaDB:\n%s", written)
+	}
+}

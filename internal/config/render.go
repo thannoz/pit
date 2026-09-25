@@ -61,6 +61,7 @@ func Render(o InitOptions) ([]byte, error) {
 		Engine:      engine,
 		Recognised:  known,
 		Snapshot:    SuggestSnapshot(orElse(db, "db"), engine),
+		Check:       SuggestCheck(orElse(db, "db"), engine),
 	}); err != nil {
 		return nil, errs.Wrap(err, "cannot write the configuration")
 	}
@@ -79,7 +80,10 @@ type view struct {
 	// Snapshot are the snapshot commands for Engine, which is the
 	// database the image showed when Recognised, and an example
 	// otherwise.
-	Snapshot   Snapshot
+	Snapshot Snapshot
+	// Check are the commands pit migrate-check counts with, where pit
+	// knows them for Engine.
+	Check      Check
 	Engine     Engine
 	Recognised bool
 }
@@ -216,6 +220,19 @@ data:
   #   # changed since it was loaded.
   #   writes: >-
   #     {{ .Snapshot.Writes }}
+{{- end }}
+{{- if not .Check.Empty }}
+
+  # What "pit migrate-check" counts before and after a pull request's
+  # migrations, to say what they take away, and the locks it watches
+  # while they run: the tables of the public schema.
+  # check:
+  #   rows: >-
+  #     {{ .Check.Rows }}
+  #   columns: >-
+  #     {{ .Check.Columns }}
+  #   locks: >-
+  #     {{ .Check.Locks }}
 {{- end }}
 
 # Environment for the sandbox's services. from_file points at a template

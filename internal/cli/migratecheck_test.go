@@ -43,6 +43,7 @@ var passed = sandbox.MigrationCheck{
 	BaseSHA: "8c21f0d1e2b3a495", HeadSHA: "a3f91c2e4b7d8091", Scenario: "standard",
 	Migrations: analysis.Migrations{New: []analysis.File{migration("migrations/0042_add_vat_id_to_orders.sql")}},
 	Took:       1430 * time.Millisecond,
+	Rows:       20431,
 }
 
 // TestMigrateCheckOutput is the output half of T-906's criterion: what
@@ -53,10 +54,11 @@ func TestMigrateCheckOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "  Base:        main @ 8c21f0d, scenario \"standard\"\n" +
+	want := "  Base:        main @ 8c21f0d, scenario \"standard\" (20431 rows)\n" +
 		"  Migration:   migrations/0042_add_vat_id_to_orders.sql\n" +
 		"\n" +
-		"  ✓ ran through  1.4s\n"
+		"  ✓ ran through  1.4s\n" +
+		"  ✓ no data lost\n"
 	if out != want {
 		t.Errorf("output\n%s\nwant\n%s", out, want)
 	}
@@ -111,5 +113,47 @@ func TestMigrateCheckErrors(t *testing.T) {
 	}
 	if _, _, err := run(t, "migrate-check", "482", "--base"); err == nil {
 		t.Error("--base accepted")
+	}
+}
+
+// TestMigrateCheckReportsWhatWasLost is the output half of T-907: a
+// migration that takes data away, or makes others wait, is said so.
+func TestMigrateCheckReportsWhatWasLost(t *testing.T) {
+	c := passed
+	c.Locks = []sandbox.Lock{{Table: "orders", Mode: "AccessExclusiveLock", Held: 1100 * time.Millisecond}, {Table: "customers", Mode: "ShareLock"}}
+	c.Losses = []sandbox.Loss{
+		{Table: "customers", Column: "tax_code", Rows: 431},
+		{Table: "legacy_orders", Rows: 12, Dropped: true},
+		{Table: "orders", Rows: 5},
+	}
+	withCheck(t, c, nil)
+	out, _, err := run(t, "migrate-check", "482")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "  ✓ ran through  1.4s\n" +
+		"  ! orders locked for 1.1s (reads and writes wait)\n" +
+		"  ! customers locked briefly (writes wait)\n" +
+		"  ! column customers.tax_code removed — 431 rows had it\n" +
+		"  ! table legacy_orders removed — 12 rows gone\n" +
+		"  ! orders lost 5 rows\n"
+	if !strings.HasSuffix(out, want) {
+		t.Errorf("output\n%s\nwant it to end\n%s", out, want)
+	}
+	out, _, _ = run(t, "migrate-check", "482", "--json")
+	var r migrationCheckJSON
+	if json.Unmarshal([]byte(out), &r) != nil || len(r.Losses) != 3 || !r.Losses[1].Dropped || len(r.Locks) != 2 || r.Locks[0].HeldMS != 1100 || r.Rows != 20431 {
+		t.Errorf("json:\n%s", out)
+	}
+}
+
+func TestMigrateCheckThatCouldNotLook(t *testing.T) {
+	c := passed
+	c.Rows, c.Unseen = 0, "data.check is not configured, so pit cannot count what the migrations do to the data"
+	withCheck(t, c, nil)
+	out, _, err := run(t, "migrate-check", "482")
+	if err != nil || strings.Contains(out, "rows)") || strings.Contains(out, "no data lost") ||
+		!strings.Contains(out, "  ? data.check is not configured") {
+		t.Errorf("%v:\n%s", err, out)
 	}
 }

@@ -32,3 +32,13 @@ data:
       compose exec -T db sh -c 'U="${POSTGRES_USER:-postgres}"; D="${POSTGRES_DB:-$U}"; psql -q -v ON_ERROR_STOP=1 -U "$U" -d "$D" -c "SET client_min_messages TO warning" -c "DO \$\$ DECLARE s name; BEGIN FOR s IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE \$p\$pg\_%\$p\$ AND nspname <> \$p\$information_schema\$p\$ LOOP EXECUTE format(\$f\$DROP SCHEMA %I CASCADE\$f\$, s); END LOOP; END \$\$" -c "CREATE SCHEMA public" && exec psql -q -o /dev/null -v ON_ERROR_STOP=1 -U "$U" -d "$D"'
     writes: >-
       compose exec -T db sh -c 'exec psql -At -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}" -c "SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) FROM pg_stat_user_tables"'
+
+  # pit migrate-check counts these before and after a pull request's
+  # migrations, and watches the locks while they run.
+  check:
+    rows: >-
+      compose exec -T db sh -c 'exec psql -At -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}" -c "SELECT table_name, (xpath(\$q\$/row/c/text()\$q\$, query_to_xml(format(\$q\$SELECT count(*) AS c FROM %I.%I\$q\$, table_schema, table_name), false, true, \$q\$\$q\$)))[1]::text FROM information_schema.tables WHERE table_schema = \$q\$public\$q\$ AND table_type = \$q\$BASE TABLE\$q\$ ORDER BY 1"'
+    columns: >-
+      compose exec -T db sh -c 'exec psql -At -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}" -c "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = \$q\$public\$q\$ ORDER BY 1, ordinal_position"'
+    locks: >-
+      compose exec -T db sh -c 'exec psql -At -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-${POSTGRES_USER:-postgres}}" -c "SELECT c.relname, l.mode FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE l.granted AND c.relkind = \$q\$r\$q\$ AND c.relnamespace = \$q\$public\$q\$::regnamespace AND l.mode IN (\$q\$AccessExclusiveLock\$q\$, \$q\$ExclusiveLock\$q\$, \$q\$ShareRowExclusiveLock\$q\$, \$q\$ShareLock\$q\$)"'

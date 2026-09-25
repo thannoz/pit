@@ -87,6 +87,9 @@ func writeMigrationCheck(out *ui.Printer, pr int, baseBranch string, c sandbox.M
 	if c.Scenario != "" {
 		data = "scenario " + quote(c.Scenario)
 	}
+	if c.Unseen == "" {
+		data += " (" + plural(int(c.Rows), "row", "rows") + ")"
+	}
 	out.Printf("  Base:        %s @ %s, %s\n", orElse(baseBranch, "default branch"), short(c.BaseSHA), data)
 	if len(c.Migrations.New) > 0 {
 		out.Printf("  %s %s\n", pad(pick(len(c.Migrations.New), "Migration:", "Migrations:"), 12), fileNames(c.Migrations.New))
@@ -101,20 +104,73 @@ func writeMigrationCheck(out *ui.Printer, pr int, baseBranch string, c sandbox.M
 		return
 	}
 	out.Printf("  ✓ ran through  %s\n", seconds(c.Took))
+	for _, l := range c.Locks {
+		out.Printf("  ! %s locked %s (%s)\n", l.Table, heldFor(l.Held), waits(l.Mode))
+	}
+	for _, l := range c.Losses {
+		switch {
+		case l.Dropped:
+			out.Printf("  ! table %s removed — %s gone\n", l.Table, plural(int(l.Rows), "row", "rows"))
+		case l.Column != "":
+			out.Printf("  ! column %s.%s removed — %s had it\n", l.Table, l.Column, plural(int(l.Rows), "row", "rows"))
+		default:
+			out.Printf("  ! %s lost %s\n", l.Table, plural(int(l.Rows), "row", "rows"))
+		}
+	}
+	switch {
+	case c.Unseen != "":
+		out.Printf("  ? %s\n", c.Unseen)
+	case len(c.Losses) == 0:
+		out.Printf("  ✓ no data lost\n")
+	}
+}
+
+// heldFor says how long pit saw a lock held: a lock seen at one look
+// only was held for less than the time between two.
+func heldFor(d time.Duration) string {
+	if d <= 0 {
+		return "briefly"
+	}
+	return "for " + seconds(d)
+}
+
+// waits says who waits for a lock of a mode: PostgreSQL's names.
+func waits(mode string) string {
+	if mode == "AccessExclusiveLock" {
+		return "reads and writes wait"
+	}
+	return "writes wait"
 }
 
 type migrationCheckJSON struct {
-	PR         int      `json:"pr"`
-	BaseBranch string   `json:"baseBranch,omitempty"`
-	BaseSHA    string   `json:"baseSha"`
-	HeadSHA    string   `json:"headSha"`
-	Scenario   string   `json:"scenario,omitempty"`
-	New        []string `json:"new"`
-	Changed    []string `json:"changed"`
-	Removed    []string `json:"removed"`
-	Ran        bool     `json:"ran"`
-	TookMS     int64    `json:"tookMs"`
-	Failed     string   `json:"failed,omitempty"`
+	PR         int        `json:"pr"`
+	BaseBranch string     `json:"baseBranch,omitempty"`
+	BaseSHA    string     `json:"baseSha"`
+	HeadSHA    string     `json:"headSha"`
+	Scenario   string     `json:"scenario,omitempty"`
+	New        []string   `json:"new"`
+	Changed    []string   `json:"changed"`
+	Removed    []string   `json:"removed"`
+	Ran        bool       `json:"ran"`
+	TookMS     int64      `json:"tookMs"`
+	Failed     string     `json:"failed,omitempty"`
+	Rows       int64      `json:"rows"`
+	Losses     []lossJSON `json:"losses"`
+	Locks      []lockJSON `json:"locks"`
+	Unseen     string     `json:"unseen,omitempty"`
+}
+
+type lossJSON struct {
+	Table   string `json:"table"`
+	Column  string `json:"column,omitempty"`
+	Rows    int64  `json:"rows"`
+	Dropped bool   `json:"dropped,omitempty"`
+}
+
+type lockJSON struct {
+	Table  string `json:"table"`
+	Mode   string `json:"mode"`
+	HeldMS int64  `json:"heldMs"`
 }
 
 func migrationJSON(pr int, baseBranch string, c sandbox.MigrationCheck) migrationCheckJSON {
@@ -123,6 +179,14 @@ func migrationJSON(pr int, baseBranch string, c sandbox.MigrationCheck) migratio
 		Ran: c.Ran(), TookMS: c.Took.Milliseconds()}
 	if c.Failed != nil {
 		j.Failed = c.Failed.Error()
+	}
+	j.Rows, j.Unseen = c.Rows, c.Unseen
+	j.Losses, j.Locks = []lossJSON{}, []lockJSON{}
+	for _, l := range c.Losses {
+		j.Losses = append(j.Losses, lossJSON{Table: l.Table, Column: l.Column, Rows: l.Rows, Dropped: l.Dropped})
+	}
+	for _, l := range c.Locks {
+		j.Locks = append(j.Locks, lockJSON{Table: l.Table, Mode: l.Mode, HeldMS: l.Held.Milliseconds()})
 	}
 	return j
 }

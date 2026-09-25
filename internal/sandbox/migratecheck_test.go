@@ -185,3 +185,89 @@ func TestCheckAfterOneThatDidNotFinish(t *testing.T) {
 	}
 	assertCheckGone(t, m, req)
 }
+
+// withDestruction makes #7's migration take data away, and the check
+// commands tell by the worktree -- the pull request's has the migration
+// -- what the database would hold. While the migration runs, orders is
+// locked.
+func withDestruction(t *testing.T, check bool) (*sandbox.Manager, sandbox.UpRequest) {
+	t.Helper()
+	m, req, _ := withMigration(t, `"sh -c 'if test -f migrations/002_add_vat.sql; then touch .locked; sleep 0.6; rm .locked; fi'"`)
+	if !check {
+		return m, req
+	}
+	req.Config.Data.Check = config.Check{
+		Rows:    `sh -c 'if test -f migrations/002_add_vat.sql; then printf "orders|40\ncustomers|431\n"; else printf "orders|43\ncustomers|431\nlegacy|12\n"; fi'`,
+		Columns: `sh -c 'if test -f migrations/002_add_vat.sql; then printf "orders|id\ncustomers|id\n"; else printf "orders|id\ncustomers|id\ncustomers|tax_code\nlegacy|id\n"; fi'`,
+		Locks:   `sh -c 'if test -f .locked; then printf "orders|AccessExclusiveLock\n"; fi'`,
+	}
+	return m, req
+}
+
+// TestADestructiveMigration is the acceptance criterion for T-907: a
+// migration that takes data away is reported as one -- the table, the
+// column, the rows -- and so is the lock it holds.
+func TestADestructiveMigration(t *testing.T) {
+	m, req := withDestruction(t, true)
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || check.Failed != nil {
+		t.Fatalf("%v, %v", err, check.Failed)
+	}
+	if check.Rows != 486 || check.Unseen != "" {
+		t.Errorf("rows %d, unseen %q", check.Rows, check.Unseen)
+	}
+	want := []sandbox.Loss{
+		{Table: "customers", Column: "tax_code", Rows: 431},
+		{Table: "legacy", Rows: 12, Dropped: true},
+		{Table: "orders", Rows: 3},
+	}
+	if len(check.Losses) != len(want) {
+		t.Fatalf("losses %+v", check.Losses)
+	}
+	for i := range want {
+		if check.Losses[i] != want[i] {
+			t.Errorf("loss %d = %+v", i, check.Losses[i])
+		}
+	}
+	if len(check.Locks) != 1 || check.Locks[0].Table != "orders" || check.Locks[0].Mode != "AccessExclusiveLock" ||
+		check.Locks[0].Held < 200*time.Millisecond || check.Locks[0].Held > time.Second {
+		t.Errorf("locks %+v", check.Locks)
+	}
+}
+
+// Without data.check, pit says it could not look.
+func TestAMigrationCheckWithoutDataCheck(t *testing.T) {
+	m, req := withDestruction(t, false)
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || !strings.Contains(check.Unseen, "data.check is not configured") || len(check.Losses) != 0 || len(check.Locks) != 0 {
+		t.Errorf("%+v, %v", check, err)
+	}
+}
+
+// A check command that fails is said, and the migrations still run.
+func TestAMigrationCheckWhoseCountFails(t *testing.T) {
+	m, req := withDestruction(t, true)
+	req.Config.Data.Check.Rows = `sh -c 'echo relation does not exist >&2; exit 1'`
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || check.Failed != nil || !strings.Contains(check.Unseen, "relation does not exist") || check.Took <= 0 {
+		t.Errorf("%+v, %v", check, err)
+	}
+}
+
+// Counts come as psql prints them, with "|", or as mysql does, with
+// tabs; one that is not a number is said.
+func TestCheckCommandsOutput(t *testing.T) {
+	m, req := withDestruction(t, true)
+	req.Config.Data.Check.Rows = `sh -c 'printf "orders\t43\ncustomers\t431\n"'`
+	req.Config.Data.Check.Columns = ""
+	req.Config.Data.Check.Locks = ""
+	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || check.Rows != 474 || check.Unseen != "" {
+		t.Errorf("rows %d, unseen %q, %v", check.Rows, check.Unseen, err)
+	}
+	req.Config.Data.Check.Rows = `sh -c 'printf "orders|many\n"'`
+	check, err = m.CheckMigrations(t.Context(), req, &quietReporter{})
+	if err != nil || !strings.Contains(check.Unseen, `printed "many" for orders, which is not a number of rows`) {
+		t.Errorf("unseen %q, %v", check.Unseen, err)
+	}
+}

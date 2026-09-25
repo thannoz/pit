@@ -103,6 +103,9 @@ type Data struct {
 	// is a different problem from a hook that fails: it is the change
 	// under review often enough to deserve being named.
 	Migrate []string `yaml:"migrate"`
+	// Check says how pit migrate-check sees what migrations do to the
+	// data: how many rows, which columns, which locks.
+	Check Check `yaml:"check"`
 	// Migrations are glob patterns for the files that are migrations,
 	// for a project whose migrations live where pit would not look:
 	// "db/schema/*.sql". Empty lets pit go by the usual places.
@@ -145,6 +148,21 @@ type Snapshot struct {
 	// Parts is the list form: one pair of commands for each database.
 	Parts []SnapshotPart
 }
+
+// Check is three commands that each print one line per thing, its
+// fields separated by "|" or a tab: psql -A's format.
+type Check struct {
+	// Rows prints each table and how many rows it has.
+	Rows string `yaml:"rows"`
+	// Columns prints each table and one of its columns.
+	Columns string `yaml:"columns"`
+	// Locks prints each table locked right now in a way that makes
+	// others wait, and how.
+	Locks string `yaml:"locks"`
+}
+
+// Empty reports whether nothing is configured.
+func (c Check) Empty() bool { return c.Rows == "" && c.Columns == "" && c.Locks == "" }
 
 // SnapshotPart is the commands for one of several databases.
 type SnapshotPart struct {
