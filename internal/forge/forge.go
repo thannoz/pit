@@ -87,6 +87,15 @@ type Forge interface {
 	PullRequest(ctx context.Context, number int) (PR, error)
 }
 
+// Commenter posts comments on pull requests. It is apart from Forge
+// because not every forge can: pit reads a pull request from a plain
+// git server by its commits, and there is nowhere there to comment.
+type Commenter interface {
+	// Comment posts a comment, in Markdown, on a pull request and
+	// returns where it can be seen.
+	Comment(ctx context.Context, number int, body string) (string, error)
+}
+
 // parseState maps a service's own spelling onto pit's.
 func parseState(raw string) State {
 	switch strings.ToLower(raw) {

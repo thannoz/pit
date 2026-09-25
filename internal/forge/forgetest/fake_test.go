@@ -65,3 +65,17 @@ func TestFakeCanFailOutright(t *testing.T) {
 		t.Errorf("err = %v, want the scripted failure", err)
 	}
 }
+
+func TestFakeTakesComments(t *testing.T) {
+	f := forgetest.New()
+	url, err := f.Comment(t.Context(), 482, "hello")
+	if err != nil || url != "https://github.com/acme/shop/pull/482#issuecomment-1" {
+		t.Errorf("url %q, err %v", url, err)
+	}
+	if _, err := f.Comment(t.Context(), 7, "hello"); err == nil {
+		t.Error("a comment on a pull request the fake does not know")
+	}
+	if got := f.Comments(); len(got) != 1 || got[0] != (forgetest.Comment{Number: 482, Body: "hello"}) {
+		t.Errorf("comments = %+v", got)
+	}
+}

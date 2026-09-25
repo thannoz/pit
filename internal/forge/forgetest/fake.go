@@ -4,6 +4,7 @@ package forgetest
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/thannoz/pit/internal/errs"
@@ -19,7 +20,14 @@ type Fake struct {
 	// Err, when set, is returned instead of any answer.
 	Err error
 
-	asked []int
+	asked    []int
+	comments []Comment
+}
+
+// Comment is one comment the fake was asked to post.
+type Comment struct {
+	Number int
+	Body   string
 }
 
 // New returns a Fake holding one ordinary open pull request, which is
@@ -45,7 +53,10 @@ func New(prs ...forge.PR) *Fake {
 	return f
 }
 
-var _ forge.Forge = (*Fake)(nil)
+var (
+	_ forge.Forge     = (*Fake)(nil)
+	_ forge.Commenter = (*Fake)(nil)
+)
 
 // PullRequest returns the stored pull request.
 func (f *Fake) PullRequest(_ context.Context, number int) (forge.PR, error) {
@@ -70,4 +81,27 @@ func (f *Fake) Asked() []int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]int(nil), f.asked...)
+}
+
+// Comment keeps the comment and says where it would be.
+func (f *Fake) Comment(_ context.Context, number int, body string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.Err != nil {
+		return "", f.Err
+	}
+	pr, ok := f.PRs[number]
+	if !ok {
+		return "", errs.New("no pull request #%d", number)
+	}
+	f.comments = append(f.comments, Comment{Number: number, Body: body})
+	return fmt.Sprintf("%s#issuecomment-%d", pr.URL, len(f.comments)), nil
+}
+
+// Comments returns the comments posted, in order.
+func (f *Fake) Comments() []Comment {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Comment(nil), f.comments...)
 }

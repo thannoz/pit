@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/proc"
@@ -91,6 +92,63 @@ func (g GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 		Draft:      raw.IsDraft,
 		URL:        raw.URL,
 	}, nil
+}
+
+// MaxComment is the longest comment GitHub takes, in characters.
+const MaxComment = 65536
+
+var _ Commenter = GitHub{}
+
+// Comment posts a comment on a pull request through gh. The body goes
+// in on standard input: an argument would be limited in length and
+// visible to every process on the machine.
+func (g GitHub) Comment(ctx context.Context, number int, body string) (string, error) {
+	if number <= 0 {
+		return "", errs.New("%d is not a pull request number", number)
+	}
+	if strings.TrimSpace(body) == "" {
+		return "", errs.New("there is nothing to say in the comment")
+	}
+	if n := utf8.RuneCountInString(body); n > MaxComment {
+		return "", errs.New("the comment is %d characters long; GitHub takes at most %d", n, MaxComment)
+	}
+
+	args := []string{"pr", "comment", strconv.Itoa(number), "--body-file", "-"}
+	if g.Repo != "" {
+		args = append(args, "--repo", g.Repo)
+	}
+	out, err := g.Runner.Output(ctx, proc.Command{Name: "gh", Args: args, Stdin: strings.NewReader(body)})
+	if err != nil {
+		return "", describeCommentFailure(err, number, g.Repo)
+	}
+	// gh prints where the comment is.
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "https://") {
+			return line, nil
+		}
+	}
+	return "", nil
+}
+
+// describeCommentFailure is describeFailure for a comment, which can
+// also fail because the conversation is locked or the account may not
+// write there.
+func describeCommentFailure(err error, number int, repo string) error {
+	text := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(text, "locked"):
+		return errs.Wrap(err, "the conversation on #%d is locked", number).
+			WithHint("only people with write access can comment on it now")
+	case strings.Contains(text, "resource not accessible") || strings.Contains(text, "forbidden") ||
+		strings.Contains(text, "http 403"):
+		return errs.Wrap(err, "gh may not comment on #%d", number).
+			WithHint("check that the account gh is logged in with can see the repository; `gh auth status` shows which one it is")
+	}
+	failure := describeFailure(err, number, repo)
+	if hinted := errs.Hint(failure); hinted == "" {
+		return errs.Wrap(err, "cannot comment on pull request #%d", number)
+	}
+	return failure
 }
 
 // describeFailure turns gh's exit into something a reviewer can act on.
