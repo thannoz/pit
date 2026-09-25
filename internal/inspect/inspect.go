@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	goruntime "runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +60,9 @@ type Problem struct {
 type Report struct {
 	URL      string    `json:"url"`
 	Problems []Problem `json:"problems"`
+	// Pending are requests still unanswered when pit stopped waiting:
+	// a page that never finishes loading says something too.
+	Pending []string `json:"pending,omitempty"`
 }
 
 // Errors counts the problems that are errors rather than warnings.
@@ -148,7 +152,7 @@ func Capture(ctx context.Context, url string, o Options) (Report, error) {
 			WithHint("`pit ls` shows whether the sandbox is running")
 	}
 	rec.settle(bctx, o.Settle, o.Quiet)
-	return Report{URL: url, Problems: rec.problems()}, nil
+	return Report{URL: url, Problems: rec.problems(), Pending: rec.pending()}, nil
 }
 
 // recorder turns the browser's events into problems.
@@ -177,6 +181,19 @@ func (r *recorder) problems() []Problem {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]Problem(nil), r.found...)
+}
+
+func (r *recorder) pending() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for id := range r.inflight {
+		if req := r.requests[id]; req != nil {
+			out = append(out, req.Method+" "+req.URL)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 func (r *recorder) handle(ev any) {

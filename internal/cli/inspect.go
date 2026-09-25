@@ -119,6 +119,11 @@ func recordBrowsing(m *sandbox.Manager, box state.Sandbox, span state.Span) erro
 }
 
 func writeInspection(out *ui.Printer, r inspect.Report) {
+	defer func() {
+		for _, p := range r.Pending {
+			out.Printf("  … %s  still unanswered when pit stopped waiting\n", p)
+		}
+	}()
 	if len(r.Problems) == 0 {
 		out.Printf("Nothing went wrong on %s.\n", r.URL)
 		return

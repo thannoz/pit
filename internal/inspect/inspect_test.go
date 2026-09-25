@@ -130,21 +130,32 @@ func TestCaptureWaitsForWhatIsInFlight(t *testing.T) {
 	if p, ok := find(r, Request, "/api/slow"); !ok || p.Status != 502 {
 		t.Errorf("slow = %+v, found %v: %+v", p, ok, r.Problems)
 	}
+
+	// Waited for as long as allowed, and not answered: said so.
+	r, err = Capture(t.Context(), srv.URL+"/", Options{Browser: path, Settle: 300 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Pending) != 1 || !strings.HasSuffix(r.Pending[0], "/api/slow") || !strings.HasPrefix(r.Pending[0], "GET ") {
+		t.Errorf("pending = %v", r.Pending)
+	}
 }
 
 func TestCaptureOfACleanPage(t *testing.T) {
 	path := browser(t)
 	srv := site(t, map[string]string{"/{$}": `<html><body><h1>Fine</h1><script>console.log("hello")</script></body></html>`})
+	// A generous limit, so that waiting until it is the failure and a
+	// slow machine starting Chrome is not.
 	start := time.Now()
-	r, err := Capture(t.Context(), srv.URL+"/", Options{Browser: path})
+	r, err := Capture(t.Context(), srv.URL+"/", Options{Browser: path, Settle: 20 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Problems) != 0 {
-		t.Errorf("problems on a clean page: %+v", r.Problems)
+	if len(r.Problems) != 0 || len(r.Pending) != 0 {
+		t.Errorf("problems on a clean page: %+v, pending %v", r.Problems, r.Pending)
 	}
-	if took := time.Since(start); took > 4*time.Second {
-		t.Errorf("a quiet page took %v to settle", took)
+	if took := time.Since(start); took > 12*time.Second {
+		t.Errorf("a quiet page took %v to settle; pending %v", took, r.Pending)
 	}
 }
 
