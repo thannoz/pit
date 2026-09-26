@@ -5,6 +5,7 @@
 package hooks
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/thannoz/pit/internal/proc"
@@ -26,6 +27,10 @@ type Sandbox struct {
 	// processes has no containers to keep its settings, so the
 	// commands are given them.
 	Env []string
+	// Kubectl are the flags that point kubectl at a sandbox in
+	// Kubernetes: a line that starts with kubectl is given them, as
+	// one that starts with compose is given the project.
+	Kubectl []string
 }
 
 // Expand turns one configured line into a command.
@@ -41,6 +46,9 @@ func Expand(line string, s Sandbox) (proc.Command, error) {
 		return proc.Command{}, err
 	}
 
+	if args[0] == "kubectl" && len(s.Kubectl) > 0 {
+		return proc.Command{Name: "kubectl", Args: append(slices.Clone(s.Kubectl), args[1:]...), Dir: s.Dir, Env: s.Env}, nil
+	}
 	if args[0] != Shorthand {
 		return proc.Command{Name: args[0], Args: args[1:], Dir: s.Dir, Env: s.Env}, nil
 	}

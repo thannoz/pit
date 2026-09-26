@@ -6,20 +6,25 @@ import (
 	"time"
 )
 
-// Either runs a sandbox with Compose, or as processes when it is one of
-// processes: which one is the sandbox's to say, so that every command
-// takes a sandbox down the way it was brought up.
+// Either runs a sandbox with Compose, as processes when it is one of
+// processes, or in Kubernetes when it is one there: which one is the
+// sandbox's to say, so that every command takes a sandbox down the way
+// it was brought up.
 type Either struct {
-	Compose   Runtime
-	Processes Runtime
+	Compose    Runtime
+	Processes  Runtime
+	Kubernetes Runtime
 }
 
 var _ Runtime = Either{}
 
 // of is the sandbox's runtime's.
 func (e Either) of(s Sandbox) Runtime {
-	if s.Processes {
+	switch {
+	case s.Processes:
 		return e.Processes
+	case s.Kubernetes:
+		return e.Kubernetes
 	}
 	return e.Compose
 }

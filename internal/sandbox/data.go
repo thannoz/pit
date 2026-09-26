@@ -23,7 +23,7 @@ func (m *Manager) ResetData(ctx context.Context, box state.Sandbox, sc data.Scen
 	rep.Begin("data", streaming)
 
 	in := commandsIn(box)
-	target := data.Sandbox{Project: in.Project, Files: in.Files, Dir: in.Dir, Env: in.Env}
+	target := data.Sandbox{Project: in.Project, Files: in.Files, Dir: in.Dir, Env: in.Env, Kubectl: in.Kubectl}
 	if err := m.Data.Apply(ctx, target, sc, rep.Stdout(), rep.Stderr()); err != nil {
 		return err
 	}

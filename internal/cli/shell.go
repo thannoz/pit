@@ -58,6 +58,9 @@ func runShell(c *cobra.Command, args []string) error {
 	if box.Processes {
 		return shellIn(c, box, command)
 	}
+	if box.Kubernetes {
+		return kubeShell(c, box, service, command)
+	}
 	if len(command) > 0 {
 		return execIn(c, box, service, command)
 	}

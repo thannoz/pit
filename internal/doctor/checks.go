@@ -53,6 +53,7 @@ func Default(env Environment) []Check {
 		env.portsAvailable(),
 		env.buildCache(),
 		env.configuration(),
+		env.kubernetes(),
 		env.strayProjects(),
 		env.browser(),
 	}
@@ -307,6 +308,34 @@ func (env Environment) configuration() Check {
 			return Finding{Name: name, Result: Fail, Detail: err.Error()}
 		}
 		return Finding{Name: name, Result: OK, Detail: path}
+	}
+}
+
+// kubernetes checks the tools a project in Kubernetes needs: kubectl,
+// and kind or k3d for pit's cluster. Anywhere else there is nothing to
+// check.
+func (env Environment) kubernetes() Check {
+	return func(ctx context.Context) Finding {
+		const name = "kubernetes"
+		path, err := config.Find(env.WorkDir)
+		if err != nil {
+			return Finding{Name: name, Result: OK, Detail: "not used here"}
+		}
+		c, err := config.Load(path)
+		if err != nil || !c.Kubernetes.On() {
+			return Finding{Name: name, Result: OK, Detail: "not used here"}
+		}
+		if _, err := env.Runner.Output(ctx, proc.Command{Name: "kubectl", Args: []string{"version", "--client"}}); err != nil {
+			return Finding{Name: name, Result: Fail, Detail: "kubectl not found on PATH",
+				Fix: "install kubectl: https://kubernetes.io/docs/tasks/tools/"}
+		}
+		for _, tool := range []string{"kind", "k3d"} {
+			if _, err := env.Runner.Output(ctx, proc.Command{Name: tool, Args: []string{"version"}}); err == nil {
+				return Finding{Name: name, Result: OK, Detail: "kubectl, and " + tool + " for pit's cluster"}
+			}
+		}
+		return Finding{Name: name, Result: Fail, Detail: "neither kind nor k3d found on PATH",
+			Fix: "install kind (https://kind.sigs.k8s.io) or k3d (https://k3d.io); pit makes its own cluster with one"}
 	}
 }
 

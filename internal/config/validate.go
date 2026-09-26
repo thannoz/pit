@@ -61,6 +61,7 @@ func (c *Config) validate(node *yaml.Node, dir, file string) error {
 	p = append(p, c.checkVersion(node)...)
 	p = append(p, c.checkWeb(node)...)
 	p = append(p, c.checkCompose(node, dir)...)
+	p = append(p, c.checkKubernetes(node, dir)...)
 	p = append(p, c.checkHealthcheck(node)...)
 	p = append(p, c.checkBuild(node)...)
 	p = append(p, c.checkData(node)...)
@@ -191,6 +192,70 @@ func (c *Config) checkCompose(node *yaml.Node, dir string) []Problem {
 		})
 	}
 	return p
+}
+
+func (c *Config) checkKubernetes(node *yaml.Node, dir string) []Problem {
+	var p []Problem
+	k := c.Kubernetes
+	if !k.On() {
+		if len(k.Images) > 0 {
+			p = append(p, Problem{
+				Line: lineOf(node, "kubernetes", "images"),
+				Path: "kubernetes.images",
+				Msg:  "is set without kubernetes.manifests; they are images the manifests use",
+			})
+		}
+		return p
+	}
+	if len(c.Compose.Files) > 0 || c.Devcontainer.File != "" || c.Processes.On() {
+		p = append(p, Problem{
+			Line: lineOf(node, "kubernetes", "manifests"),
+			Path: "kubernetes.manifests",
+			Msg:  "is set together with compose.files, devcontainer.file or processes.file; the services come from one of them",
+		})
+	}
+	for i, m := range k.Manifests {
+		if _, err := os.Stat(filepath.Join(dir, m)); err != nil {
+			p = append(p, Problem{
+				Line: lineOfIndex(node, i, "kubernetes", "manifests"),
+				Path: fmt.Sprintf("kubernetes.manifests[%d]", i),
+				Msg:  fmt.Sprintf("names %q, which does not exist", m),
+				Hint: "a file of manifests, a directory of them, or one kustomize builds; paths are relative to " + FileName,
+			})
+		}
+	}
+	seen := map[string]bool{}
+	for i, im := range k.Images {
+		path := fmt.Sprintf("kubernetes.images[%d]", i)
+		line := lineOfIndex(node, i, "kubernetes", "images")
+		switch {
+		case im.Name == "":
+			p = append(p, Problem{Line: line, Path: path + ".name",
+				Msg: "is not set; it is the image as the manifests name it", Hint: "for example shop-web, or ghcr.io/acme/web"})
+		case seen[im.Name]:
+			p = append(p, Problem{Line: line, Path: path + ".name", Msg: fmt.Sprintf("names %q a second time", im.Name)})
+		}
+		seen[im.Name] = true
+		ctx := filepath.Join(dir, im.Context)
+		if info, err := os.Stat(ctx); err != nil || !info.IsDir() {
+			p = append(p, Problem{Line: line, Path: path + ".context",
+				Msg: fmt.Sprintf("names %q, which is not a directory", im.Context), Hint: "the build context, relative to " + FileName})
+			continue
+		}
+		dockerfile := orDefault(im.Dockerfile, "Dockerfile")
+		if _, err := os.Stat(filepath.Join(ctx, dockerfile)); err != nil {
+			p = append(p, Problem{Line: line, Path: path + ".dockerfile",
+				Msg: fmt.Sprintf("%s has no %s", im.Context, dockerfile), Hint: "dockerfile is relative to the context"})
+		}
+	}
+	return p
+}
+
+func orDefault(s, fallback string) string {
+	if s != "" {
+		return s
+	}
+	return fallback
 }
 
 func (c *Config) checkHealthcheck(node *yaml.Node) []Problem {
@@ -472,6 +537,13 @@ func (c *Config) checkCommands(node *yaml.Node) []Problem {
 				Line: cmd.at(node), Path: cmd.Path,
 				Msg:  "runs through compose, and the services are processes, not a compose project",
 				Hint: "write the command as it runs in the worktree; PORT and PIT_PROJECT are set",
+			})
+		}
+		if c.Kubernetes.On() && !onHost(cmd.Line) {
+			p = append(p, Problem{
+				Line: cmd.at(node), Path: cmd.Path,
+				Msg:  "runs through compose, and the services are Kubernetes workloads, not a compose project",
+				Hint: "start it with kubectl instead: `kubectl exec deploy/db -- psql` runs in the sandbox's namespace",
 			})
 		}
 	}

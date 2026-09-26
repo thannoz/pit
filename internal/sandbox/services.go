@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/runtime/kube"
 	"github.com/thannoz/pit/internal/runtime/local"
 	"github.com/thannoz/pit/internal/suggest"
 )
@@ -122,6 +124,23 @@ func isolation(c *config.Config, worktree string) (renamed, unpublished []string
 // readProject reads every service of every configured compose file.
 func readProject(c *config.Config, worktree string) (project, error) {
 	p := project{byName: map[string]runtime.Service{}}
+
+	// A cluster's workloads depend on nothing pit can see either.
+	if c.Kubernetes.On() {
+		var paths []string
+		for _, f := range c.Kubernetes.Manifests {
+			paths = append(paths, inWorktree(worktree, f))
+		}
+		workloads, err := kube.ReadWorkloads(context.Background(), kubeRunner, paths)
+		if err != nil {
+			return project{}, err
+		}
+		for _, w := range workloads {
+			p.names = append(p.names, w.Name)
+			p.byName[w.Name] = runtime.Service{Name: w.Name}
+		}
+		return p, nil
+	}
 
 	// A Procfile's processes depend on nothing pit can see.
 	if c.Processes.On() {

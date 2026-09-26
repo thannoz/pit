@@ -427,3 +427,35 @@ func TestGhIsNotNeededWithALoginOfPits(t *testing.T) {
 		t.Errorf("gh = %+v", f)
 	}
 }
+
+// Kubernetes' tools are asked about only for a project that uses them.
+func TestKubernetesToolsAreCheckedWhereTheyAreUsed(t *testing.T) {
+	r := healthyRunner()
+	r.missing["kubectl"], r.missing["kind"], r.missing["k3d"] = true, true, true
+	e := env(t, r)
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "kubernetes"); f.Result != doctor.OK || f.Detail != "not used here" {
+		t.Errorf("no configuration: %+v", f)
+	}
+	writeFile(t, filepath.Join(e.WorkDir, ".git"), "")
+	writeFile(t, filepath.Join(e.WorkDir, "docker-compose.yml"), "services:\n  web:\n    image: nginx\n")
+	writeFile(t, filepath.Join(e.WorkDir, ".pit.yaml"), "web: {service: web, port: 80}\n")
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "kubernetes"); f.Result != doctor.OK || f.Detail != "not used here" {
+		t.Errorf("compose: %+v", f)
+	}
+	if err := os.MkdirAll(filepath.Join(e.WorkDir, "k8s"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(e.WorkDir, "k8s", "web.yaml"), "kind: Deployment\n")
+	writeFile(t, filepath.Join(e.WorkDir, ".pit.yaml"), "kubernetes: {manifests: [k8s]}\nweb: {service: web, port: 80}\n")
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "kubernetes"); f.Result != doctor.Fail || !strings.Contains(f.Fix, "kubectl") {
+		t.Errorf("no kubectl: %+v", f)
+	}
+	r.missing["kubectl"] = false
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "kubernetes"); f.Result != doctor.Fail || !strings.Contains(f.Fix, "kind") {
+		t.Errorf("no kind: %+v", f)
+	}
+	r.missing["k3d"] = false
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "kubernetes"); f.Result != doctor.OK || f.Detail != "kubectl, and k3d for pit's cluster" {
+		t.Errorf("k3d: %+v", f)
+	}
+}

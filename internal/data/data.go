@@ -26,6 +26,8 @@ type Sandbox struct {
 	Dir string
 	// Env is added to the commands' environment.
 	Env []string
+	// Kubectl points a kubectl line at a sandbox in Kubernetes.
+	Kubectl []string
 }
 
 // Scenario is a named data state, resolved to the commands that
@@ -134,7 +136,7 @@ var _ Store = Commands{}
 // scenario the command is written under rather than the one that was
 // asked for.
 func (c Commands) Apply(ctx context.Context, s Sandbox, sc Scenario, stdout, stderr io.Writer) error {
-	box := hooks.Sandbox{Project: s.Project, Files: s.Files, Dir: s.Dir, Env: s.Env}
+	box := hooks.Sandbox{Project: s.Project, Files: s.Files, Dir: s.Dir, Env: s.Env, Kubectl: s.Kubectl}
 
 	for _, step := range sc.Steps {
 		if len(step.Restores) > 0 {

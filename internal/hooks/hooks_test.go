@@ -220,3 +220,32 @@ func TestExpandGivesTheEnvironment(t *testing.T) {
 		}
 	}
 }
+
+// A line that starts with kubectl is pointed at the sandbox, in a
+// sandbox in Kubernetes; anywhere else it runs as written.
+func TestExpandKubectl(t *testing.T) {
+	flags := []string{"--kubeconfig", "/state/kube/config-kind", "--context", "kind-pit", "--namespace", "pit-shop-7"}
+	s := Sandbox{Dir: "/wt", Kubectl: flags, Env: []string{"PIT_NAMESPACE=pit-shop-7"}}
+	c, err := Expand("kubectl exec deploy/db -- psql -c 'select 1'", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(slices.Clone(flags), "exec", "deploy/db", "--", "psql", "-c", "select 1")
+	if c.Name != "kubectl" || !slices.Equal(c.Args, want) || c.Dir != "/wt" || !slices.Equal(c.Env, s.Env) {
+		t.Errorf("%+v", c)
+	}
+	// Expanding twice does not add the flags twice, nor does one line
+	// write into another's: the flags may have room to spare.
+	roomy := make([]string, len(flags), len(flags)+8)
+	copy(roomy, flags)
+	s.Kubectl = roomy
+	first, _ := Expand("kubectl get pods", s)
+	second, _ := Expand("kubectl logs deploy/web", s)
+	if len(first.Args) != len(flags)+2 || first.Args[len(flags)] != "get" || second.Args[len(flags)] != "logs" {
+		t.Errorf("%q, %q", first.Args, second.Args)
+	}
+	c, _ = Expand("kubectl get pods", Sandbox{Dir: "/wt"})
+	if !slices.Equal(c.Args, []string{"get", "pods"}) {
+		t.Errorf("%q", c.Args)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/runtime/kube"
 	"github.com/thannoz/pit/internal/runtime/local"
 	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/state"
@@ -59,6 +60,9 @@ func realManager() (*sandbox.Manager, error) {
 		Runtime: runtime.Either{
 			Compose:   runtime.Compose{Runner: x},
 			Processes: local.Runner{Root: filepath.Join(dir, "processes"), Supervisor: []string{self, superviseCommand}},
+			// A sandbox in Kubernetes forwards its port with a process
+			// of its own, supervised like a Procfile's.
+			Kubernetes: kube.Runtime{Runner: x, Forward: local.Runner{Root: filepath.Join(dir, "kube", "forward"), Supervisor: []string{self, superviseCommand}}},
 		},
 		Git:      x,
 		Proc:     x,

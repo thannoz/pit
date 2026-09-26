@@ -58,6 +58,7 @@ builds and starts the services; those lines are left out here.
 - [Use it on your project](#use-it-on-your-project)
 - [Dev containers](#dev-containers)
 - [Processes without containers](#processes-without-containers)
+- [Kubernetes](#kubernetes)
 - [Commands](#commands)
 - [What to look at: `pit what`](#what-to-look-at-pit-what)
 - [Data scenarios](#data-scenarios)
@@ -306,6 +307,42 @@ Nothing isolates these processes from your machine: they run as you, with
 your files. Use this only for pull requests you would run yourself. A pull
 request whose Procfile runs a command yours does not is asked about first.
 It works on macOS and Linux.
+
+## Kubernetes
+
+A project deployed with Kubernetes can be reviewed from its own manifests:
+
+```yaml
+kubernetes:
+  manifests: [k8s]        # files, directories of them, or a kustomization
+  images:
+    - name: shop-web      # as the manifests name it
+      context: .          # built from the pull request
+web:
+  service: web            # a Deployment, StatefulSet or DaemonSet
+  port: 8080              # the port its container listens on
+data:
+  migrate:
+    - "kubectl exec deploy/web -- ./migrate up"
+```
+
+`pit` builds the images from the pull request, loads them into a local cluster
+of its own, applies the manifests into a namespace of the sandbox's own, and
+forwards the web workload to the sandbox's port once it has rolled out. The
+cluster is named `pit`, made with kind or k3d, whichever is installed, the
+first time it is needed. It is reached through a kubeconfig in `pit`'s state
+directory, never through yours, so a pull request's manifests cannot reach a
+cluster your `kubectl` points at. It stays after `pit down`, which deletes only
+the namespace; `kind delete cluster --name pit` or `k3d cluster delete pit`
+removes it.
+
+A configured command that starts with `kubectl` runs in the sandbox's
+namespace. Any other command is given `KUBECONFIG`, `PIT_NAMESPACE` and
+`PIT_KUBE_CONTEXT`. `pit logs` and `pit shell` take a workload's name. An image
+`pit` builds must not be pulled with `imagePullPolicy: Always`, because it is in
+the cluster, not in a registry. `pit snap save --consistent` cannot pause a
+workload. You need kubectl and kind or k3d; `pit doctor` checks them. It works
+on macOS and Linux.
 
 ## Commands
 
@@ -572,6 +609,8 @@ machine, in the sandbox's worktree.
 | `processes.setup` | none | Commands run in the checkout before the processes start, each time. |
 | `devcontainer.file` | none | A `devcontainer.json`, in place of `compose.files`. See [Dev containers](#dev-containers). |
 | `devcontainer.start` | none | The command that starts the app in the dev container, after its lifecycle commands. |
+| `kubernetes.manifests` | none | Manifests, in place of `compose.files`: files, directories of them, or kustomizations. See [Kubernetes](#kubernetes). |
+| `kubernetes.images` | none | The images `pit` builds for them: `name` as the manifests give it, `context` (default `.`), `dockerfile` (relative to it). |
 | `web.service` | *required* | The service a reviewer opens in a browser. |
 | `web.port` | *required* | The port it listens on **inside** its container. `pit` picks the published port itself, one per sandbox, from 40000–49999. Not needed for processes, which are given `PORT`. |
 | `healthcheck.url` | `http://{host}:{port}/` | Polled until it answers. `{host}` becomes `localhost`, `{port}` the sandbox's published port. |

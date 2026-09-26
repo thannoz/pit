@@ -57,6 +57,9 @@ type Sandbox struct {
 	// Processes says the services are processes on this machine, and
 	// ComposeFiles are then the Procfile and pit's plan for them.
 	Processes bool `json:"processes,omitempty"`
+	// Kubernetes says the services are workloads in pit's cluster, and
+	// ComposeFiles are then pit's plan for them.
+	Kubernetes bool `json:"kubernetes,omitempty"`
 	// Worktree is where the pull request is checked out.
 	Worktree string `json:"worktree"`
 	// WebService is the compose service a reviewer opens. It is

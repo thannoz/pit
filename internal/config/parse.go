@@ -44,9 +44,15 @@ func (c *Config) applyDefaults() {
 	if c.Version == 0 {
 		c.Version = Version
 	}
-	if len(c.Compose.Files) == 0 && c.Devcontainer.File == "" && !c.Processes.On() {
+	if len(c.Compose.Files) == 0 && c.Devcontainer.File == "" && !c.Processes.On() && !c.Kubernetes.On() {
 		c.Compose.Files = []string{DefaultComposeFile}
 		c.composeUnnamed = true
+	}
+
+	for i := range c.Kubernetes.Images {
+		if c.Kubernetes.Images[i].Context == "" {
+			c.Kubernetes.Images[i].Context = "."
+		}
 	}
 
 	h := &c.Healthcheck

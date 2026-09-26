@@ -61,6 +61,9 @@ func runLogs(c *cobra.Command, o *logsOptions, args []string) error {
 	if box.Processes {
 		return ignoreInterrupt(c.Context(), processLogs(c, box, service, o))
 	}
+	if box.Kubernetes {
+		return ignoreInterrupt(c.Context(), kubeLogs(c, box, service, o))
+	}
 
 	cmdArgs := []string{"logs", "--no-color", "--tail", strconv.Itoa(o.tail)}
 	if o.follow {

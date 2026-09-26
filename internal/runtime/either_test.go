@@ -11,8 +11,8 @@ import (
 
 // Every call goes to the runtime the sandbox was brought up with.
 func TestEitherAsksTheSandboxsRuntime(t *testing.T) {
-	compose, processes := runtimetest.New("web"), runtimetest.New("web")
-	e := runtime.Either{Compose: compose, Processes: processes}
+	compose, processes, kube := runtimetest.New("web"), runtimetest.New("web"), runtimetest.New("web")
+	e := runtime.Either{Compose: compose, Processes: processes, Kubernetes: kube}
 	ctx := t.Context()
 	calls := func(s runtime.Sandbox) {
 		_ = e.Up(ctx, s, nil, io.Discard, io.Discard)
@@ -31,7 +31,8 @@ func TestEitherAsksTheSandboxsRuntime(t *testing.T) {
 	}
 	calls(runtime.Sandbox{Project: "c"})
 	calls(runtime.Sandbox{Project: "p", Processes: true})
-	for name, f := range map[string]*runtimetest.Fake{"c": compose, "p": processes} {
+	calls(runtime.Sandbox{Project: "k", Kubernetes: true})
+	for name, f := range map[string]*runtimetest.Fake{"c": compose, "p": processes, "k": kube} {
 		methods := map[string]bool{}
 		for _, c := range f.Calls() {
 			if c.Project != name {

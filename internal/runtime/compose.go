@@ -35,6 +35,9 @@ type Sandbox struct {
 	// Processes says the services are processes on this machine, from
 	// a Procfile, and Files are the Procfile and pit's plan for them.
 	Processes bool
+	// Kubernetes says the services are workloads in pit's cluster, and
+	// Files are pit's plan for them.
+	Kubernetes bool
 }
 
 // Compose drives `docker compose`.

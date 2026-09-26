@@ -21,7 +21,10 @@ type Config struct {
 	Devcontainer Devcontainer `yaml:"devcontainer,omitempty"`
 	// Processes runs the services as processes on this machine, from a
 	// Procfile, instead of in containers.
-	Processes   Processes   `yaml:"processes,omitempty"`
+	Processes Processes `yaml:"processes,omitempty"`
+	// Kubernetes runs the services in pit's own local cluster, from the
+	// project's manifests, instead of with compose.
+	Kubernetes  Kubernetes  `yaml:"kubernetes,omitempty"`
 	Web         Web         `yaml:"web"`
 	Healthcheck Healthcheck `yaml:"healthcheck"`
 	Hooks       Hooks       `yaml:"hooks"`
@@ -79,6 +82,32 @@ type Processes struct {
 
 // On reports whether the services are processes.
 func (p Processes) On() bool { return p.File != "" }
+
+// Kubernetes says the services are the workloads of the project's own
+// manifests, applied into a namespace of the sandbox's own in pit's
+// local cluster.
+type Kubernetes struct {
+	// Manifests are files and directories, relative to the repository
+	// root: a directory kustomize builds, or one of YAML files.
+	Manifests []string `yaml:"manifests,omitempty"`
+	// Images are the images the manifests name that pit builds from the
+	// pull request, rather than pulls.
+	Images []KubeImage `yaml:"images,omitempty"`
+}
+
+// KubeImage is an image pit builds for the manifests.
+type KubeImage struct {
+	// Name is how the manifests name it: shop-web, ghcr.io/acme/web.
+	Name string `yaml:"name"`
+	// Context is where it is built, relative to the repository root;
+	// "." when left out.
+	Context string `yaml:"context,omitempty"`
+	// Dockerfile is relative to Context; its Dockerfile when left out.
+	Dockerfile string `yaml:"dockerfile,omitempty"`
+}
+
+// On says the services are Kubernetes workloads.
+func (k Kubernetes) On() bool { return len(k.Manifests) > 0 }
 
 // Web identifies the service a reviewer opens in a browser.
 type Web struct {

@@ -253,14 +253,17 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 			undo.push(func(context.Context) { _ = removeFile(generated) })
 		}
 	}
-	procs := req.Config.Processes.On()
+	procs, kubes := req.Config.Processes.On(), req.Config.Kubernetes.On()
 	var files []string
-	if procs {
+	switch {
+	case procs:
 		files = []string{inWorktree(wt.Path, req.Config.Processes.File), PlanPathIn(repoDir, pr, slot)}
-	} else {
+	case kubes:
+		files = []string{KubePlanPathIn(repoDir, pr, slot)}
+	default:
 		files = append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	}
-	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files, Processes: procs}
+	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files, Processes: procs, Kubernetes: kubes}
 
 	// Which services this review needs at all. Everything below is
 	// about them only: building an image for a service nobody starts
@@ -303,6 +306,25 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 			return state.Sandbox{}, err
 		}
 		st.done(ctx, "%s", said)
+	case kubes:
+		// Built each time, with the commit in the tag: the cluster
+		// runs what it was given, and a tag it already has would be
+		// the old commit's.
+		st.begin("build", streaming)
+		plan, err := m.setUpKube(ctx, req.Config, files[0], project, port, wt.Path, sha)
+		if !updating {
+			undo.push(func(context.Context) {
+				_ = removeFile(files[0])
+				_ = os.RemoveAll(kustomizationFor(files[0]))
+			})
+		}
+		if err != nil {
+			return state.Sandbox{}, err
+		}
+		if err := m.Runtime.Build(ctx, box, nil, rep.Stdout(), rep.Stderr()); err != nil {
+			return state.Sandbox{}, err
+		}
+		st.done(ctx, "%s, in pit's cluster (%s)", plural(len(plan.Images), "image", "images"), plan.Tool)
 	case updating && work.nothing():
 		st.begin("build", quiet)
 		st.done(ctx, "nothing to rebuild")
@@ -358,8 +380,11 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	}
 
 	h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
-	if procs {
+	switch {
+	case procs:
 		h.Env = processEnv(files)
+	case kubes:
+		h.Kubectl, h.Env = kubeTarget(files)
 	}
 
 	// Whether the data a sandbox keeps across an update was written to,
@@ -406,7 +431,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		}
 		snap := *req.Snapshot
 		st.begin("data", streaming)
-		into := state.Sandbox{PR: pr, Base: req.Base, Check: req.Check, RepoRef: id.Ref(), RepoRoot: req.Repo.Root, Project: project, ComposeFiles: files, Processes: procs, Worktree: wt.Path, SHA: sha}
+		into := state.Sandbox{PR: pr, Base: req.Base, Check: req.Check, RepoRef: id.Ref(), RepoRoot: req.Repo.Root, Project: project, ComposeFiles: files, Processes: procs, Kubernetes: kubes, Worktree: wt.Path, SHA: sha}
 		if err := m.restoreParts(ctx, into, snap, rep); err != nil {
 			return state.Sandbox{}, err
 		}
@@ -442,7 +467,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 			}
 		}
 		st.begin("data", streaming)
-		target := data.Sandbox{Project: project, Files: files, Dir: wt.Path, Env: h.Env}
+		target := data.Sandbox{Project: project, Files: files, Dir: wt.Path, Env: h.Env, Kubectl: h.Kubectl}
 		if err := m.Data.Apply(ctx, target, scenario, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
@@ -476,6 +501,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		WebService:   req.Config.Web.Service,
 		ComposeFiles: files,
 		Processes:    procs,
+		Kubernetes:   kubes,
 		Worktree:     wt.Path,
 		Port:         port,
 		URL:          url,

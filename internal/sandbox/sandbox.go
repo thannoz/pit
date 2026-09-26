@@ -221,8 +221,10 @@ func (m *Manager) Down(ctx context.Context, box state.Sandbox, stdout, stderr io
 		runtime.OverridePathIn(m.RepoDir(box), box.PR, box.Slot()),
 		runtime.DevcontainerPathIn(m.RepoDir(box), box.PR, box.Slot()),
 		PlanPathIn(m.RepoDir(box), box.PR, box.Slot()),
+		KubePlanPathIn(m.RepoDir(box), box.PR, box.Slot()),
+		kustomizationFor(KubePlanPathIn(m.RepoDir(box), box.PR, box.Slot())),
 	} {
-		if err := os.Remove(generated); err != nil && !os.IsNotExist(err) {
+		if err := os.RemoveAll(generated); err != nil {
 			failures = append(failures, errs.Wrap(err, "cannot remove %s", generated))
 		}
 	}
@@ -252,10 +254,11 @@ func (m *Manager) RepoDir(box state.Sandbox) string {
 // brought up, even if someone has edited .pit.yaml since.
 func RuntimeSandbox(box state.Sandbox) runtime.Sandbox {
 	return runtime.Sandbox{
-		Project:   box.Project,
-		Dir:       box.Worktree,
-		Files:     box.ComposeFiles,
-		Processes: box.Processes,
+		Project:    box.Project,
+		Dir:        box.Worktree,
+		Files:      box.ComposeFiles,
+		Processes:  box.Processes,
+		Kubernetes: box.Kubernetes,
 	}
 }
 
@@ -268,8 +271,11 @@ func CommandEnv(box state.Sandbox) []string { return commandsIn(box).Env }
 // what its processes are given.
 func commandsIn(box state.Sandbox) hooks.Sandbox {
 	h := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
-	if box.Processes {
+	switch {
+	case box.Processes:
 		h.Env = processEnv(box.ComposeFiles)
+	case box.Kubernetes:
+		h.Kubectl, h.Env = kubeTarget(box.ComposeFiles)
 	}
 	return h
 }
