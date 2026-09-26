@@ -266,3 +266,27 @@ func TestPullSkipsTheRegistryForAnImageThatIsAlreadyHere(t *testing.T) {
 		}
 	}
 }
+
+// The secrets go to the command that starts the services, and to no
+// other.
+func TestUpGivesComposeTheSecrets(t *testing.T) {
+	r := &stubRunner{}
+	s := testSandbox()
+	s.Secrets = map[string]string{"STRIPE_KEY": "sk_test_123", "DB_PASSWORD": "hunter2"}
+	c := Compose{Runner: r}
+	if err := c.Up(t.Context(), s, nil, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"PIT_SECRET_DB_PASSWORD=hunter2", "PIT_SECRET_STRIPE_KEY=sk_test_123"}; !slices.Equal(r.calls[0].Env, want) {
+		t.Errorf("env = %q, want %q", r.calls[0].Env, want)
+	}
+	if strings.Contains(strings.Join(r.calls[0].Args, " "), "sk_test") {
+		t.Errorf("a value is in the arguments: %q", r.calls[0].Args)
+	}
+	if _, err := c.Logs(t.Context(), s, "web", 10); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.calls[1].Env) != 0 {
+		t.Errorf("logs got %q", r.calls[1].Env)
+	}
+}

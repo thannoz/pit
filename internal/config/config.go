@@ -337,4 +337,8 @@ type Env struct {
 	FromFile string `yaml:"from_file"`
 	// Set overrides individual variables.
 	Set map[string]string `yaml:"set"`
+	// Secrets are variables whose values pit fetches each time it
+	// starts the services, from 1Password (op://vault/item/field) or
+	// Vault (vault://mount/path#field), and never writes down.
+	Secrets map[string]string `yaml:"secrets,omitempty"`
 }

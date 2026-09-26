@@ -224,6 +224,26 @@ fresh checkout, so a `.env` file that is not committed is not in it, and an
 `env_file:` that points at one fails. Set what the services need in the
 compose file, or for the web service under `env.set` in `.pit.yaml`.
 
+What must not be in the repository, like a payment provider's test key, comes
+from 1Password or Vault under `env.secrets`:
+
+```yaml
+env:
+  secrets:
+    STRIPE_KEY: op://Development/Stripe/test key       # 1Password: vault/item/field
+    DB_PASSWORD: "vault://secret/shop/db#password"     # Vault: path#field
+```
+
+`pit` fetches them with `op read` and `vault kv get` each time it starts the
+services, so the 1Password CLI has to be signed in, or `VAULT_ADDR` and
+`VAULT_TOKEN` set. It gives them to the web service, or to every process, and
+writes them nowhere: the generated compose file names them, and Compose reads
+the values from the environment `pit` starts it with. Docker keeps them with
+the container, as it keeps every variable a container is given. A pull
+request that names a secret your checkout does not, or takes one from
+somewhere else, is asked about first, since its services would get it.
+`env.secrets` is not for Kubernetes, whose manifests name their own Secrets.
+
 Then add what makes a review useful, both described in
 [Data scenarios](#data-scenarios):
 
@@ -661,6 +681,7 @@ machine, in the sandbox's worktree.
 | `review.routes.framework` | `auto` | `auto`, `nextjs`, `go` or `sveltekit`. |
 | `review.ignore` | none | Glob patterns for files that never belong on the checklist, e.g. `"**/*.test.ts"`. |
 | `env.set` | none | Environment variables set on the web service, as a map: `NODE_ENV: development`. |
+| `env.secrets` | none | Variables whose values `pit` fetches from 1Password (`op://vault/item/field`) or Vault (`vault://path#field`) each time it starts the services. See [Use it on your project](#use-it-on-your-project). |
 
 Two keys are accepted and checked but do not do anything yet. They belong to
 features that are planned, not built: `data.production_like` and
@@ -720,7 +741,8 @@ asked to revoke a token from its device flow.
   repositories, can run side by side.
 - **Everything `pit` keeps** lives under `$XDG_STATE_HOME/pit`, which is
   `~/.local/state/pit` by default, and `%LOCALAPPDATA%\pit` on Windows: the
-  sandbox list, worktrees and generated compose files.
+  sandbox list, worktrees and generated compose files. Never the values of
+  `env.secrets`.
 - **`pit down` removes what the sandbox ran in:** containers, networks,
   volumes, the worktree and the files it generated. Images stay, like Docker's
   build cache, so that the next review of the project starts quickly; `docker

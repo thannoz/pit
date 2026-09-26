@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"text/template"
 
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/secrets"
 )
 
 // Override is the generated compose file that makes a sandbox its own:
@@ -24,6 +26,10 @@ type Override struct {
 	EnvFile string
 	// Env are individual variables to set on the service.
 	Env map[string]string
+	// Secrets are variables of the service whose values Compose reads
+	// from its own environment as it starts it: they are never in the
+	// file.
+	Secrets []string
 	// Images names an image for a service, replacing whatever its
 	// build would have produced. It is how a sandbox uses what a
 	// pipeline has already built.
@@ -63,7 +69,7 @@ func RenderOverride(o Override) ([]byte, error) {
 	}
 
 	var b bytes.Buffer
-	if err := overrideTemplate.Execute(&b, overrideView{Services: blocks(o)}); err != nil {
+	if err := overrideTemplate.Execute(&b, overrideView{Services: blocks(o), SecretPrefix: secrets.EnvPrefix}); err != nil {
 		return nil, errs.Wrap(err, "cannot write the compose override")
 	}
 	return b.Bytes(), nil
@@ -79,6 +85,7 @@ func blocks(o Override) []serviceBlock {
 		EnvFile: o.EnvFile,
 		EnvKeys: sortedKeys(o.Env),
 		Env:     o.Env,
+		Secrets: slices.Sorted(slices.Values(o.Secrets)),
 		Image:   o.Images[o.Service],
 	}
 
@@ -123,6 +130,9 @@ func WriteOverride(path string, o Override) error {
 
 type overrideView struct {
 	Services []serviceBlock
+	// SecretPrefix is before the name of the variable Compose reads a
+	// secret from.
+	SecretPrefix string
 }
 
 // serviceBlock is one service's entry in the generated file.
@@ -132,6 +142,7 @@ type serviceBlock struct {
 	EnvFile       string
 	EnvKeys       []string
 	Env           map[string]string
+	Secrets       []string
 	Image         string
 	ContainerName string
 	ResetPorts    bool
@@ -178,11 +189,14 @@ services:
     env_file:
       - {{ .EnvFile }}
 {{- end }}
-{{- if .EnvKeys }}
+{{- if or .EnvKeys .Secrets }}
     environment:
 {{- $env := .Env }}
 {{- range .EnvKeys }}
       {{ . }}: "{{ index $env . }}"
+{{- end }}
+{{- range .Secrets }}
+      {{ . }}: "{{ printf "${%s%s:-}" $.SecretPrefix . }}"
 {{- end }}
 {{- end }}
 {{- end }}

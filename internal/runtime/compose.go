@@ -7,12 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/proc"
+	"github.com/thannoz/pit/internal/secrets"
 )
 
 // Runner runs external commands. internal/proc.Exec satisfies it.
@@ -38,6 +41,20 @@ type Sandbox struct {
 	// Kubernetes says the services are workloads in pit's cluster, and
 	// Files are pit's plan for them.
 	Kubernetes bool
+	// Secrets are the values of the variables that come from a store,
+	// by name: given to the services as they are started, and kept
+	// nowhere.
+	Secrets map[string]string
+}
+
+// SecretEnv is the secrets as variables, each name after prefix, in a
+// stable order.
+func (s Sandbox) SecretEnv(prefix string) []string {
+	env := make([]string, 0, len(s.Secrets))
+	for _, n := range slices.Sorted(maps.Keys(s.Secrets)) {
+		env = append(env, prefix+n+"="+s.Secrets[n])
+	}
+	return env
 }
 
 // Compose drives `docker compose`.
@@ -62,7 +79,11 @@ func (c Compose) Up(ctx context.Context, s Sandbox, services []string, stdout, s
 	}
 	args = append(args, services...)
 
-	err := c.Runner.Stream(ctx, c.command(s, args...), stdout, stderr)
+	// The override names the secrets; Compose reads their values from
+	// here, which is the one place they are.
+	up := c.command(s, args...)
+	up.Env = append(up.Env, s.SecretEnv(secrets.EnvPrefix)...)
+	err := c.Runner.Stream(ctx, up, stdout, stderr)
 	if err != nil {
 		return errs.Wrap(err, "cannot start the services").
 			WithHint("check the compose file in %s, or run `docker compose -p %s logs`", s.Dir, s.Project)

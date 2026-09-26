@@ -228,3 +228,56 @@ func TestDevcontainerPathIsBesideTheOverride(t *testing.T) {
 		}
 	}
 }
+
+// A secret is named in the file and never written into it: Compose
+// reads its value from the environment of the command that starts the
+// services, and any other command sees none, without a warning.
+func TestOverrideNamesSecretsWithoutTheirValues(t *testing.T) {
+	data, err := RenderOverride(Override{Service: "web", HostPort: 49580, ContainerPort: 80,
+		Env: map[string]string{"NODE_ENV": "development"}, Secrets: []string{"STRIPE_KEY", "DB_PASSWORD"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`      NODE_ENV: "development"` + "\n" + `      DB_PASSWORD: "${PIT_SECRET_DB_PASSWORD:-}"` + "\n" + `      STRIPE_KEY: "${PIT_SECRET_STRIPE_KEY:-}"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the override lacks %q:\n%s", want, text)
+		}
+	}
+	// Secrets alone are an environment too.
+	data, _ = RenderOverride(Override{Service: "web", HostPort: 49580, ContainerPort: 80, Secrets: []string{"STRIPE_KEY"}})
+	if !strings.Contains(string(data), "    environment:\n      STRIPE_KEY:") {
+		t.Errorf("no environment:\n%s", data)
+	}
+
+	requireCompose(t)
+	dir := t.TempDir()
+	base := filepath.Join(dir, "docker-compose.yml")
+	writeTestFile(t, base, "services:\n  web:\n    image: nginx:alpine\n    environment:\n      STRIPE_KEY: ${STRIPE_KEY:-from-the-project}\n")
+	override := filepath.Join(dir, "override.yml")
+	if err := WriteOverride(override, Override{Service: "web", HostPort: 49580, ContainerPort: 80, Secrets: []string{"STRIPE_KEY"}}); err != nil {
+		t.Fatal(err)
+	}
+	config := func(env ...string) string {
+		t.Helper()
+		var stdout, stderr strings.Builder
+		err := proc.Exec{}.Stream(t.Context(), proc.Command{
+			Name: "docker", Args: []string{"compose", "--project-name", "pit-test-1", "-f", base, "-f", override, "config"}, Dir: dir, Env: env,
+		}, &stdout, &stderr)
+		if err != nil {
+			t.Fatalf("docker compose config: %v", err)
+		}
+		if strings.Contains(stderr.String(), "not set") {
+			t.Errorf("compose warns: %s", stderr.String())
+		}
+		return stdout.String()
+	}
+	if got := config("PIT_SECRET_STRIPE_KEY=sk_test_123", "STRIPE_KEY=the-reviewers-own"); !strings.Contains(got, "STRIPE_KEY: sk_test_123") {
+		t.Errorf("with the value:\n%s", got)
+	}
+	if got := config(); !strings.Contains(got, `STRIPE_KEY: ""`) || strings.Contains(got, "sk_test") {
+		t.Errorf("without it:\n%s", got)
+	}
+}

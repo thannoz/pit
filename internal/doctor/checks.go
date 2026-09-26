@@ -9,6 +9,7 @@ import (
 	"github.com/thannoz/pit/internal/ports"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/secrets"
 	"github.com/thannoz/pit/internal/state"
 )
 
@@ -55,6 +56,7 @@ func Default(env Environment) []Check {
 		env.configuration(),
 		env.kubernetes(),
 		env.devShell(),
+		env.secretStores(),
 		env.strayProjects(),
 		env.browser(),
 	}
@@ -362,6 +364,35 @@ func (env Environment) devShell() Check {
 			return Finding{Name: name, Result: Fail, Detail: tool + " not found on PATH", Fix: fix}
 		}
 		return Finding{Name: name, Result: OK, Detail: strings.TrimSpace(string(out))}
+	}
+}
+
+// secretStores checks the CLIs of the stores env.secrets names: pit
+// asks 1Password and Vault through them. Whether they are signed in is
+// said by the first pit up; asking here would ask for a sign-in.
+func (env Environment) secretStores() Check {
+	return func(ctx context.Context) Finding {
+		const name = "secrets"
+		path, err := config.Find(env.WorkDir)
+		if err != nil {
+			return Finding{Name: name, Result: OK, Detail: "not used here"}
+		}
+		c, err := config.Load(path)
+		if err != nil || len(c.Env.Secrets) == 0 {
+			return Finding{Name: name, Result: OK, Detail: "not used here"}
+		}
+		var found []string
+		for _, store := range secrets.Stores(c.Env.Secrets) {
+			tool, fix := "vault", "install the Vault CLI: https://developer.hashicorp.com/vault/install"
+			if store == secrets.OnePassword {
+				tool, fix = "op", "install the 1Password CLI: https://developer.1password.com/docs/cli/"
+			}
+			if _, err := env.Runner.Output(ctx, proc.Command{Name: tool, Args: []string{"--version"}}); err != nil {
+				return Finding{Name: name, Result: Fail, Detail: tool + " not found on PATH, for secrets from " + store, Fix: fix}
+			}
+			found = append(found, tool)
+		}
+		return Finding{Name: name, Result: OK, Detail: strings.Join(found, " and ")}
 	}
 }
 

@@ -67,6 +67,7 @@ func realManager() (*sandbox.Manager, error) {
 		Git:      x,
 		Proc:     x,
 		Data:     data.Commands{Runner: x},
+		Secrets:  x,
 		StateDir: dir,
 	}, nil
 }

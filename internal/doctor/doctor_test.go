@@ -488,3 +488,29 @@ func TestTheDevShellsToolIsChecked(t *testing.T) {
 		t.Errorf("devenv: %+v", f)
 	}
 }
+
+// The CLIs of the stores env.secrets names are asked about where it
+// names them, each where it is needed.
+func TestSecretStoresAreChecked(t *testing.T) {
+	r := healthyRunner()
+	r.missing["op"], r.missing["vault"] = true, true
+	e := env(t, r)
+	writeFile(t, filepath.Join(e.WorkDir, ".git"), "")
+	writeFile(t, filepath.Join(e.WorkDir, "docker-compose.yml"), "services:\n  web:\n    image: nginx\n")
+	writeFile(t, filepath.Join(e.WorkDir, ".pit.yaml"), "web: {service: web, port: 80}\n")
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "secrets"); f.Result != doctor.OK || f.Detail != "not used here" {
+		t.Errorf("no secrets: %+v", f)
+	}
+	writeFile(t, filepath.Join(e.WorkDir, ".pit.yaml"), "web: {service: web, port: 80}\nenv:\n  secrets:\n    A: op://Dev/a/key\n    B: \"vault://secret/b#key\"\n")
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "secrets"); f.Result != doctor.Fail || f.Detail != "op not found on PATH, for secrets from 1Password" || !strings.Contains(f.Fix, "1Password CLI") {
+		t.Errorf("no op: %+v", f)
+	}
+	r.missing["op"] = false
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "secrets"); f.Result != doctor.Fail || !strings.Contains(f.Detail, "vault not found") || !strings.Contains(f.Fix, "Vault CLI") {
+		t.Errorf("no vault: %+v", f)
+	}
+	r.missing["vault"] = false
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "secrets"); f.Result != doctor.OK || f.Detail != "op and vault" {
+		t.Errorf("both: %+v", f)
+	}
+}

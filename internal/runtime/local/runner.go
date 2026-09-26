@@ -115,6 +115,9 @@ func (r Runner) Up(ctx context.Context, s runtime.Sandbox, services []string, st
 	defer out.Close()                                                                    //nolint:errcheck // the supervisor has its own copy
 	cmd := exec.Command(r.Supervisor[0], append(slices.Clone(r.Supervisor[1:]), dir)...) //nolint:gosec,noctx // it has to outlive pit
 	cmd.Stdout, cmd.Stderr = out, out
+	// The secrets reach the processes through the supervisor's own
+	// environment, never through run.json.
+	cmd.Env = append(os.Environ(), s.SecretEnv("")...)
 	cmd.SysProcAttr = ownSession()
 	if err := cmd.Start(); err != nil {
 		return errs.Wrap(err, "cannot start the processes")

@@ -380,3 +380,38 @@ func TestProcessesRunInTheirDevShell(t *testing.T) {
 		t.Errorf("worker logs = %q, want %q", logs, want)
 	}
 }
+
+// Secrets reach the processes through the supervisor's environment:
+// nothing pit writes down holds them.
+func TestSecretsReachTheProcessesAndNoFile(t *testing.T) {
+	r, s, port := sandbox(t, "web: PIT_TEST_SERVE=1 exec $SELF\nworker: echo \"$STRIPE_KEY\"; exec sleep 60\n")
+	s.Secrets = map[string]string{"STRIPE_KEY": "sk_test_4242"}
+	ctx := t.Context()
+	if err := r.Up(ctx, s, nil, &strings.Builder{}, nil); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if err := r.WaitReady(ctx, s, "web", probe(port)); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	var logs []byte
+	for range 100 {
+		if logs, _ = r.Logs(ctx, s, "worker", 1); string(logs) == "sk_test_4242\n" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if string(logs) != "sk_test_4242\n" {
+		t.Errorf("worker logs = %q", logs)
+	}
+	for _, dir := range []string{r.Root, filepath.Dir(s.Files[1])} {
+		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || strings.HasSuffix(path, ".log") {
+				return nil
+			}
+			if data, _ := os.ReadFile(path); strings.Contains(string(data), "sk_test_4242") {
+				t.Errorf("%s holds the secret", path)
+			}
+			return nil
+		})
+	}
+}

@@ -24,6 +24,8 @@ type Call struct {
 	// project, which is the difference between a rebuild and an
 	// incremental one.
 	Services []string
+	// Secrets are the values Up was given.
+	Secrets map[string]string
 }
 
 // Fake is an in-memory Runtime.
@@ -97,6 +99,7 @@ func (f *Fake) Up(_ context.Context, s runtime.Sandbox, services []string, stdou
 		Method:   "Up",
 		Project:  s.Project,
 		Services: append([]string(nil), services...),
+		Secrets:  s.Secrets,
 	})
 	f.mu.Unlock()
 

@@ -16,6 +16,7 @@ import (
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/hooks"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/secrets"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/workspace"
 )
@@ -36,6 +37,8 @@ type Manager struct {
 	Proc hooks.Runner
 	// Data puts a sandbox into a named data state.
 	Data data.Store
+	// Secrets asks 1Password and Vault for what env.secrets names.
+	Secrets secrets.Runner
 	// StateDir is where worktrees and generated files live.
 	StateDir string
 }

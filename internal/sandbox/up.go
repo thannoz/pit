@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/thannoz/pit/internal/config"
@@ -16,6 +19,7 @@ import (
 	"github.com/thannoz/pit/internal/hooks"
 	"github.com/thannoz/pit/internal/ports"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/secrets"
 	"github.com/thannoz/pit/internal/snapshot"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/workspace"
@@ -205,6 +209,21 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 			return state.Sandbox{}, err
 		}
 	}
+	// So are secrets: a pull request that names one of the reviewer's
+	// would have it in services of its own making.
+	if err := confirmSecrets(req, mine, rep); err != nil {
+		return state.Sandbox{}, err
+	}
+	// Fetched before anything is built, so that a store that wants a
+	// sign-in says so at once.
+	var values map[string]string
+	if refs := req.Config.Env.Secrets; len(refs) > 0 {
+		st.begin("secrets", quiet)
+		if values, err = secrets.Resolve(ctx, m.Secrets, refs); err != nil {
+			return state.Sandbox{}, err
+		}
+		st.done(ctx, "%s, from %s", plural(len(refs), "secret", "secrets"), strings.Join(secrets.Stores(refs), " and "))
+	}
 
 	// The scenario is selected against the adopted file, not the
 	// reviewer's: a pull request that adds the scenario someone asked
@@ -263,7 +282,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	default:
 		files = append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
 	}
-	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files, Processes: procs, Kubernetes: kubes}
+	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files, Processes: procs, Kubernetes: kubes, Secrets: values}
 
 	// Which services this review needs at all. Everything below is
 	// about them only: building an image for a service nobody starts
@@ -571,6 +590,7 @@ func overrideFor(c *config.Config, hostPort int, images map[string]string) runti
 		HostPort:      hostPort,
 		ContainerPort: c.Web.Port,
 		Env:           c.Env.Set,
+		Secrets:       slices.Sorted(maps.Keys(c.Env.Secrets)),
 		Images:        images,
 	}
 }

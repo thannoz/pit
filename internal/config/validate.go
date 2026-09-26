@@ -17,6 +17,7 @@ import (
 	"github.com/thannoz/pit/internal/glob"
 	"github.com/thannoz/pit/internal/hooks"
 	"github.com/thannoz/pit/internal/runtime/local"
+	"github.com/thannoz/pit/internal/secrets"
 )
 
 // parseStrict decodes the file and rejects anything it does not
@@ -572,18 +573,50 @@ func commandProblem(line, path string, atLine int) (Problem, bool) {
 }
 
 func (c *Config) checkEnv(node *yaml.Node, dir string) []Problem {
+	p := c.checkSecrets(node)
 	if c.Env.FromFile == "" {
-		return nil
+		return p
 	}
 	if _, err := os.Stat(filepath.Join(dir, c.Env.FromFile)); err != nil {
-		return []Problem{{
+		p = append(p, Problem{
 			Line: lineOf(node, "env", "from_file"),
 			Path: "env.from_file",
 			Msg:  fmt.Sprintf("names %q, which does not exist", c.Env.FromFile),
 			Hint: "this is a template to be checked in, never a real .env",
+		})
+	}
+	return p
+}
+
+// checkSecrets checks that each secret names a variable and a store,
+// and reaches services pit starts itself.
+func (c *Config) checkSecrets(node *yaml.Node) []Problem {
+	if len(c.Env.Secrets) == 0 {
+		return nil
+	}
+	if c.Kubernetes.On() {
+		return []Problem{{
+			Line: lineOf(node, "env", "secrets"),
+			Path: "env.secrets",
+			Msg:  "is set for a project in Kubernetes, whose workloads pit does not give variables",
+			Hint: "the manifests name their own Secrets",
 		}}
 	}
-	return nil
+	var p []Problem
+	for _, n := range slices.Sorted(maps.Keys(c.Env.Secrets)) {
+		at, path := lineOf(node, "env", "secrets", n), "env.secrets."+n
+		if !secrets.ValidName(n) {
+			p = append(p, Problem{Line: at, Path: path, Msg: "is not a name a variable can have"})
+			continue
+		}
+		if _, ok := c.Env.Set[n]; ok {
+			p = append(p, Problem{Line: at, Path: path, Msg: "is set in env.set as well; a variable comes from one of them"})
+		}
+		if _, err := secrets.Parse(c.Env.Secrets[n]); err != nil {
+			p = append(p, Problem{Line: at, Path: path, Msg: err.Error()})
+		}
+	}
+	return p
 }
 
 // checkSnapshotParts checks the list form of data.snapshot: each entry
