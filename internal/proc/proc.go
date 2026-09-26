@@ -118,7 +118,7 @@ func (e Exec) Attach(ctx context.Context, c Command) error {
 	// No process group here, deliberately. An interactive child should
 	// receive the terminal's own Ctrl+C the way any foreground process
 	// does, rather than having pit intercept it and signal the group.
-	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.Cancel = func() error { return interruptOne(cmd) }
 	cmd.WaitDelay = e.grace()
 
 	slog.DebugContext(ctx, "attaching command", "cmd", c.String(), "dir", c.Dir)
@@ -143,7 +143,14 @@ func (e Exec) run(ctx context.Context, c Command, stdout, stderr io.Writer) erro
 	started := time.Now()
 	slog.DebugContext(ctx, "running command", "cmd", c.String(), "dir", c.Dir)
 
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		// Where the system keeps a process's children by a handle of
+		// its own, the handle is taken now, before they are many.
+		track(cmd)
+		err = cmd.Wait()
+		defer untrack(cmd)
+	}
 
 	slog.DebugContext(ctx, "command finished",
 		"cmd", c.String(), "took", time.Since(started), "err", err)

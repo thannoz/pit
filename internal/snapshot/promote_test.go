@@ -3,6 +3,7 @@ package snapshot
 import (
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -100,7 +101,7 @@ func TestPromotedSnapshotIsAScenario(t *testing.T) {
 		t.Errorf("wrote %q, %d bytes", got, size)
 	}
 	info, err := os.Stat(filepath.Join(root, "fixtures", "voucher.sql"))
-	if err != nil || info.Mode().Perm() != 0o644 {
+	if err != nil || (unixModes && info.Mode().Perm() != 0o644) {
 		t.Errorf("mode = %v, %v", info.Mode(), err)
 	}
 
@@ -115,7 +116,7 @@ func TestPromotedSnapshotIsAScenario(t *testing.T) {
 	if got := read(t, path); got != want {
 		t.Errorf(".pit.yaml is now:\n%s\nwant:\n%s", got, want)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o664 {
+	if info, err := os.Stat(path); err != nil || (unixModes && info.Mode().Perm() != 0o664) {
 		t.Errorf(".pit.yaml's mode = %v, %v", info.Mode(), err)
 	}
 	cfg, err := config.Load(path)
@@ -362,3 +363,7 @@ func TestPromoteTakesTheParamsItIsGiven(t *testing.T) {
 		t.Errorf("params = %v", plan.Scenario.Params)
 	}
 }
+
+// unixModes says the system keeps a file's permission bits; Windows
+// knows read-only and nothing else.
+var unixModes = goruntime.GOOS != "windows"

@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 )
 
@@ -17,22 +18,33 @@ const stateDirEnv = "PIT_STATE_DIR"
 // indexing -- the reviewer's tooling would start reporting problems in
 // someone else's pull request.
 func StateDir() (string, error) {
-	if dir := os.Getenv(stateDirEnv); dir != "" {
+	return stateDir(goruntime.GOOS, os.Getenv, os.UserHomeDir)
+}
+
+func stateDir(goos string, getenv func(string) string, home func() (string, error)) (string, error) {
+	if dir := getenv(stateDirEnv); dir != "" {
 		return dir, nil
 	}
 
-	// os.UserCacheDir is the closest thing Go offers on both platforms;
-	// XDG_STATE_HOME is the more correct home for data that should
-	// survive but is not precious, so it wins when it is set.
-	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+	// XDG_STATE_HOME is the home for data that should survive but is
+	// not precious, so it wins when it is set.
+	if xdg := getenv("XDG_STATE_HOME"); xdg != "" {
 		return filepath.Join(xdg, "pit"), nil
 	}
 
-	home, err := os.UserHomeDir()
+	// Windows keeps such data per machine, not in a roaming profile
+	// that would carry worktrees between computers.
+	if goos == "windows" {
+		if local := getenv("LOCALAPPDATA"); local != "" {
+			return filepath.Join(local, "pit"), nil
+		}
+	}
+
+	h, err := home()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "state", "pit"), nil
+	return filepath.Join(h, ".local", "state", "pit"), nil
 }
 
 // RepoDir is where everything belonging to one repository lives. The

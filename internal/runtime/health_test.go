@@ -2,10 +2,14 @@ package runtime
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -75,6 +79,9 @@ func TestWaitReadyTimesOut(t *testing.T) {
 
 	p := fastProbe(srv.URL)
 	p.Timeout = 80 * time.Millisecond
+	// Each request has longer than the interval: the answer, not a slow
+	// machine, is what the message is about.
+	p.Client = &http.Client{Timeout: 2 * time.Second}
 
 	err := Compose{Runner: &stubRunner{}}.WaitReady(t.Context(), testSandbox(), "web", p)
 	if err == nil {
@@ -246,5 +253,14 @@ func TestWaitReadyStopsWhenTheContainerHasExited(t *testing.T) {
 	err := Compose{Runner: &psRunner{state: "restarting"}}.WaitReady(t.Context(), testSandbox(), "web", p)
 	if err == nil || !strings.Contains(err.Error(), "did not become ready") {
 		t.Errorf("restarting: err = %v", err)
+	}
+}
+
+// Windows refuses a connection in words and a number of its own.
+func TestARefusedConnectionOnWindows(t *testing.T) {
+	err := &url.Error{Op: "Get", URL: "http://127.0.0.1:1", Err: &net.OpError{Op: "dial", Net: "tcp",
+		Err: os.NewSyscallError("connectex", syscall.Errno(10061))}}
+	if got := DescribeAttempt(err); got != "nothing was listening" {
+		t.Errorf("%q", got)
 	}
 }

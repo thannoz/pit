@@ -24,10 +24,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # pit shells out to git, docker and gh; both platforms are targets,
-        # so both are built and tested.
-        os: [ubuntu-latest, macos-latest]
+        # pit shells out to git, docker and gh; every platform is a
+        # target, so every one is built and tested.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    # Git's bash on Windows, so that one script serves all three.
+    defaults:
+      run:
+        shell: bash
     steps:
+      # The tests make repositories of their own and compare what is
+      # checked out byte for byte; Git for Windows would turn their LF
+      # into CRLF on the way.
+      - name: Keep line endings
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

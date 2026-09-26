@@ -1,12 +1,11 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package proc
 
 import "os/exec"
 
-// Windows has no process groups in the POSIX sense. pit does not target
-// it yet (see P10); these keep the package compiling so that porting is
-// a matter of filling them in rather than untangling the call sites.
+// A system that is neither Unix nor Windows gets the plainest stop
+// there is: the child is killed, and whatever it started is left.
 
 func setProcessGroup(*exec.Cmd) {}
 
@@ -23,3 +22,9 @@ func terminate(cmd *exec.Cmd) {
 	}
 	_ = cmd.Process.Kill()
 }
+
+func interruptOne(cmd *exec.Cmd) error { return cmd.Process.Kill() }
+
+// track and untrack have nothing to do where a process group is enough.
+func track(*exec.Cmd)   {}
+func untrack(*exec.Cmd) {}

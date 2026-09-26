@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -190,5 +192,31 @@ func TestFindBrowserHonoursPitBrowser(t *testing.T) {
 	t.Setenv("PIT_BROWSER", "/no/such/chrome")
 	if _, err := FindBrowser(); err == nil || !strings.Contains(err.Error(), "PIT_BROWSER names /no/such/chrome") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestWindowsBrowsers(t *testing.T) {
+	env := map[string]string{"ProgramFiles": `C:\Program Files`, "LOCALAPPDATA": `C:\Users\me\AppData\Local`}
+	got := windowsBrowsers(func(k string) string { return env[k] })
+	for _, want := range []string{
+		`C:\Program Files\Google\Chrome\Application\chrome.exe`,
+		`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
+		`C:\Users\me\AppData\Local\Google\Chrome\Application\chrome.exe`,
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("%q is not looked for: %q", want, got)
+		}
+	}
+	// Chrome is asked for before Edge.
+	if slices.Index(got, `C:\Program Files\Google\Chrome\Application\chrome.exe`) > slices.Index(got, `C:\Program Files\Microsoft\Edge\Application\msedge.exe`) {
+		t.Errorf("order: %q", got)
+	}
+	dir := t.TempDir()
+	there := filepath.Join(dir, "chrome.exe")
+	if err := os.WriteFile(there, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := firstThere([]string{filepath.Join(dir, "none.exe"), there}); !ok || p != there {
+		t.Errorf("%q, %v", p, ok)
 	}
 }

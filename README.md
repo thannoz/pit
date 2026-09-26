@@ -70,7 +70,11 @@ builds and starts the services; those lines are left out here.
 
 ## Requirements
 
-- **macOS or Linux.**
+- **macOS, Linux or Windows.** On Windows, Docker Desktop with Linux
+  containers, and Git for Windows: its `sh` runs the commands of a `.pit.yaml`
+  that call one. Write paths in them with `/`, since a backslash escapes the
+  next character there as it does in a shell. The test suite runs on Windows;
+  `pit` has not been used on a Windows machine for a real review yet.
 - **git.**
 - **Docker** with **Compose v2** (`docker compose`, not `docker-compose`),
   and the daemon running.
@@ -651,8 +655,8 @@ asked to revoke a token from its device flow.
   own published port, network and volumes. Several pull requests, of several
   repositories, can run side by side.
 - **Everything `pit` keeps** lives under `$XDG_STATE_HOME/pit`, which is
-  `~/.local/state/pit` by default: the sandbox list, worktrees and generated
-  compose files.
+  `~/.local/state/pit` by default, and `%LOCALAPPDATA%\pit` on Windows: the
+  sandbox list, worktrees and generated compose files.
 - **`pit down` removes what the sandbox ran in:** containers, networks,
   volumes, the worktree and the files it generated. Images stay, like Docker's
   build cache, so that the next review of the project starts quickly; `docker

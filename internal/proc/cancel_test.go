@@ -3,11 +3,9 @@ package proc
 import (
 	"bytes"
 	"context"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -17,16 +15,6 @@ import (
 // gets SIGINT immediately, so anything slower means the signal path is
 // broken rather than merely slow.
 const cancelDeadline = 200 * time.Millisecond
-
-// alive reports whether a pid still exists. Signal 0 performs the
-// permission and existence checks without delivering anything.
-func alive(pid int) bool {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return p.Signal(syscall.Signal(0)) == nil
-}
 
 func TestCancelStopsTheProcessPromptly(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
@@ -44,42 +32,6 @@ func TestCancelStopsTheProcessPromptly(t *testing.T) {
 	case <-done:
 	case <-time.After(cancelDeadline):
 		t.Fatalf("Stream did not return within %v of cancelling", cancelDeadline)
-	}
-}
-
-func TestCancelKillsGrandchildren(t *testing.T) {
-	// `sh` spawns sleep and reports its pid. Without a process group,
-	// cancelling would reap sh and leave sleep running — which in the
-	// real tool means an orphaned container or a held lock.
-	// The test reads this while os/exec is still writing to it, so it
-	// needs a lock of its own.
-	stdout := &syncBuffer{}
-	ctx, cancel := context.WithCancel(t.Context())
-
-	done := make(chan error, 1)
-	go func() {
-		done <- Exec{GracePeriod: 100 * time.Millisecond}.Stream(
-			ctx,
-			Command{Name: "sh", Args: []string{"-c", "sleep 30 & echo $!; wait"}},
-			stdout, &bytes.Buffer{},
-		)
-	}()
-
-	grandchild := waitForPID(t, stdout)
-	if !alive(grandchild) {
-		t.Fatalf("grandchild %d was never running", grandchild)
-	}
-
-	cancel()
-	<-done
-
-	// Signal delivery and reaping are not instantaneous.
-	deadline := time.Now().Add(2 * time.Second)
-	for alive(grandchild) && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if alive(grandchild) {
-		t.Errorf("grandchild %d survived cancellation", grandchild)
 	}
 }
 

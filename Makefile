@@ -30,6 +30,9 @@ test: ## Run all tests
 test-offline: ## Run the tests with all network access blocked (T-106)
 	@echo "Running the suite with git restricted to local paths and no module proxy."
 	env -i PATH="$$PATH" HOME="$$HOME" \
+		GOMODCACHE="$$(go env GOMODCACHE)" GOCACHE="$$(go env GOCACHE)" \
+		$${SYSTEMROOT:+SYSTEMROOT="$$SYSTEMROOT"} $${TEMP:+TEMP="$$TEMP" TMP="$$TEMP"} \
+		$${USERPROFILE:+USERPROFILE="$$USERPROFILE"} $${LOCALAPPDATA:+LOCALAPPDATA="$$LOCALAPPDATA"} \
 		GOPROXY=off \
 		GIT_ALLOW_PROTOCOL=file \
 		GIT_TERMINAL_PROMPT=0 \

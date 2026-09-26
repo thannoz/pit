@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -32,3 +33,12 @@ func terminate(cmd *exec.Cmd) {
 	// usually already gone, which is the outcome we wanted.
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
+
+// interruptOne asks the child alone to stop, as Ctrl+C would.
+func interruptOne(cmd *exec.Cmd) error {
+	return cmd.Process.Signal(os.Interrupt)
+}
+
+// track and untrack have nothing to do where a process group is enough.
+func track(*exec.Cmd)   {}
+func untrack(*exec.Cmd) {}

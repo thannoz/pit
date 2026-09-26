@@ -37,6 +37,27 @@ func TestStateDirFollowsXDG(t *testing.T) {
 	}
 }
 
+func TestStateDirOnWindows(t *testing.T) {
+	env := map[string]string{"LOCALAPPDATA": `C:\Users\someone\AppData\Local`}
+	home := func() (string, error) { return `C:\Users\someone`, nil }
+	got, err := stateDir("windows", func(k string) string { return env[k] }, home)
+	if want := filepath.Join(env["LOCALAPPDATA"], "pit"); err != nil || got != want {
+		t.Errorf("windows: %q, %v; want %q", got, err, want)
+	}
+	// Elsewhere it is not asked; and XDG and the setting still win.
+	if got, _ := stateDir("linux", func(k string) string { return env[k] }, home); got != filepath.Join(`C:\Users\someone`, ".local", "state", "pit") {
+		t.Errorf("linux: %q", got)
+	}
+	env["XDG_STATE_HOME"] = "/xdg"
+	if got, _ := stateDir("windows", func(k string) string { return env[k] }, home); got != filepath.Join("/xdg", "pit") {
+		t.Errorf("xdg: %q", got)
+	}
+	env[stateDirEnv] = "/set"
+	if got, _ := stateDir("windows", func(k string) string { return env[k] }, home); got != "/set" {
+		t.Errorf("setting: %q", got)
+	}
+}
+
 // TestWorktreePathIsOutsideTheRepository guards the reason the state
 // directory exists at all: a worktree inside the repository would be
 // picked up by watchers, linters and editor indexing.

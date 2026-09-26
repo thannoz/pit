@@ -57,7 +57,11 @@ func TestTreeIsTheCommit(t *testing.T) {
 	}
 
 	head, _ := Tree(t.Context(), proc.Exec{}, r.Repo, d.Head)
-	for _, name := range []string{"docs/with space.md", "docs/Übersicht.md", "docs/tab\there.md", "src/renamed.go"} {
+	names := []string{"docs/with space.md", "docs/Übersicht.md", "src/renamed.go"}
+	if tabsInNames {
+		names = append(names, "docs/tab\there.md")
+	}
+	for _, name := range names {
 		if _, err := fs.Stat(head, name); err != nil {
 			t.Errorf("head: %v", err)
 		}

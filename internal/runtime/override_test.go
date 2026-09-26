@@ -77,7 +77,7 @@ func TestOverridePathIsBesideTheWorktree(t *testing.T) {
 	// in their editor.
 	path := OverridePath("/state/pit/acme-shop-c56680", 482)
 
-	if filepath.Dir(path) != "/state/pit/acme-shop-c56680" {
+	if filepath.Dir(path) != filepath.FromSlash("/state/pit/acme-shop-c56680") {
 		t.Errorf("Dir = %q, want the repository directory", filepath.Dir(path))
 	}
 	if !strings.Contains(filepath.Base(path), "482") {

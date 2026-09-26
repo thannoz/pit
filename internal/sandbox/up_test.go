@@ -213,7 +213,9 @@ func TestUpRunsTheConfiguredHooks(t *testing.T) {
 	m, req, _ := upFixture(t)
 
 	marker := filepath.Join(t.TempDir(), "hook-ran")
-	req.Config.Hooks.AfterUp = []string{"touch " + marker}
+	// A configured line takes a backslash for an escape, as a shell
+	// does; the path is written the way that works everywhere.
+	req.Config.Hooks.AfterUp = []string{"touch " + filepath.ToSlash(marker)}
 
 	if _, err := m.Up(t.Context(), req, &quietReporter{}); err != nil {
 		t.Fatalf("Up: %v", err)
@@ -1612,16 +1614,19 @@ func withCounter(t *testing.T, req *sandbox.UpRequest) string {
 	t.Helper()
 	counter := filepath.Join(t.TempDir(), "count")
 	writeFile(t, counter, "5\n")
+	// Forward slashes, which sh takes on Windows too and a YAML
+	// string does not take for escapes.
+	at := filepath.ToSlash(counter)
 	yaml := `version: 1
 web:
   service: web
   port: 80
 data:
-  migrate: ["sh -c 'n=$(cat ` + counter + `); echo $((n + 1)) > ` + counter + `'"]
+  migrate: ["sh -c 'n=$(cat ` + at + `); echo $((n + 1)) > ` + at + `'"]
   snapshot:
     save: "true"
     restore: "true"
-    writes: "cat ` + counter + `"
+    writes: "cat ` + at + `"
 `
 	writeFile(t, filepath.Join(req.Repo.Root, ".pit.yaml"), yaml)
 	cfg, err := config.Parse([]byte(yaml))
@@ -1836,7 +1841,7 @@ func withRestore(t *testing.T, m *sandbox.Manager, req *sandbox.UpRequest, sha s
 	counter := withCounter(t, req)
 	restored := filepath.Join(t.TempDir(), "restored")
 	yaml := strings.Replace(mustRead(t, filepath.Join(req.Repo.Root, ".pit.yaml")),
-		`restore: "true"`, `restore: "sh -c 'cat > `+restored+`'"`, 1)
+		`restore: "true"`, `restore: "sh -c 'cat > `+filepath.ToSlash(restored)+`'"`, 1)
 	writeFile(t, filepath.Join(req.Repo.Root, ".pit.yaml"), yaml)
 	cfg, err := config.Parse([]byte(yaml))
 	if err != nil {

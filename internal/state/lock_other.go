@@ -1,15 +1,12 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package state
 
 import "os"
 
-// Windows needs LockFileEx rather than flock. pit does not target it
-// yet (see P10); these keep the package compiling so that porting is a
-// matter of filling them in rather than untangling the call sites.
-//
-// Until then the state file is not protected against a second pit
-// running at the same time on Windows.
+// A system that is neither Unix nor Windows has no lock pit knows how
+// to take; these keep the package compiling. There, the state file is
+// not protected against a second pit running at the same time.
 
 func lockFile(*os.File) error { return nil }
 

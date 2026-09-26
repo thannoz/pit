@@ -1,6 +1,7 @@
 package devcontainer
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -91,7 +92,8 @@ func TestTranslateABuild(t *testing.T) {
 		"init": true, "privileged": true, "capAdd": ["SYS_PTRACE"], "securityOpt": ["seccomp=unconfined"]
 	}`, Input{})
 	dev := c.Services[Service]
-	want := &build{Context: "/wt/pr-7", Dockerfile: "/wt/pr-7/.devcontainer/Dockerfile", Args: map[string]string{"V": "$$HOME"}, Target: "dev"}
+	// Paths on this machine, in its own spelling.
+	want := &build{Context: filepath.FromSlash("/wt/pr-7"), Dockerfile: filepath.FromSlash("/wt/pr-7/.devcontainer/Dockerfile"), Args: map[string]string{"V": "$$HOME"}, Target: "dev"}
 	if !reflect.DeepEqual(dev.Build, want) || dev.Image != "" {
 		t.Errorf("build = %+v", dev.Build)
 	}

@@ -85,6 +85,26 @@ func TestParseRemoteURL(t *testing.T) {
 			raw:  "file:///tmp/shop.git",
 			want: Identity{Host: LocalHost, Owner: "/tmp", Name: "shop"},
 		},
+		{
+			name: "a Windows path is one too",
+			raw:  `C:\Users\someone\code\shop.git`,
+			want: Identity{Host: LocalHost, Owner: "c:/users/someone/code", Name: "shop"},
+		},
+		{
+			name: "written with forward slashes",
+			raw:  "D:/repos/shop/",
+			want: Identity{Host: LocalHost, Owner: "d:/repos", Name: "shop"},
+		},
+		{
+			name: "on a share",
+			raw:  `\\server\repos\shop`,
+			want: Identity{Host: LocalHost, Owner: "/server/repos", Name: "shop"},
+		},
+		{
+			name: "file scheme with a drive",
+			raw:  "file:///C:/repos/shop.git",
+			want: Identity{Host: LocalHost, Owner: "/c:/repos", Name: "shop"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -153,6 +173,7 @@ func TestSlugIsSafeForDockerAndDirectories(t *testing.T) {
 		{"dots and spaces are replaced", Identity{Host: "github.com", Owner: "a.c me", Name: "sh.op"}, "a-c-me-sh-op"},
 		{"only the innermost group is kept", Identity{Host: "gitlab.com", Owner: "group/sub", Name: "tool"}, "sub-tool"},
 		{"no owner", Identity{Host: LocalHost, Name: "shop"}, "shop"},
+		{"a Windows directory", Identity{Host: LocalHost, Owner: `C:\Users\someone\code`, Name: "shop"}, "code-shop"},
 		{"leading digit is kept", Identity{Host: "github.com", Owner: "9lives", Name: "cat"}, "9lives-cat"},
 		{"unusable name falls back", Identity{Host: "github.com", Owner: "...", Name: "..."}, "repo"},
 	}

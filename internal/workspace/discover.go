@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 
 	"github.com/thannoz/pit/internal/errs"
@@ -60,7 +61,9 @@ func Root(ctx context.Context, r Runner, dir string) (string, error) {
 		return "", errs.Wrap(err, "%s is not inside a git repository", describe(dir)).
 			WithHint("run pit from within a repository, or clone one first")
 	}
-	return strings.TrimSpace(string(out)), nil
+	// Git for Windows answers C:/Users/...; everything else pit does
+	// with the path takes the system's separators.
+	return filepath.FromSlash(strings.TrimSpace(string(out))), nil
 }
 
 // RemoteURL returns the URL configured for the named remote.

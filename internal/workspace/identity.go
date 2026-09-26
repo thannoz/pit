@@ -46,7 +46,9 @@ func (i Identity) String() string {
 // Slug is a short, readable name safe to use in a directory or a Docker
 // Compose project name. It is not unique on its own; pair it with Hash.
 func (i Identity) Slug() string {
-	owner := path.Base(i.Owner) // the innermost group is the useful one
+	// The innermost group is the useful one; a Windows directory's
+	// separators are backslashes.
+	owner := path.Base(strings.ReplaceAll(i.Owner, `\`, "/"))
 	if owner == "." || owner == "/" {
 		owner = ""
 	}
@@ -145,18 +147,28 @@ func ownerAndName(repoPath string) (owner, name string) {
 
 // isLocalPath reports whether raw points at the filesystem rather than
 // at a service. file:// is explicit; a leading slash or dot is git's
-// shorthand for the same thing.
+// shorthand for the same thing, and so, on Windows, are a drive letter
+// and a share: C:\repos\shop, \\server\repos\shop.
 func isLocalPath(raw string) bool {
 	return strings.HasPrefix(raw, "file://") ||
 		strings.HasPrefix(raw, "/") ||
+		strings.HasPrefix(raw, `\`) ||
 		strings.HasPrefix(raw, ".") ||
-		strings.HasPrefix(raw, "~")
+		strings.HasPrefix(raw, "~") ||
+		driveLetter.MatchString(raw)
 }
+
+// driveLetter is a Windows path. Read as git's scp-like form it would
+// be the host "c"; git on Windows reads it as a path, and so does pit
+// everywhere, since no one names an SSH host with one letter.
+var driveLetter = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
 
 // localIdentity names a filesystem remote after its directory. The full
 // path goes into the hash, so two directories never collide.
 func localIdentity(raw string) Identity {
 	p := strings.TrimPrefix(raw, "file://")
+	// One separator, whatever the system wrote.
+	p = strings.ReplaceAll(p, `\`, "/")
 	p = strings.TrimSuffix(strings.TrimRight(p, "/"), ".git")
 
 	return Identity{

@@ -129,6 +129,11 @@ type supervisor struct {
 	dir   string
 	mu    sync.Mutex
 	state state
+	// saving lets one save at a time write the file: a process that
+	// ends while the state is saved for another reason would otherwise
+	// rename the other's half-written file away, or its own older state
+	// over the newer.
+	saving sync.Mutex
 }
 
 func (s *supervisor) start(dir string, p runProcess) (*exec.Cmd, error) {
@@ -175,6 +180,8 @@ func (s *supervisor) set(name string, st procState) {
 // save writes the state where the runner reads it, whole or not at
 // all.
 func (s *supervisor) save() error {
+	s.saving.Lock()
+	defer s.saving.Unlock()
 	s.mu.Lock()
 	data, err := json.MarshalIndent(s.state, "", "  ")
 	s.mu.Unlock()

@@ -446,6 +446,38 @@ func consoleText(args []*runtime.RemoteObject) string {
 	return strings.Join(parts, " ")
 }
 
+// windowsBrowsers are where Chrome, Edge and Brave install themselves
+// on Windows: for every user, or for one. Edge comes with Windows, so
+// a machine without Chrome still has a browser pit can drive.
+func windowsBrowsers(getenv func(string) string) []string {
+	apps := []string{
+		`Google\Chrome\Application\chrome.exe`,
+		`Chromium\Application\chrome.exe`,
+		`Microsoft\Edge\Application\msedge.exe`,
+		`BraveSoftware\Brave-Browser\Application\brave.exe`,
+	}
+	var out []string
+	for _, root := range []string{"ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"} {
+		dir := getenv(root)
+		if dir == "" {
+			continue
+		}
+		for _, app := range apps {
+			out = append(out, dir+`\`+app)
+		}
+	}
+	return out
+}
+
+func firstThere(paths []string) (string, bool) {
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // FindBrowser looks for Chrome or Chromium: PIT_BROWSER first, then
 // where each is usually installed.
 func FindBrowser() (string, error) {
@@ -472,6 +504,11 @@ func FindBrowser() (string, error) {
 			if _, err := os.Stat(c); err == nil {
 				return c, nil
 			}
+		}
+	}
+	if goruntime.GOOS == "windows" {
+		if c, ok := firstThere(windowsBrowsers(os.Getenv)); ok {
+			return c, nil
 		}
 	}
 	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "brave-browser"} {

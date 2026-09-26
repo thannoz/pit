@@ -3,7 +3,9 @@ package proc
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -59,13 +61,20 @@ func TestOutputPassesStdinThrough(t *testing.T) {
 func TestOutputRunsInDir(t *testing.T) {
 	dir := t.TempDir()
 
-	out, err := Exec{}.Output(t.Context(), Command{Name: "pwd", Dir: dir})
+	where := Command{Name: "pwd", Dir: dir}
+	if goruntime.GOOS == "windows" {
+		// Git's pwd would say /tmp/...: a directory of its own.
+		where = Command{Name: "cmd", Args: []string{"/c", "cd"}, Dir: dir}
+	}
+	out, err := Exec{}.Output(t.Context(), where)
 	if err != nil {
 		t.Fatalf("Output: %v", err)
 	}
-	// macOS reports /private/var for /var, so compare the suffix.
-	if got := strings.TrimSpace(string(out)); !strings.HasSuffix(got, strings.TrimPrefix(dir, "/private")) {
-		t.Errorf("ran in %q, want %q", got, dir)
+	// The same directory, however it is spelled: macOS reports
+	// /private/var for /var, Windows may give either name of one.
+	want, _ := os.Stat(dir)
+	if got, err := os.Stat(strings.TrimSpace(string(out))); err != nil || !os.SameFile(got, want) {
+		t.Errorf("ran in %q, want %q", out, dir)
 	}
 }
 

@@ -48,7 +48,8 @@ func TestDiscover(t *testing.T) {
 		t.Fatalf("Discover: %v", err)
 	}
 
-	if repo.Root != "/Users/someone/code/shop" {
+	// Git's slashes, in the system's own spelling.
+	if repo.Root != filepath.FromSlash("/Users/someone/code/shop") {
 		t.Errorf("Root = %q, want the repository top level", repo.Root)
 	}
 	if want := (Identity{Host: "github.com", Owner: "acme", Name: "shop"}); repo.Identity != want {
@@ -74,7 +75,7 @@ func TestDiscoverAsksGitFromTheGivenDirectory(t *testing.T) {
 		t.Errorf("rev-parse ran in %q, want %q", r.calls[0].Dir, from)
 	}
 	// Once the root is known, everything else runs from there.
-	if r.calls[1].Dir != "/repo" {
+	if r.calls[1].Dir != filepath.FromSlash("/repo") {
 		t.Errorf("remote get-url ran in %q, want the repository root", r.calls[1].Dir)
 	}
 }
@@ -136,8 +137,13 @@ func TestDiscoverAgainstRealGit(t *testing.T) {
 		t.Fatalf("Discover: %v", err)
 	}
 
-	// macOS resolves TempDir through /private, so compare suffixes.
-	if !strings.HasSuffix(repo.Root, strings.TrimPrefix(root, "/private")) {
+	// The same directory, however it is spelled: macOS resolves TempDir
+	// through /private, Windows names it by its short name.
+	want, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.Stat(repo.Root); err != nil || !os.SameFile(got, want) || !filepath.IsAbs(repo.Root) {
 		t.Errorf("Root = %q, want it to point at %q", repo.Root, root)
 	}
 	if want := (Identity{Host: "github.com", Owner: "acme", Name: "shop"}); repo.Identity != want {

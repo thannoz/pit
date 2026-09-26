@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -151,6 +152,9 @@ func TestShellInProcesses(t *testing.T) {
 // pit runs itself, with a hidden command, to keep a sandbox's processes
 // running once it is gone.
 func TestSuperviseRunsWhatItIsGiven(t *testing.T) {
+	if goruntime.GOOS == "windows" {
+		t.Skip("pit runs processes on macOS and Linux only")
+	}
 	dir, work := t.TempDir(), t.TempDir()
 	job := `{"dir": ` + strconvQuote(work) + `, "processes": [{"name": "web", "command": "echo $GREETING > out.txt", "env": ["GREETING=hi"]}]}`
 	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(job), 0o600); err != nil {

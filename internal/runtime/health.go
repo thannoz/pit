@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thannoz/pit/internal/errs"
@@ -191,7 +192,7 @@ func DescribeAttempt(err error) string {
 		return "no answer"
 	case errors.As(err, &target) && target.Timeout():
 		return "the request timed out"
-	case strings.Contains(err.Error(), "connection refused"):
+	case refused(err):
 		return "nothing was listening"
 	default:
 		// Transport errors read as "Get \"http://...\": reason"; the
@@ -201,6 +202,17 @@ func DescribeAttempt(err error) string {
 		}
 		return err.Error()
 	}
+}
+
+// wsaeconnrefused is Windows' own number for a refused connection,
+// which syscall.ECONNREFUSED does not match there.
+const wsaeconnrefused = syscall.Errno(10061)
+
+// refused recognises a connection nothing accepted, as Unix and Windows
+// each say it.
+func refused(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, wsaeconnrefused) ||
+		strings.Contains(err.Error(), "connection refused")
 }
 
 // IndentLines indents each line, for output quoted in a message.

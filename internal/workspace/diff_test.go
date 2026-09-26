@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -30,19 +31,24 @@ func (r *testRepo) awkwardPullRequest(pr int) (base, head string) {
 	git(r.t, up, "checkout", "--quiet", "-B", "awkward")
 	put(r.t, filepath.Join(up, "docs", "with space.md"), "a file with a space\n")
 	put(r.t, filepath.Join(up, "docs", "Übersicht.md"), "a file with an umlaut\n")
-	put(r.t, filepath.Join(up, "docs", "tab\there.md"), "a file with a tab in its name\n")
+	// Windows allows no tab in a file's name; git elsewhere does.
+	if tabsInNames {
+		put(r.t, filepath.Join(up, "docs", "tab\there.md"), "a file with a tab in its name\n")
+	}
 	put(r.t, filepath.Join(up, "logo.png"), string([]byte{0x89, 'P', 'N', 'G', 0, 0, 1, 2, 0, 3}))
 	git(r.t, up, "mv", "src/moved.go", "src/renamed.go")
 	git(r.t, up, "rm", "--quiet", "src/gone.go")
-	if err := os.Chmod(filepath.Join(up, "scripts", "run.sh"), 0o755); err != nil {
-		r.t.Fatalf("chmod: %v", err)
-	}
 	// Two separate places, far enough apart to be two hunks.
 	lines := strings.Split(numbered(40), "\n")
 	lines[2] = "changed near the top"
 	lines[35] = "changed near the bottom"
 	put(r.t, filepath.Join(up, "twice.txt"), strings.Join(lines, "\n"))
+	if err := os.Chmod(filepath.Join(up, "scripts", "run.sh"), 0o755); err != nil {
+		r.t.Fatalf("chmod: %v", err)
+	}
 	git(r.t, up, "add", "-A")
+	// And through git: Windows keeps no executable bit for git to find.
+	git(r.t, up, "update-index", "--chmod=+x", "scripts/run.sh")
 	git(r.t, up, "commit", "--quiet", "-m", "the awkward change")
 	head = r.rev(up, "HEAD")
 
@@ -51,6 +57,9 @@ func (r *testRepo) awkwardPullRequest(pr int) (base, head string) {
 	git(r.t, up, "reset", "--quiet", "--hard", base)
 	return base, head
 }
+
+// tabsInNames says the system allows a tab in a file's name.
+var tabsInNames = goruntime.GOOS != "windows"
 
 // put writes a file, making its directory first; the fixture spreads
 // its files across several.
@@ -128,12 +137,17 @@ func TestChangesReadsTheWholeDiff(t *testing.T) {
 	}{
 		{"docs/with space.md", diff.Added},
 		{"docs/Übersicht.md", diff.Added},
-		{"docs/tab\there.md", diff.Added},
 		{"logo.png", diff.Added},
 		{"src/renamed.go", diff.Renamed},
 		{"src/gone.go", diff.Deleted},
 		{"scripts/run.sh", diff.Modified},
 		{"twice.txt", diff.Modified},
+	}
+	if tabsInNames {
+		tests = append(tests, struct {
+			path   string
+			change diff.Change
+		}{"docs/tab\there.md", diff.Added})
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {

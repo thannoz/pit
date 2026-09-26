@@ -1,0 +1,6 @@
+# One line ending everywhere. gofmt, the golden files and the scripts
+# the demo runs inside Linux containers all expect LF, and Git for
+# Windows would otherwise check them out with CRLF.
+* text=auto eol=lf
+*.gif binary
+*.patch -text
