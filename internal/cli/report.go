@@ -27,7 +27,7 @@ var commenterFor = func(ctx context.Context, repo string) (forge.Commenter, erro
 		if host == forge.LocalHost {
 			where = "in a directory on this machine"
 		}
-		return nil, errs.New("pit can post comments only on GitHub and GitLab, and this repository is %s", where).
+		return nil, errs.New("pit can post comments only on GitHub, GitLab, Gitea, Forgejo and Bitbucket, and this repository is %s", where).
 			WithHint("the comment is above; paste it into the pull request yourself")
 	}
 	if gh, ok := f.(forge.GitHub); ok {

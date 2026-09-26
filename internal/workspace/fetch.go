@@ -143,3 +143,68 @@ func short(sha string) string {
 	}
 	return sha
 }
+
+// FetchBranch downloads a pull request's commit from its branch into
+// pit's ref for the pull request, for a service that keeps no ref of
+// its own for pull requests: Bitbucket. fork is the owner/name of the
+// fork the branch is in, or empty for the repository itself; a fork is
+// fetched from the address origin has, with the fork's path in it, so
+// that whatever lets origin in lets the fork in.
+func FetchBranch(ctx context.Context, r Runner, repo Repo, pr int, fork, branch string) (string, error) {
+	if pr <= 0 {
+		return "", errs.New("%d is not a pull request number", pr)
+	}
+	if branch == "" {
+		return "", errs.New("#%d names no branch to fetch", pr)
+	}
+	source := DefaultRemote
+	if fork != "" {
+		// The address as written: git applies the reviewer's
+		// insteadOf rules to the fork's too when it fetches.
+		out, err := r.Output(ctx, proc.Command{Name: "git", Args: []string{"config", "--get", "remote." + DefaultRemote + ".url"}, Dir: repo.Root})
+		if err != nil {
+			return "", errs.Wrap(err, "cannot read where %s is", DefaultRemote)
+		}
+		if source, err = siblingURL(strings.TrimSpace(string(out)), fork); err != nil {
+			return "", err
+		}
+	}
+	_, err := r.Output(ctx, proc.Command{
+		Name: "git",
+		Args: []string{"fetch", "--no-tags", "--force", "--quiet", source, "refs/heads/" + branch + ":" + LocalRef(pr)},
+		Dir:  repo.Root,
+	})
+	if err != nil {
+		where := "the repository"
+		if fork != "" {
+			where = "the fork " + fork
+		}
+		return "", errs.Wrap(err, "cannot fetch #%d's branch %s from %s", pr, branch, where).
+			WithHint("the branch may be gone, or the fork private or deleted")
+	}
+	return ResolveRef(ctx, r, repo.Root, LocalRef(pr))
+}
+
+// siblingURL is origin's address with another repository's path in it:
+// https://bitbucket.org/acme/shop.git and lisa/shop make
+// https://bitbucket.org/lisa/shop.git, and the same for SSH.
+func siblingURL(origin, path string) (string, error) {
+	suffix := ""
+	if strings.HasSuffix(origin, ".git") {
+		suffix = ".git"
+	}
+	// scp-like: git@bitbucket.org:acme/shop.git
+	if !strings.Contains(origin, "://") {
+		host, _, ok := strings.Cut(origin, ":")
+		if !ok {
+			return "", errs.New("cannot tell a fork's address from %s", origin)
+		}
+		return host + ":" + path + suffix, nil
+	}
+	scheme, rest, _ := strings.Cut(origin, "://")
+	host, _, ok := strings.Cut(rest, "/")
+	if !ok {
+		return "", errs.New("cannot tell a fork's address from %s", origin)
+	}
+	return scheme + "://" + host + "/" + path + suffix, nil
+}

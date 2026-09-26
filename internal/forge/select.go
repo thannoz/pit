@@ -30,11 +30,11 @@ type Options struct {
 
 // For returns the forge that serves a repository.
 //
-// Only GitHub can be asked for a pull request's title, author and
-// state. Everywhere else pit falls back to reading the commit, which
-// is less but is not nothing -- and is the difference between working
-// on GitLab, on a company's own server and against a local repository,
-// and refusing to.
+// GitHub, GitLab, Gitea, Forgejo and Bitbucket are asked for a pull
+// request's title, author and state. Everywhere else pit falls back to
+// reading the commit, which is less but is not nothing -- and is the
+// difference between working on a company's own server and against a
+// local repository, and refusing to.
 //
 // An earlier version returned an error for every host it did not
 // recognise. That was honest and useless: it blocked the tool on most
@@ -51,12 +51,60 @@ func For(o Options) (Forge, error) {
 	if isGitLab(o.Host) {
 		return GitLab{Host: o.Host, Project: o.Repo, Token: TokenFromEnv()}, nil
 	}
-
-	if o.Resolver == nil {
-		return nil, errs.New("pit cannot read pull requests from %s", o.Host).
-			WithHint("this is a bug in pit; please report it")
+	if isGitea(o.Host) {
+		return Gitea{Host: o.Host, Repo: o.Repo, Token: GiteaTokenFromEnv()}, nil
 	}
-	return Git{Runner: o.Runner, Resolver: o.Resolver, Dir: o.Dir}, nil
+	if isBitbucket(o.Host) {
+		return BitbucketFromEnv(o.Repo), nil
+	}
+
+	var git Forge
+	if o.Resolver != nil {
+		git = Git{Runner: o.Runner, Resolver: o.Resolver, Dir: o.Dir}
+	}
+	if o.Host == LocalHost || o.Host == "" {
+		if git == nil {
+			return nil, errs.New("pit cannot read pull requests from %s", o.Host).
+				WithHint("this is a bug in pit; please report it")
+		}
+		return git, nil
+	}
+	// A company's own server has a name of its own; whether it runs
+	// Gitea or Forgejo is asked the first time it matters.
+	return Probing{Gitea: Gitea{Host: o.Host, Repo: o.Repo, Token: GiteaTokenFromEnv()}, Git: git}, nil
+}
+
+// Probing is a host pit does not know by name: it is asked whether it
+// runs Gitea or Forgejo, and when it does not, the commit is read.
+type Probing struct {
+	Gitea Gitea
+	// Git reads the commit; nil where only commenting was asked for.
+	Git Forge
+}
+
+var (
+	_ Forge     = Probing{}
+	_ Commenter = Probing{}
+)
+
+// PullRequest asks the host's API, or reads the commit.
+func (p Probing) PullRequest(ctx context.Context, number int) (PR, error) {
+	if p.Gitea.IsGitea(ctx) {
+		return p.Gitea.PullRequest(ctx, number)
+	}
+	if p.Git == nil {
+		return PR{}, errs.New("pit cannot read pull requests from %s", p.Gitea.Host)
+	}
+	return p.Git.PullRequest(ctx, number)
+}
+
+// Comment posts on a host that runs Gitea or Forgejo.
+func (p Probing) Comment(ctx context.Context, number int, body string) (string, error) {
+	if !p.Gitea.IsGitea(ctx) {
+		return "", errs.New("pit can post comments on GitHub, GitLab, Gitea, Forgejo and Bitbucket, and %s is none it recognises", p.Gitea.Host).
+			WithHint("the comment is above; paste it into the pull request yourself")
+	}
+	return p.Gitea.Comment(ctx, number, body)
 }
 
 // isGitHub recognises github.com and the naming self-hosted GitHub

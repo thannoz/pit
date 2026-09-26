@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thannoz/pit/internal/errs"
+	"github.com/thannoz/pit/internal/proc"
 )
 
 // serverAnswering starts a server whose status code is decided per
@@ -202,5 +203,48 @@ func TestLogsAsksForATail(t *testing.T) {
 		if !strings.Contains(args, want) {
 			t.Errorf("args %q are missing %q", args, want)
 		}
+	}
+}
+
+// psRunner answers `ps` with a service's state and `logs` with its
+// last words.
+type psRunner struct {
+	stubRunner
+	state string
+}
+
+func (r *psRunner) Output(_ context.Context, c proc.Command) ([]byte, error) {
+	args := strings.Join(c.Args, " ")
+	switch {
+	case strings.Contains(args, " ps "):
+		return []byte(`{"Service": "web", "Name": "p-web-1", "State": "` + r.state + `", "ExitCode": 3}` + "\n"), nil
+	case strings.Contains(args, " logs "):
+		return []byte("web-1  | Error: Cannot find module 'express'\n"), nil
+	}
+	return nil, nil
+}
+
+// A container that has ended will not answer: it is said at once.
+func TestWaitReadyStopsWhenTheContainerHasExited(t *testing.T) {
+	srv, _ := serverAnswering(t, func(int) int { return http.StatusBadGateway })
+	for _, state := range []string{"exited", "dead"} {
+		p := fastProbe(srv.URL)
+		p.Timeout = time.Minute
+		started := time.Now()
+		err := Compose{Runner: &psRunner{state: state}}.WaitReady(t.Context(), testSandbox(), "web", p)
+		if err == nil || !strings.Contains(err.Error(), "web exited with code 3 before it answered") ||
+			!strings.Contains(err.Error(), "Cannot find module 'express'") || !strings.Contains(errs.Hint(err), "logs web") {
+			t.Errorf("%s: err = %v", state, err)
+		}
+		if time.Since(started) > 10*time.Second {
+			t.Errorf("%s: waited %v", state, time.Since(started))
+		}
+	}
+	// One that is starting again may still answer.
+	p := fastProbe(srv.URL)
+	p.Timeout = 100 * time.Millisecond
+	err := Compose{Runner: &psRunner{state: "restarting"}}.WaitReady(t.Context(), testSandbox(), "web", p)
+	if err == nil || !strings.Contains(err.Error(), "did not become ready") {
+		t.Errorf("restarting: err = %v", err)
 	}
 }

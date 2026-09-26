@@ -47,13 +47,41 @@ func ExpandURL(template, host string, port int) string {
 //
 // The first attempt happens immediately. A service that is already up
 // should not cost the reviewer an interval of waiting for no reason.
+//
+// A service whose container has exited will not answer, and saying so
+// at once beats waiting out the timeout for it.
 func (c Compose) WaitReady(ctx context.Context, s Sandbox, service string, p Probe) error {
-	attempts, err := Poll(ctx, p, nil)
+	gone := func() error {
+		statuses, err := c.Status(ctx, s)
+		if err != nil {
+			return nil // the next attempt asks again
+		}
+		for _, st := range statuses {
+			if st.Service == service && (st.State == "exited" || st.State == "dead") {
+				return c.exited(ctx, s, service, st.ExitCode)
+			}
+		}
+		return nil
+	}
+	attempts, err := Poll(ctx, p, gone)
 	var late TimedOut
 	if errors.As(err, &late) {
 		return c.notReady(ctx, s, service, p, attempts, late.Last)
 	}
 	return err
+}
+
+// exited says that a service's container ended before it answered,
+// with its last words.
+func (c Compose) exited(ctx context.Context, s Sandbox, service string, code int) error {
+	msg := fmt.Sprintf("%s exited with code %d before it answered", service, code)
+	if logs, err := c.Logs(ctx, s, service, logTailOnFailure); err == nil {
+		if tail := strings.TrimSpace(string(logs)); tail != "" {
+			msg += "\n\nthe last output from " + service + ":\n" + IndentLines(tail)
+		}
+	}
+	return errs.New("%s", msg).
+		WithHint("run `docker compose -p %s logs %s` for all of it", s.Project, service)
 }
 
 // TimedOut is what Poll returns when the timeout passed: Last is why

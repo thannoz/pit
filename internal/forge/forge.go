@@ -47,10 +47,26 @@ type PR struct {
 	Draft bool
 	// URL is the page a human would open.
 	URL string
+	// Source is where the commit is fetched from, for a service that
+	// keeps no ref for its pull requests: Bitbucket. Empty is the ref
+	// the service keeps.
+	Source Source
 	// Limited says the metadata came from the commit rather than from
 	// a hosting service, so Branch, State and URL are unknown. Worth
 	// saying once, because "open" then means "not known to be closed".
 	Limited bool
+}
+
+// Source is a branch to fetch, in the repository or in a fork of it.
+type Source struct {
+	// Repo is the fork's owner/name, or empty for the repository
+	// itself.
+	Repo string
+	// Branch is the pull request's branch in it.
+	Branch string
+	// Lost says the service no longer says where the branch is: the
+	// fork is deleted, or not one the reviewer may see.
+	Lost bool
 }
 
 // Describe renders the pull request the way a reviewer would recognise

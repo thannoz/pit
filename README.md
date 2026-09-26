@@ -598,13 +598,20 @@ features that are planned, not built: `data.production_like` and
 
 - **GitHub** (github.com and hosts named `github.*`): through `gh`, which
   supplies the title, author and state. `gh` has to be logged in.
-- **Anywhere else**, such as GitLab, a company's own server, or a local
-  directory: `pit` fetches the pull request's ref from `origin` directly, and
-  reads the title and author from its commit. The ref is
-  `refs/merge-requests/<n>/head` on GitLab and `refs/pull/<n>/head` elsewhere.
-  The demo works this way. What a commit cannot say stays unknown: `pit ls`
-  shows no branch, and `pit what` compares against `origin`'s default branch,
-  which it calls "the default branch".
+- **GitLab** (gitlab.com and hosts named `gitlab.*`), **Gitea and Forgejo**
+  (codeberg.org, gitea.com, hosts named `gitea.*` or `forgejo.*`, and any
+  other host that answers as one), and **Bitbucket Cloud** (bitbucket.org):
+  through their APIs, with nothing to install. A public repository needs no
+  account. A private one, and posting a comment, need a token:
+  `GITLAB_TOKEN`; `FORGEJO_TOKEN` or `GITEA_TOKEN`; `BITBUCKET_TOKEN`, or
+  `BITBUCKET_USERNAME` with `BITBUCKET_APP_PASSWORD`. Bitbucket keeps no ref
+  for a pull request, so `pit` fetches its branch, from the fork it was opened
+  from when it was.
+- **Anywhere else**, such as a local directory: `pit` fetches
+  `refs/pull/<n>/head` from `origin` and reads the title and author from its
+  commit. The demo works this way. What a commit cannot say stays unknown:
+  `pit ls` shows no branch, and `pit what` compares against `origin`'s default
+  branch, which it calls "the default branch".
 
 ## What stays where
 

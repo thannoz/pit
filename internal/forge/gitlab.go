@@ -1,18 +1,15 @@
 package forge
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/thannoz/pit/internal/errs"
@@ -134,74 +131,17 @@ func (g GitLab) mrPath(number int) string {
 	return "/projects/" + url.PathEscape(g.Project) + "/merge_requests/" + strconv.Itoa(number)
 }
 
-// status is an answer GitLab gave that was not a success.
-type status struct {
-	code    int
-	message string
-}
-
-func (s status) Error() string {
-	if s.message == "" {
-		return fmt.Sprintf("GitLab answered %d", s.code)
-	}
-	return fmt.Sprintf("GitLab answered %d: %s", s.code, s.message)
-}
-
 // call asks the API and reads its answer into out.
 func (g GitLab) call(ctx context.Context, method, path string, payload []byte, out any) error {
 	base := g.API
 	if base == "" {
 		base = "https://" + g.Host + "/api/v4"
 	}
-	var body io.Reader
-	if payload != nil {
-		body = bytes.NewReader(payload)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
-	if err != nil {
-		return err
-	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	headers := map[string]string{}
 	if g.Token != "" {
-		req.Header.Set("PRIVATE-TOKEN", g.Token)
+		headers["PRIVATE-TOKEN"] = g.Token
 	}
-	client := g.Client
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode/100 != 2 {
-		var m struct {
-			Message any `json:"message"`
-			Error   any `json:"error"`
-		}
-		_ = json.Unmarshal(data, &m)
-		msg := fmt.Sprint(firstOf(m.Message, m.Error))
-		return status{code: resp.StatusCode, message: msg}
-	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return errs.Wrap(err, "cannot read what %s answered", g.Host)
-	}
-	return nil
-}
-
-func firstOf(values ...any) any {
-	for _, v := range values {
-		if v != nil {
-			return v
-		}
-	}
-	return ""
+	return rest{Service: "GitLab", Host: g.Host, Client: g.Client}.call(ctx, method, base+path, headers, payload, out)
 }
 
 // describe turns what went wrong into what to do about it.

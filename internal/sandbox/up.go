@@ -122,7 +122,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		}
 		st.done(ctx, "%s at %s, the base of #%d", orElse(req.PR.BaseBranch, "the default branch"), short(sha), pr)
 	} else {
-		if sha, err = workspace.Fetch(ctx, m.Git, req.Repo, pr); err != nil {
+		if sha, err = m.fetchPR(ctx, req); err != nil {
 			return state.Sandbox{}, err
 		}
 		// The branch it goes into, which `pit what` measures the
@@ -625,4 +625,17 @@ func orElse(s, fallback string) string {
 		return s
 	}
 	return fallback
+}
+
+// fetchPR fetches the pull request's commit: from the ref its service
+// keeps, or from its branch where the service keeps none.
+func (m *Manager) fetchPR(ctx context.Context, req UpRequest) (string, error) {
+	if s := req.PR.Source; s.Branch != "" {
+		if s.Lost {
+			return "", errs.New("#%d's branch %s is in a repository the service no longer shows: a fork that is deleted, or that you may not see", req.PR.Number, s.Branch).
+				WithHint("there is no commit to fetch; the pull request's page may still show its diff")
+		}
+		return workspace.FetchBranch(ctx, m.Git, req.Repo, req.PR.Number, s.Repo, s.Branch)
+	}
+	return workspace.Fetch(ctx, m.Git, req.Repo, req.PR.Number)
 }

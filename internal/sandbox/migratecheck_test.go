@@ -9,6 +9,7 @@ import (
 
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/data/datatest"
+	"github.com/thannoz/pit/internal/forge"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime"
 	"github.com/thannoz/pit/internal/runtime/runtimetest"
@@ -381,5 +382,15 @@ func TestARollbackThePullRequestBrings(t *testing.T) {
 	check, err := m.CheckMigrations(t.Context(), req, &quietReporter{})
 	if err != nil || !check.Rollback.Reversible() {
 		t.Errorf("rollback %+v, %v", check.Rollback, err)
+	}
+}
+
+// A pull request on a service that keeps no ref for it is checked at
+// its branch, like it is reviewed.
+func TestCheckFetchesTheBranchAServiceNames(t *testing.T) {
+	m, req, _ := withMigration(t, `"true"`)
+	req.PR.Source = forge.Source{Branch: "fix-tax", Lost: true}
+	if _, err := m.CheckMigrations(t.Context(), req, &quietReporter{}); err == nil || !strings.Contains(err.Error(), "branch fix-tax is in a repository the service no longer shows") {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -34,7 +34,7 @@ func TestForPicksGitHub(t *testing.T) {
 // a local one. Reading the commit is less than a service can offer,
 // but it is not nothing.
 func TestForFallsBackToGit(t *testing.T) {
-	for _, host := range []string{"git.example.org", LocalHost, ""} {
+	for _, host := range []string{LocalHost, ""} {
 		t.Run(host, func(t *testing.T) {
 			f, err := For(Options{Host: host, Repo: "team/tool", Runner: &stubGH{}, Resolver: stubResolver{}})
 			if err != nil {
@@ -44,6 +44,50 @@ func TestForFallsBackToGit(t *testing.T) {
 				t.Errorf("For(%q) returned %T, want Git", host, f)
 			}
 		})
+	}
+	// A server with a name of its own is asked what it runs first, and
+	// read by its commit if it is nothing pit knows.
+	f, err := For(Options{Host: "git.example.org", Repo: "team/tool", Runner: &stubGH{}, Resolver: stubResolver{}})
+	p, ok := f.(Probing)
+	if err != nil || !ok || p.Gitea.Host != "git.example.org" || p.Gitea.Repo != "team/tool" {
+		t.Fatalf("%#v, %v", f, err)
+	}
+	if _, ok := p.Git.(Git); !ok {
+		t.Errorf("git = %T", p.Git)
+	}
+}
+
+func TestForPicksTheOtherForges(t *testing.T) {
+	t.Setenv("FORGEJO_TOKEN", "fj")
+	t.Setenv("BITBUCKET_TOKEN", "bb")
+	for host, want := range map[string]string{
+		"codeberg.org": "Gitea", "gitea.com": "Gitea", "gitea.acme.net": "Gitea", "forgejo.acme.net": "Gitea",
+		"Codeberg.org": "Gitea", "bitbucket.org": "Bitbucket", "gitlab.com": "GitLab",
+	} {
+		f, err := For(Options{Host: host, Repo: "team/tool", Runner: &stubGH{}})
+		if err != nil {
+			t.Fatalf("%s: %v", host, err)
+		}
+		switch got := f.(type) {
+		case Gitea:
+			if want != "Gitea" || got.Host != host || got.Repo != "team/tool" || got.Token != "fj" {
+				t.Errorf("%s: %#v", host, got)
+			}
+		case Bitbucket:
+			if want != "Bitbucket" || got.Repo != "team/tool" || got.Token != "bb" {
+				t.Errorf("%s: %#v", host, got)
+			}
+		case GitLab:
+			if want != "GitLab" {
+				t.Errorf("%s: %#v", host, got)
+			}
+		default:
+			t.Errorf("%s: %T", host, f)
+		}
+	}
+	// Without a resolver, a local repository cannot be read at all.
+	if _, err := For(Options{Host: LocalHost, Runner: &stubGH{}}); err == nil {
+		t.Error("a local repository without a resolver")
 	}
 }
 

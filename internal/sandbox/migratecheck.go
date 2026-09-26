@@ -64,7 +64,7 @@ func (m *Manager) CheckMigrations(ctx context.Context, req UpRequest, rep Report
 
 	// Nothing is brought up for a pull request that brings no
 	// migrations.
-	head, err := workspace.Fetch(ctx, m.Git, req.Repo, pr)
+	head, err := m.fetchPR(ctx, req)
 	if err != nil {
 		return check, err
 	}
