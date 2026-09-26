@@ -40,7 +40,7 @@ func gitlabAPI(t *testing.T, status int, answer string) (GitLab, *[]asked) {
 	var calls []asked
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		calls = append(calls, asked{r.Method, r.URL.EscapedPath(), r.Header.Get("PRIVATE-TOKEN"), string(body)})
+		calls = append(calls, asked{r.Method, r.URL.EscapedPath(), strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), string(body)})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, answer)
@@ -98,7 +98,7 @@ func TestMergeRequestFailures(t *testing.T) {
 		answer, token string
 		want, hint    string
 	}{
-		{404, `{"message":"404 Not found"}`, "", "gitlab.com has no merge request !7 in gitlab-org/cli", "a private project answers only with GITLAB_TOKEN set"},
+		{404, `{"message":"404 Not found"}`, "", "gitlab.com has no merge request !7 in gitlab-org/cli", "a private project answers only after `pit auth login gitlab.com`, or with GITLAB_TOKEN set"},
 		{404, `{"message":"404 Not found"}`, "t", "gitlab.com has no merge request !7", "check the number"},
 		{401, `{"message":"401 Unauthorized"}`, "t", "gitlab.com did not accept the token", "has not expired"},
 		{403, `{"message":"403 Forbidden"}`, "t", "the token may not do this on !7", "api scope"},

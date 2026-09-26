@@ -109,7 +109,7 @@ func (g GitLab) Comment(ctx context.Context, number int, body string) (string, e
 	}
 	if g.Token == "" {
 		return "", errs.New("GitLab takes comments only from someone, and pit has no token for %s", g.Host).
-			WithHint("set GITLAB_TOKEN to a personal access token with the api scope")
+			WithHint("run `pit auth login %s`, or set GITLAB_TOKEN to a personal access token with the api scope", g.Host)
 	}
 	payload, err := json.Marshal(map[string]string{"body": body})
 	if err != nil {
@@ -122,6 +122,17 @@ func (g GitLab) Comment(ctx context.Context, number int, body string) (string, e
 		return "", g.describe(err, number)
 	}
 	return fmt.Sprintf("https://%s/%s/-/merge_requests/%d#note_%d", g.Host, g.Project, number, note.ID), nil
+}
+
+// User is whose the token is.
+func (g GitLab) User(ctx context.Context) (string, error) {
+	var u struct {
+		Username string `json:"username"`
+	}
+	if err := g.call(ctx, http.MethodGet, "/user", nil, &u); err != nil {
+		return "", err
+	}
+	return u.Username, nil
 }
 
 // MaxGitLabComment is the longest note GitLab takes, in characters.
@@ -139,7 +150,9 @@ func (g GitLab) call(ctx context.Context, method, path string, payload []byte, o
 	}
 	headers := map[string]string{}
 	if g.Token != "" {
-		headers["PRIVATE-TOKEN"] = g.Token
+		// Bearer takes an access token and an OAuth one alike;
+		// PRIVATE-TOKEN would take only the first.
+		headers["Authorization"] = "Bearer " + g.Token
 	}
 	return rest{Service: "GitLab", Host: g.Host, Client: g.Client}.call(ctx, method, base+path, headers, payload, out)
 }
@@ -152,12 +165,12 @@ func (g GitLab) describe(err error, number int) error {
 		case http.StatusNotFound:
 			hint := "check the number"
 			if g.Token == "" {
-				hint += "; a private project answers only with GITLAB_TOKEN set"
+				hint += "; a private project answers only after `pit auth login " + g.Host + "`, or with GITLAB_TOKEN set"
 			}
 			return errs.Wrap(err, "%s has no merge request !%d in %s", g.Host, number, g.Project).WithHint("%s", hint)
 		case http.StatusUnauthorized:
 			return errs.Wrap(err, "%s did not accept the token", g.Host).
-				WithHint("GITLAB_TOKEN has to be a personal access token of %s that has not expired", g.Host)
+				WithHint("run `pit auth login %s` again; GITLAB_TOKEN, if it is set, has to be a token of %s that has not expired", g.Host, g.Host)
 		case http.StatusForbidden:
 			return errs.Wrap(err, "the token may not do this on !%d", number).
 				WithHint("it needs the api scope, and access to %s", g.Project)

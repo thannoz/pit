@@ -51,6 +51,46 @@ func BitbucketFromEnv(repo string) Bitbucket {
 	}
 }
 
+// BitbucketWith is BitbucketFromEnv, or, where the environment has no
+// credentials, the stored ones: an access token, or "email:API token".
+func BitbucketWith(repo, stored string) Bitbucket {
+	b := BitbucketFromEnv(repo)
+	if b.authorization() != "" || stored == "" {
+		return b
+	}
+	return b.with(stored)
+}
+
+// with is b with credentials as pit keeps them: "email:API token" for
+// Basic authentication, anything else a bearer's token.
+func (b Bitbucket) with(stored string) Bitbucket {
+	b.Token, b.Username, b.Password = "", "", ""
+	if user, password, ok := strings.Cut(stored, ":"); ok {
+		b.Username, b.Password = user, password
+	} else {
+		b.Token = stored
+	}
+	return b
+}
+
+// User is whose the credentials are. An access token of a repository or
+// a workspace is nobody's, and is answered with "".
+func (b Bitbucket) User(ctx context.Context) (string, error) {
+	var u struct {
+		Username string `json:"username"`
+		Nickname string `json:"nickname"`
+	}
+	err := b.call(ctx, http.MethodGet, "/user", nil, &u)
+	var s status
+	if errors.As(err, &s) && s.code == http.StatusForbidden && b.Token != "" {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return orElse(u.Username, u.Nickname), nil
+}
+
 type bbRef struct {
 	Branch struct {
 		Name string `json:"name"`
@@ -130,7 +170,7 @@ func (b Bitbucket) Comment(ctx context.Context, number int, body string) (string
 	}
 	if b.authorization() == "" {
 		return "", errs.New("Bitbucket takes comments only from someone, and pit has no credentials for it").
-			WithHint("set BITBUCKET_TOKEN to an access token, or BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD")
+			WithHint("run `pit auth login bitbucket.org`, or set BITBUCKET_TOKEN to an access token, or BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD")
 	}
 	payload, err := json.Marshal(map[string]any{"content": map[string]string{"raw": body}})
 	if err != nil {
@@ -188,12 +228,12 @@ func (b Bitbucket) describe(err error, number int) error {
 		case http.StatusNotFound:
 			hint := "check the number"
 			if b.authorization() == "" {
-				hint += "; a private repository answers only with BITBUCKET_TOKEN, or BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD"
+				hint += "; a private repository answers only after `pit auth login bitbucket.org`, or with BITBUCKET_TOKEN, or BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD"
 			}
 			return errs.Wrap(err, "Bitbucket has no pull request #%d in %s", number, b.Repo).WithHint("%s", hint)
 		case http.StatusUnauthorized:
 			return errs.Wrap(err, "Bitbucket did not accept the credentials").
-				WithHint("check BITBUCKET_TOKEN, or BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD")
+				WithHint("run `pit auth login bitbucket.org` again, or check BITBUCKET_TOKEN, or BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD")
 		case http.StatusForbidden:
 			return errs.Wrap(err, "the credentials may not do this on #%d", number).
 				WithHint("they need access to %s, and to write pull requests for a comment", b.Repo)

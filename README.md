@@ -75,8 +75,9 @@ builds and starts the services; those lines are left out here.
 - **Docker** with **Compose v2** (`docker compose`, not `docker-compose`),
   and the daemon running.
 - **Go 1.27 or newer**, to install `pit`. There are no prebuilt binaries yet.
-- **The GitHub CLI** (`gh`), logged in with `gh auth login`, for
-  repositories on GitHub. Not needed for anything else — see
+- **For repositories on GitHub**, a login: `pit auth login`, or the GitHub CLI
+  (`gh`) logged in with `gh auth login`, or `GH_TOKEN` set. Nothing is needed
+  for anything else — see
   [Where pull requests come from](#where-pull-requests-come-from).
 
 The project you review needs a working compose file, a `devcontainer.json`, or
@@ -101,8 +102,8 @@ Then check that everything `pit` needs is there:
 pit doctor
 ```
 
-`pit doctor` checks git, Docker, Compose, `gh`, the state directory and the
-port range, and says what to do about anything that is missing. Outside a
+`pit doctor` checks git, Docker, Compose, the login to GitHub, the state
+directory and the port range, and says what to do about anything that is missing. Outside a
 project it also mentions that there is no `.pit.yaml` yet; that is expected.
 
 ## Try it on the demo
@@ -322,11 +323,14 @@ It works on macOS and Linux.
 | `pit timing <n>` | Show where the time went while a sandbox was built. |
 | `pit down <n>` | Remove a sandbox: containers, volumes, worktree. `--all` removes every one. |
 | `pit init` | Write a `.pit.yaml` for this project. |
+| `pit auth login [host]` | Log in to GitHub, GitLab, Gitea, Forgejo or Bitbucket. The token goes into the system keychain. |
+| `pit auth status` | Show where `pit` is logged in, and whether each login still works. |
+| `pit auth logout [host]` | Remove a login from the keychain. |
 | `pit doctor` | Check whether this machine can run `pit`. |
 | `pit version` | Print the version. |
 
-`what`, `ls`, `scenarios`, `timing`, `doctor`, `version`, `snap save`,
-`snap ls` and `snap promote` print JSON with `--json`, for scripts. `-v` adds diagnostic logging
+`what`, `ls`, `scenarios`, `timing`, `doctor`, `version`, `auth status`,
+`snap save`, `snap ls` and `snap promote` print JSON with `--json`, for scripts. `-v` adds diagnostic logging
 to any command, and `pit <command> --help` explains each one.
 
 ## What to look at: `pit what`
@@ -596,13 +600,15 @@ features that are planned, not built: `data.production_like` and
 
 ## Where pull requests come from
 
-- **GitHub** (github.com and hosts named `github.*`): through `gh`, which
-  supplies the title, author and state. `gh` has to be logged in.
+- **GitHub** (github.com and hosts named `github.*`): through its API when
+  `pit` has a token, from `pit auth login` or `GH_TOKEN`; otherwise through
+  `gh`, which has to be logged in. Either way `pit` gets the title, author
+  and state.
 - **GitLab** (gitlab.com and hosts named `gitlab.*`), **Gitea and Forgejo**
   (codeberg.org, gitea.com, hosts named `gitea.*` or `forgejo.*`, and any
   other host that answers as one), and **Bitbucket Cloud** (bitbucket.org):
   through their APIs, with nothing to install. A public repository needs no
-  account. A private one, and posting a comment, need a token:
+  account. A private one, and posting a comment, need a login or a token:
   `GITLAB_TOKEN`; `FORGEJO_TOKEN` or `GITEA_TOKEN`; `BITBUCKET_TOKEN`, or
   `BITBUCKET_USERNAME` with `BITBUCKET_APP_PASSWORD`. Bitbucket keeps no ref
   for a pull request, so `pit` fetches its branch, from the fork it was opened
@@ -612,6 +618,29 @@ features that are planned, not built: `data.production_like` and
   commit. The demo works this way. What a commit cannot say stays unknown:
   `pit ls` shows no branch, and `pit what` compares against `origin`'s default
   branch, which it calls "the default branch".
+
+### Logging in
+
+```bash
+pit auth login                  # the host of the repository you are in
+pit auth login codeberg.org     # or the one named
+```
+
+`pit` asks for a token and says where on the service to make one and what it
+must be allowed. For Bitbucket, enter `email:API token`, or an access token
+of a repository. With `--with-token` it reads the token from standard input
+instead. A GitHub or GitLab server that has an OAuth application for `pit`
+can use its device flow: `--client-id <id>` makes `pit` show a code to enter
+on the server's page, in any browser, and no token is copied by hand. GitLab's
+tokens from that flow expire after two hours, and `pit` renews them as it
+uses them.
+
+The token goes into the system keychain: the macOS keychain, the Secret
+Service on a Linux desktop. Nothing is written to a file. A machine without a
+keychain, such as a server, uses the environment variables above. They also
+win over a login while they are set. `pit auth status` asks each service
+whether it still takes its token. `pit auth logout` removes it; GitLab is also
+asked to revoke a token from its device flow.
 
 ## What stays where
 

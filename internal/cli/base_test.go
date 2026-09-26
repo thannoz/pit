@@ -6,13 +6,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thannoz/pit/internal/auth"
 	"github.com/thannoz/pit/internal/ui"
 )
 
-// No test opens a browser on the machine it runs on; one that is about
-// opening one says so with withOpened.
+// No test opens a browser on the machine it runs on, or reaches its
+// keychain; one that is about opening one says so with withOpened, one
+// about logins with withLogins.
 func init() {
 	openInBrowser = func(context.Context, *ui.Printer, string) {}
+	logins := &auth.Memory{}
+	keychain = func() auth.Store { return logins }
 }
 
 // withOpened notes the URLs pit would have opened.

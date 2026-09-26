@@ -16,12 +16,10 @@ type Runner interface {
 	Output(ctx context.Context, c proc.Command) ([]byte, error)
 }
 
-// GitHub reads pull requests through the gh CLI.
-//
-// gh rather than the REST API, because gh is already installed and
-// already authenticated on the machines pit targets. An API client
-// would mean an OAuth device flow, a token in a keychain and a
-// callback server before the first pull request could be read.
+// GitHub reads pull requests through the gh CLI, where pit has no token
+// of its own for GitHub: gh is already installed and logged in on most
+// machines pit runs on. With a token, from `pit auth login` or the
+// environment, pit asks the API itself: GitHubAPI.
 type GitHub struct {
 	// Runner runs gh.
 	Runner Runner
@@ -169,7 +167,7 @@ func describeFailure(err error, number int, repo string) error {
 
 	case strings.Contains(text, "gh auth login") || strings.Contains(text, "authentication"):
 		return errs.Wrap(err, "gh is not logged in").
-			WithHint("run `gh auth login`")
+			WithHint("run `pit auth login` (or `gh auth login`)")
 
 	case strings.Contains(text, "not installed") || strings.Contains(text, "not on PATH"):
 		return errs.Wrap(err, "pit reads pull requests through the GitHub CLI").

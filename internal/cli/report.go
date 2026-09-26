@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,7 +23,7 @@ import (
 // requests; a variable so that tests post nowhere.
 var commenterFor = func(ctx context.Context, repo string) (forge.Commenter, error) {
 	host, name, _ := strings.Cut(repo, "/")
-	f, err := forge.For(forge.Options{Host: host, Repo: name, Runner: proc.Exec{}})
+	f, err := forge.For(forge.Options{Host: host, Repo: name, Runner: proc.Exec{}, Tokens: storedToken(ctx, ui.New(io.Discard, os.Stderr))})
 	if err != nil {
 		where := "on " + host
 		if host == forge.LocalHost {

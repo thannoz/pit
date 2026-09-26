@@ -2,6 +2,8 @@ package forge
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/thannoz/pit/internal/errs"
@@ -26,6 +28,25 @@ type Options struct {
 	Resolver Resolver
 	// Dir is the repository root, for reading commits.
 	Dir string
+	// Tokens is pit's own login to a host, where the environment has
+	// no token; nil has none.
+	Tokens func(host string) string
+}
+
+// stored is pit's login to the host, if it has one.
+func (o Options) stored() string {
+	if o.Tokens == nil {
+		return ""
+	}
+	return o.Tokens(o.Host)
+}
+
+// orStored is the token of the environment, or pit's login.
+func (o Options) orStored(env string) string {
+	if env != "" {
+		return env
+	}
+	return o.stored()
 }
 
 // For returns the forge that serves a repository.
@@ -45,17 +66,22 @@ func For(o Options) (Forge, error) {
 		return nil, errs.New("no way to run commands")
 	}
 
-	if isGitHub(o.Host) {
+	switch ServiceOf(o.Host) {
+	case GitHubService:
+		// With a token pit asks the API itself; without one, gh.
+		if token := o.orStored(GitHubTokenFromEnv(o.Host)); token != "" {
+			return GitHubAPI{Host: o.Host, Repo: o.Repo, Token: token}, nil
+		}
 		return GitHub{Runner: o.Runner, Repo: o.Repo}, nil
-	}
-	if isGitLab(o.Host) {
-		return GitLab{Host: o.Host, Project: o.Repo, Token: TokenFromEnv()}, nil
-	}
-	if isGitea(o.Host) {
-		return Gitea{Host: o.Host, Repo: o.Repo, Token: GiteaTokenFromEnv()}, nil
-	}
-	if isBitbucket(o.Host) {
-		return BitbucketFromEnv(o.Repo), nil
+	case GitLabService:
+		return GitLab{Host: o.Host, Project: o.Repo, Token: o.orStored(TokenFromEnv())}, nil
+	case GiteaService:
+		return Gitea{Host: o.Host, Repo: o.Repo, Token: o.orStored(GiteaTokenFromEnv())}, nil
+	case BitbucketService:
+		if b := BitbucketFromEnv(o.Repo); b.authorization() != "" {
+			return b, nil
+		}
+		return BitbucketWith(o.Repo, o.stored()), nil
 	}
 
 	var git Forge
@@ -71,7 +97,67 @@ func For(o Options) (Forge, error) {
 	}
 	// A company's own server has a name of its own; whether it runs
 	// Gitea or Forgejo is asked the first time it matters.
-	return Probing{Gitea: Gitea{Host: o.Host, Repo: o.Repo, Token: GiteaTokenFromEnv()}, Git: git}, nil
+	return Probing{Gitea: Gitea{Host: o.Host, Repo: o.Repo, Token: o.orStored(GiteaTokenFromEnv())}, Git: git}, nil
+}
+
+// The services pit knows by name.
+const (
+	GitHubService    = "GitHub"
+	GitLabService    = "GitLab"
+	GiteaService     = "Gitea"
+	BitbucketService = "Bitbucket"
+)
+
+// ServiceOf is the service a host runs, as far as its name says: ""
+// for one whose name does not, which may still run Gitea or Forgejo.
+func ServiceOf(host string) string {
+	switch {
+	case isGitHub(host):
+		return GitHubService
+	case isGitLab(host):
+		return GitLabService
+	case isGitea(host):
+		return GiteaService
+	case isBitbucket(host):
+		return BitbucketService
+	}
+	return ""
+}
+
+// User asks a host whose token it is. Bitbucket's token may be
+// "email:API token".
+func User(ctx context.Context, service, host, token string) (string, error) {
+	a, err := accountOn(service, host, token)
+	if err != nil {
+		return "", err
+	}
+	return a.User(ctx)
+}
+
+// account is a service that can say whose a token is.
+type account interface {
+	User(ctx context.Context) (string, error)
+}
+
+func accountOn(service, host, token string) (account, error) {
+	switch service {
+	case GitHubService:
+		return GitHubAPI{Host: host, Token: token}, nil
+	case GitLabService:
+		return GitLab{Host: host, Token: token}, nil
+	case GiteaService:
+		return Gitea{Host: host, Token: token}, nil
+	case BitbucketService:
+		return Bitbucket{}.with(token), nil
+	}
+	return nil, errs.New("cannot tell what %s runs", host)
+}
+
+// Rejected says the host did not take the token: it is wrong, expired
+// or revoked.
+func Rejected(err error) bool {
+	var s status
+	return errors.As(err, &s) && s.code == http.StatusUnauthorized
 }
 
 // Probing is a host pit does not know by name: it is asked whether it
@@ -125,13 +211,13 @@ func (g GitHub) Check(ctx context.Context) error {
 		// The cause is wrapped rather than repeated: it is worth
 		// having under --verbose, but the first line should read as
 		// one sentence, not as the same fact said twice.
-		return errs.Wrap(err, "pit reads pull requests through the GitHub CLI (gh)").
-			WithHint("install it from https://cli.github.com, then run `gh auth login`")
+		return errs.Wrap(err, "there is no login to GitHub, and no GitHub CLI (gh) to ask instead").
+			WithHint("run `pit auth login`, or install gh from https://cli.github.com and run `gh auth login`")
 	}
 
 	if _, err := g.Runner.Output(ctx, proc.Command{Name: "gh", Args: []string{"auth", "status"}}); err != nil {
-		return errs.Wrap(err, "the GitHub CLI is installed but has no account").
-			WithHint("run `gh auth login`")
+		return errs.Wrap(err, "neither pit nor the GitHub CLI is logged in to GitHub").
+			WithHint("run `pit auth login` (or `gh auth login`)")
 	}
 	return nil
 }

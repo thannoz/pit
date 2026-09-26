@@ -110,6 +110,7 @@ func prepareUp(c *cobra.Command, o *upOptions, arg string) (*upPlan, error) {
 		Runner:   proc.Exec{},
 		Resolver: workspace.PullRequests{Runner: proc.Exec{}, Repo: repo},
 		Dir:      repo.Root,
+		Tokens:   storedToken(ctx, out),
 	})
 	if err != nil {
 		return nil, err

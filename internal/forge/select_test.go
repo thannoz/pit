@@ -10,7 +10,21 @@ import (
 	"github.com/thannoz/pit/internal/proc"
 )
 
+// noTokens clears the environment's tokens, which would otherwise
+// decide what a test on a developer's machine gets.
+func noTokens(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+		"GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN",
+		"BITBUCKET_TOKEN", "BITBUCKET_USERNAME", "BITBUCKET_APP_PASSWORD",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
 func TestForPicksGitHub(t *testing.T) {
+	noTokens(t)
 	for _, host := range []string{"github.com", "GitHub.com", "github.acme-corp.net"} {
 		t.Run(host, func(t *testing.T) {
 			f, err := For(Options{Host: host, Repo: "acme/shop", Runner: &stubGH{}, Resolver: stubResolver{}})
@@ -91,6 +105,125 @@ func TestForPicksTheOtherForges(t *testing.T) {
 	}
 }
 
+// A token, of the environment or of pit's login, is asked with
+// through the API; without one, gh is asked. The environment wins.
+func TestForUsesATokenForGitHub(t *testing.T) {
+	noTokens(t)
+	asked := []string{}
+	stored := map[string]string{"github.com": "gho_login", "github.acme.net": "ghe_login", "gitlab.com": "gl_login",
+		"codeberg.org": "fj_login", "bitbucket.org": "me@example.com:bb_login", "git.example.org": "probe_login"}
+	tokens := func(host string) string { asked = append(asked, host); return stored[host] }
+	f, err := For(Options{Host: "github.com", Repo: "acme/shop", Runner: &stubGH{}, Tokens: tokens})
+	if api, ok := f.(GitHubAPI); err != nil || !ok || api.Token != "gho_login" || api.Host != "github.com" || api.Repo != "acme/shop" {
+		t.Fatalf("%#v, %v", f, err)
+	}
+	f, _ = For(Options{Host: "github.acme.net", Repo: "acme/shop", Runner: &stubGH{}, Tokens: tokens})
+	if api, ok := f.(GitHubAPI); !ok || api.Token != "ghe_login" {
+		t.Errorf("%#v", f)
+	}
+	f, _ = For(Options{Host: "gitlab.com", Repo: "a/b", Runner: &stubGH{}, Tokens: tokens})
+	if gl, ok := f.(GitLab); !ok || gl.Token != "gl_login" {
+		t.Errorf("%#v", f)
+	}
+	f, _ = For(Options{Host: "codeberg.org", Repo: "a/b", Runner: &stubGH{}, Tokens: tokens})
+	if g, ok := f.(Gitea); !ok || g.Token != "fj_login" {
+		t.Errorf("%#v", f)
+	}
+	f, _ = For(Options{Host: "git.example.org", Repo: "a/b", Runner: &stubGH{}, Tokens: tokens})
+	if p, ok := f.(Probing); !ok || p.Gitea.Token != "probe_login" {
+		t.Errorf("%#v", f)
+	}
+	// Bitbucket's "email:token" is Basic authentication, a token alone
+	// a bearer's.
+	f, _ = For(Options{Host: "bitbucket.org", Repo: "a/b", Runner: &stubGH{}, Tokens: tokens})
+	if b, ok := f.(Bitbucket); !ok || b.Username != "me@example.com" || b.Password != "bb_login" || b.Token != "" {
+		t.Errorf("%#v", f)
+	}
+	stored["bitbucket.org"] = "access"
+	f, _ = For(Options{Host: "bitbucket.org", Repo: "a/b", Runner: &stubGH{}, Tokens: tokens})
+	if b, ok := f.(Bitbucket); !ok || b.Token != "access" || b.Username != "" {
+		t.Errorf("%#v", f)
+	}
+
+	// Nothing is looked up where there is nothing to look up for.
+	asked = nil
+	if _, err := For(Options{Host: LocalHost, Runner: &stubGH{}, Resolver: stubResolver{}, Tokens: tokens}); err != nil || len(asked) != 0 {
+		t.Errorf("asked %q, %v", asked, err)
+	}
+
+	// The environment wins, and then the login is not even read.
+	t.Setenv("GH_TOKEN", "env")
+	t.Setenv("GITLAB_TOKEN", "glenv")
+	t.Setenv("BITBUCKET_TOKEN", "bbenv")
+	for host, want := range map[string]string{"github.com": "env", "gitlab.com": "glenv", "bitbucket.org": "bbenv"} {
+		f, _ = For(Options{Host: host, Repo: "a/b", Runner: &stubGH{}, Tokens: tokens})
+		var got string
+		switch v := f.(type) {
+		case GitHubAPI:
+			got = v.Token
+		case GitLab:
+			got = v.Token
+		case Bitbucket:
+			got = v.Token
+		}
+		if got != want {
+			t.Errorf("%s: %#v", host, f)
+		}
+	}
+	if len(asked) != 0 {
+		t.Errorf("asked %q", asked)
+	}
+
+	// No token at all is gh.
+	noTokens(t)
+	f, _ = For(Options{Host: "github.com", Repo: "acme/shop", Runner: &stubGH{}, Tokens: func(string) string { return "" }})
+	if _, ok := f.(GitHub); !ok {
+		t.Errorf("%#v", f)
+	}
+}
+
+func TestServiceOf(t *testing.T) {
+	for host, want := range map[string]string{
+		"github.com": GitHubService, "github.acme.net": GitHubService, "gitlab.com": GitLabService,
+		"codeberg.org": GiteaService, "bitbucket.org": BitbucketService, "git.example.org": "", LocalHost: "",
+	} {
+		if got := ServiceOf(host); got != want {
+			t.Errorf("%s: %q, want %q", host, got, want)
+		}
+	}
+	if _, err := User(t.Context(), "", "git.example.org", "t"); err == nil {
+		t.Error("asked a host whose service is not known")
+	}
+	// Each is asked as the host it is, with the token as it takes it.
+	for _, tc := range []struct {
+		service, host, token string
+		want                 account
+	}{
+		{GitHubService, "github.acme.net", "t", GitHubAPI{Host: "github.acme.net", Token: "t"}},
+		{GitLabService, "gitlab.com", "t", GitLab{Host: "gitlab.com", Token: "t"}},
+		{GiteaService, "codeberg.org", "t", Gitea{Host: "codeberg.org", Token: "t"}},
+		{BitbucketService, "bitbucket.org", "me@example.com:t", Bitbucket{Username: "me@example.com", Password: "t"}},
+		{BitbucketService, "bitbucket.org", "t", Bitbucket{Token: "t"}},
+	} {
+		if got, err := accountOn(tc.service, tc.host, tc.token); err != nil || got != tc.want {
+			t.Errorf("%s %s: %#v, %v", tc.service, tc.token, got, err)
+		}
+	}
+}
+
+// Only a 401 says the token is not taken; anything else is another
+// failure.
+func TestRejected(t *testing.T) {
+	for code, want := range map[int]bool{401: true, 403: false, 404: false, 500: false} {
+		if got := Rejected(status{service: "GitHub", code: code}); got != want {
+			t.Errorf("%d: %v", code, got)
+		}
+	}
+	if Rejected(errors.New("connection refused")) || Rejected(nil) {
+		t.Error("not an answer at all")
+	}
+}
+
 func TestForNeedsAWayToRunCommands(t *testing.T) {
 	if _, err := For(Options{Host: "github.com"}); err == nil {
 		t.Error("want an error without a runner")
@@ -129,8 +262,8 @@ func TestCheckFindsTheTwoUsualProblems(t *testing.T) {
 		{
 			name:     "gh has no account",
 			runner:   failOn{subcommand: "auth", err: errors.New("You are not logged into any GitHub hosts")},
-			wantMsg:  "no account",
-			wantHint: "gh auth login",
+			wantMsg:  "neither pit nor the GitHub CLI is logged in",
+			wantHint: "pit auth login",
 		},
 	}
 

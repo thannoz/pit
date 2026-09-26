@@ -104,7 +104,7 @@ func TestEveryPreconditionIsDetected(t *testing.T) {
 		{
 			name:    "gh is not logged in",
 			break_:  func(r *stubRunner) { r.fails["gh auth status"] = true },
-			finding: "gh account",
+			finding: "GitHub account",
 			wantFix: "gh auth login",
 		},
 	}
@@ -379,5 +379,51 @@ func TestBrowserIsAWarningAtMost(t *testing.T) {
 	e.FindBrowser = func() (string, error) { return "/usr/bin/chromium", nil }
 	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "browser"); f.Result != doctor.OK || f.Detail != "/usr/bin/chromium" {
 		t.Errorf("finding = %+v", f)
+	}
+}
+
+// With a way of its own to GitHub, pit needs no gh.
+func TestGhIsNotNeededWithALoginOfPits(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		set  func(*doctor.Environment)
+		want string
+	}{
+		{"a login", func(e *doctor.Environment) {
+			e.GitHubLogin = func() (string, bool) { return "octocat", true }
+		}, "pit's own login, as octocat"},
+		{"a token", func(e *doctor.Environment) {
+			e.Getenv = func(k string) string {
+				if k == "GITHUB_TOKEN" {
+					return "t"
+				}
+				return ""
+			}
+		}, "GITHUB_TOKEN from the environment"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := healthyRunner()
+			r.missing["gh"] = true
+			e := env(t, r)
+			tt.set(&e)
+			report := doctor.Run(t.Context(), doctor.Default(e))
+			gh, account := findingFor(t, report, "gh"), findingFor(t, report, "GitHub account")
+			if gh.Result != doctor.OK || !strings.Contains(gh.Detail, "not needed") || !strings.Contains(gh.Detail, tt.want) {
+				t.Errorf("gh = %+v", gh)
+			}
+			if account.Result != doctor.OK || account.Detail != tt.want {
+				t.Errorf("account = %+v", account)
+			}
+		})
+	}
+
+	// Without one, gh is what the fix names alongside pit's own login.
+	r := healthyRunner()
+	r.missing["gh"] = true
+	e := env(t, r)
+	e.GitHubLogin = func() (string, bool) { return "", false }
+	f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "gh")
+	if f.Result != doctor.Fail || !strings.Contains(f.Fix, "pit auth login") {
+		t.Errorf("gh = %+v", f)
 	}
 }

@@ -89,6 +89,7 @@ func newRootCmd() *cobra.Command {
 	f.BoolVar(&opts.base, "base", false, "the sandbox of the commit the pull request goes into, not of the pull request")
 
 	cmd.AddCommand(
+		newAuthCmd(opts),
 		newBaseCmd(opts),
 		newCompareCmd(opts),
 		newDataCmd(opts),

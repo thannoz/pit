@@ -34,6 +34,9 @@ type Environment struct {
 	// FindBrowser looks for the browser pit inspect drives; nil leaves
 	// the check out.
 	FindBrowser func() (string, error)
+	// GitHubLogin is pit's own login to github.com: whose it is, and
+	// whether there is one. nil has none.
+	GitHubLogin func() (user string, ok bool)
 }
 
 // Default is the list of checks pit doctor runs.
@@ -43,8 +46,8 @@ func Default(env Environment) []Check {
 		env.tool("docker", "docker", "install Docker from https://docs.docker.com/get-docker/"),
 		env.dockerRunning(),
 		env.composeVersion(),
-		env.tool("gh", "gh", "install the GitHub CLI from https://cli.github.com"),
-		env.ghLoggedIn(),
+		env.gh(),
+		env.githubAccount(),
 		env.stateWritable(),
 		env.noOtherPit(),
 		env.portsAvailable(),
@@ -158,18 +161,57 @@ func (env Environment) composeVersion() Check {
 	}
 }
 
-func (env Environment) ghLoggedIn() Check {
-	return func(ctx context.Context) Finding {
-		const name = "gh account"
+// ownGitHub says how pit reaches github.com without gh: a token in the
+// environment, or a login of its own. "" is neither.
+func (env Environment) ownGitHub() string {
+	if env.Getenv != nil {
+		for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+			if env.Getenv(name) != "" {
+				return name + " from the environment"
+			}
+		}
+	}
+	if env.GitHubLogin != nil {
+		if user, ok := env.GitHubLogin(); ok {
+			if user == "" {
+				return "pit's own login"
+			}
+			return "pit's own login, as " + user
+		}
+	}
+	return ""
+}
 
+// gh is needed only where pit has no way of its own to GitHub.
+func (env Environment) gh() Check {
+	return func(ctx context.Context) Finding {
+		const name = "gh"
+		out, err := env.Runner.Output(ctx, proc.Command{Name: "gh", Args: []string{"--version"}})
+		switch {
+		case err == nil:
+			return Finding{Name: name, Result: OK, Detail: firstLine(string(out))}
+		case env.ownGitHub() != "":
+			return Finding{Name: name, Result: OK, Detail: "not found on PATH, and not needed: pit uses " + env.ownGitHub()}
+		}
+		return Finding{Name: name, Result: Fail, Detail: "not found on PATH",
+			Fix: "run `pit auth login`, or install the GitHub CLI from https://cli.github.com"}
+	}
+}
+
+func (env Environment) githubAccount() Check {
+	return func(ctx context.Context) Finding {
+		const name = "GitHub account"
+		if own := env.ownGitHub(); own != "" {
+			return Finding{Name: name, Result: OK, Detail: own}
+		}
 		if _, err := env.Runner.Output(ctx, proc.Command{Name: "gh", Args: []string{"auth", "status"}}); err != nil {
 			return Finding{
 				Name: name, Result: Fail,
-				Detail: "not logged in",
-				Fix:    "run `gh auth login`",
+				Detail: "neither pit nor gh is logged in",
+				Fix:    "run `pit auth login` (or `gh auth login`)",
 			}
 		}
-		return Finding{Name: name, Result: OK, Detail: "logged in"}
+		return Finding{Name: name, Result: OK, Detail: "gh is logged in"}
 	}
 }
 

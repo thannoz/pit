@@ -120,7 +120,7 @@ func (g Gitea) Comment(ctx context.Context, number int, body string) (string, er
 	}
 	if g.Token == "" {
 		return "", errs.New("%s takes comments only from someone, and pit has no token for it", g.Host).
-			WithHint("set FORGEJO_TOKEN (or GITEA_TOKEN) to an access token that may write issues")
+			WithHint("run `pit auth login %s`, or set FORGEJO_TOKEN (or GITEA_TOKEN) to an access token that may write issues", g.Host)
 	}
 	payload, err := json.Marshal(map[string]string{"body": body})
 	if err != nil {
@@ -159,6 +159,17 @@ func (g Gitea) call(ctx context.Context, method, path string, payload []byte, ou
 	return rest{Service: g.Host, Host: g.Host, Client: g.Client}.call(ctx, method, g.base()+path, headers, payload, out)
 }
 
+// User is whose the token is.
+func (g Gitea) User(ctx context.Context) (string, error) {
+	var u struct {
+		Login string `json:"login"`
+	}
+	if err := g.call(ctx, http.MethodGet, "/user", nil, &u); err != nil {
+		return "", err
+	}
+	return u.Login, nil
+}
+
 // IsGitea asks a host whether it runs Gitea or Forgejo: both answer
 // /api/v1/version, which nothing else does in that shape.
 func (g Gitea) IsGitea(ctx context.Context) bool {
@@ -177,7 +188,7 @@ func (g Gitea) describe(err error, number int) error {
 		case http.StatusNotFound:
 			hint := "check the number"
 			if g.Token == "" {
-				hint += "; a private repository answers only with FORGEJO_TOKEN or GITEA_TOKEN set"
+				hint += "; a private repository answers only after `pit auth login " + g.Host + "`, or with FORGEJO_TOKEN or GITEA_TOKEN set"
 			}
 			return errs.Wrap(err, "%s has no pull request #%d in %s", g.Host, number, g.Repo).WithHint("%s", hint)
 		case http.StatusUnauthorized:
