@@ -249,3 +249,32 @@ func TestExpandKubectl(t *testing.T) {
 		t.Errorf("%q", c.Args)
 	}
 }
+
+// A sandbox of processes in a dev shell runs every command as written
+// in it; the dev shell is not the pull request's to pick per line.
+func TestExpandPutsTheDevShellInFront(t *testing.T) {
+	wrap := make([]string, 0, 16)
+	wrap = append(wrap, "nix", "develop", "/wt", "--command")
+	s := Sandbox{Dir: "/wt", Env: []string{"PORT=40001"}, Wrap: wrap}
+	first, err := Expand("npm run migrate", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ := Expand("sh -c 'echo $PORT'", s)
+	if first.Name != "nix" || !slices.Equal(first.Args, []string{"develop", "/wt", "--command", "npm", "run", "migrate"}) ||
+		first.Dir != "/wt" || !slices.Equal(first.Env, s.Env) {
+		t.Errorf("first = %+v", first)
+	}
+	// The dev shell has room to spare; one line does not write into
+	// another's.
+	if !slices.Equal(first.Args[3:], []string{"npm", "run", "migrate"}) || !slices.Equal(second.Args[3:], []string{"sh", "-c", "echo $PORT"}) {
+		t.Errorf("first = %q, second = %q", first.Args, second.Args)
+	}
+	if !slices.Equal(wrap, []string{"nix", "develop", "/wt", "--command"}) {
+		t.Errorf("wrap = %q", wrap)
+	}
+	// Without one, as written.
+	if c, _ := Expand("npm run migrate", Sandbox{Dir: "/wt"}); c.Name != "npm" {
+		t.Errorf("%+v", c)
+	}
+}

@@ -353,3 +353,30 @@ func TestAProcessThatCannotStart(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// A plan's Wrap is put in front of every process: the dev shell of the
+// pull request's flake, which gives them its tools.
+func TestProcessesRunInTheirDevShell(t *testing.T) {
+	r, s, port := sandbox(t, "web: PIT_TEST_SERVE=1 exec $SELF\nworker: echo \"$WRAPPED\"; exec sleep 60\n")
+	if err := WritePlan(s.Files[1], Plan{Project: "pit-shop-7", Web: "web", Port: port, Wrap: []string{"env", "WRAPPED=wrapped"}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	if err := r.Up(ctx, s, nil, &strings.Builder{}, nil); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if err := r.WaitReady(ctx, s, "web", probe(port)); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	want := "wrapped\n"
+	var logs []byte
+	for range 100 {
+		if logs, _ = r.Logs(ctx, s, "worker", 1); string(logs) == want {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if string(logs) != want {
+		t.Errorf("worker logs = %q, want %q", logs, want)
+	}
+}

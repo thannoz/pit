@@ -34,6 +34,8 @@ type quietReporter struct {
 	begun []string
 	steps []string
 	notes []string
+	// stderr, when set, is where the commands' errors go.
+	stderr io.Writer
 }
 
 func (r *quietReporter) Begin(name string, _ bool) { r.begun = append(r.begun, name) }
@@ -44,7 +46,12 @@ func (r *quietReporter) Note(format string, args ...any) {
 	r.notes = append(r.notes, fmt.Sprintf(format, args...))
 }
 func (r *quietReporter) Stdout() io.Writer { return io.Discard }
-func (r *quietReporter) Stderr() io.Writer { return io.Discard }
+func (r *quietReporter) Stderr() io.Writer {
+	if r.stderr != nil {
+		return r.stderr
+	}
+	return io.Discard
+}
 
 // upFixture builds a real git repository with a pull request, plus the
 // manager to review it with.

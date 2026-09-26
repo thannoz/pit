@@ -94,6 +94,7 @@ func (r Runner) Up(ctx context.Context, s runtime.Sandbox, services []string, st
 			Name: p.Name, Command: p.Command,
 			Port: plan.PortOf(procs, p.Name),
 			Env:  plan.Environment(procs, p.Name),
+			Wrap: plan.Wrap,
 		})
 	}
 	data, err := json.MarshalIndent(job, "", "  ")

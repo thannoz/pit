@@ -273,6 +273,20 @@ func TestCommandsRunInsideTheSandbox(t *testing.T) {
 	}
 }
 
+// A sandbox of processes in a dev shell runs its scenarios in it.
+func TestCommandsRunInTheDevShell(t *testing.T) {
+	r := &recordingRunner{}
+	box := data.Sandbox{Dir: "/w", Env: []string{"PORT=40001"}, Wrap: []string{"devenv", "shell", "--"}}
+	scenario := data.Scenario{Name: "standard", Steps: []data.Step{{Apply: []string{"psql -f fixtures/standard.sql"}}}}
+	if err := (data.Commands{Runner: r}).Apply(t.Context(), box, scenario, io.Discard, io.Discard); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(r.calls) != 1 || r.calls[0].Name != "devenv" || !slices.Equal(r.calls[0].Args, []string{"shell", "--", "psql", "-f", "fixtures/standard.sql"}) ||
+		!slices.Equal(r.calls[0].Env, box.Env) {
+		t.Errorf("calls = %+v", r.calls)
+	}
+}
+
 func TestCommandsRunNothingForAnEmptyScenario(t *testing.T) {
 	r := &recordingRunner{}
 	scenario := data.Scenario{Name: "leer"}

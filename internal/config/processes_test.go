@@ -88,3 +88,105 @@ func TestInitWritesProcesses(t *testing.T) {
 		t.Errorf("summary = %q", got)
 	}
 }
+
+func TestProcessesRunInADevShell(t *testing.T) {
+	for env, want := range map[string]struct {
+		shell string
+		nix   bool
+	}{
+		"nix":         {"", true},
+		"nix#backend": {"backend", true},
+		"nix#":        {"", false},
+		"devenv":      {"", false},
+		"":            {"", false},
+		"nixos":       {"", false},
+	} {
+		if shell, ok := (Processes{Environment: env}).Nix(); shell != want.shell || ok != want.nix {
+			t.Errorf("%q: Nix() = %q, %v", env, shell, ok)
+		}
+	}
+	for yaml, files := range map[string]map[string]string{
+		"processes: {file: Procfile, environment: nix}\nweb: {service: web}\n":         {"flake.nix": "{}"},
+		"processes: {file: Procfile, environment: \"nix#api\"}\nweb: {service: web}\n": {"flake.nix": "{}"},
+		"processes: {file: Procfile, environment: devenv}\nweb: {service: web}\n":      {"devenv.nix": "{}"},
+	} {
+		files[FileName], files["Procfile"] = yaml, "web: node index.js\n"
+		c, err := Load(filepath.Join(project(t, files), FileName))
+		if err != nil || c.Processes.Environment == "" {
+			t.Errorf("%s: %+v, %v", yaml, c, err)
+		}
+	}
+}
+
+func TestADevShellIsChecked(t *testing.T) {
+	files := map[string]string{"Procfile": "web: node index.js\n", "devenv.nix": "{}"}
+	for name, tc := range map[string]struct{ yaml, want string }{
+		"no flake": {
+			"processes: {file: Procfile, environment: nix}\nweb: {service: web}\n",
+			"processes.environment: is nix, and there is no flake.nix beside .pit.yaml",
+		},
+		"devenv, which is there": {
+			"processes: {file: Procfile, environment: devenv}\nweb: {service: web}\n",
+			"",
+		},
+		"another tool": {
+			"processes: {file: Procfile, environment: conda}\nweb: {service: web}\n",
+			`processes.environment: is "conda"; it is nix, nix#<dev shell> or devenv`,
+		},
+		"no dev shell named": {
+			"processes: {file: Procfile, environment: \"nix#\"}\nweb: {service: web}\n",
+			`processes.environment: is "nix#"`,
+		},
+		"without a Procfile": {
+			"processes: {environment: nix}\nweb: {service: web, port: 80}\n",
+			"processes.environment: is set without processes.file",
+		},
+	} {
+		if tc.want == "" {
+			if _, err := Load(filepath.Join(project(t, map[string]string{FileName: tc.yaml, "Procfile": files["Procfile"], "devenv.nix": "{}"}), FileName)); err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+			continue
+		}
+		err := loadBroken(t, tc.yaml, files)
+		if !strings.Contains(err.Error(), tc.want) || !hasLineNumber.MatchString(err.Error()) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	err := loadBroken(t, "processes: {file: Procfile, environment: devenv}\nweb: {service: web}\n", map[string]string{"Procfile": files["Procfile"], "flake.nix": "{}"})
+	if !strings.Contains(err.Error(), "processes.environment: is devenv, and there is no devenv.nix") {
+		t.Errorf("err = %v", err)
+	}
+	// A directory is not a flake.
+	err = loadBroken(t, "processes: {file: Procfile, environment: nix}\nweb: {service: web}\n", map[string]string{"Procfile": files["Procfile"], "flake.nix/x": "{}"})
+	if !strings.Contains(err.Error(), "no flake.nix") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestInitWritesTheDevShell(t *testing.T) {
+	for _, env := range []string{"", "nix", "devenv"} {
+		o := InitOptions{Processes: "Procfile", Environment: env, WebService: "web"}
+		data, err := Render(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := Parse(data)
+		if err != nil || c.Processes.Environment != env {
+			t.Errorf("%q: %+v, %v\n%s", env, c.Processes, err, data)
+		}
+		if env == "" && !strings.Contains(string(data), "  # environment: nix\n") {
+			t.Errorf("no example:\n%s", data)
+		}
+		if env == "devenv" && !strings.Contains(string(data), "devenv.nix, so that") {
+			t.Errorf("devenv:\n%s", data)
+		}
+		want := "web, from Procfile"
+		if env != "" {
+			want += ", in " + env + "'s dev shell"
+		}
+		if got := o.Summary(); got != want {
+			t.Errorf("summary = %q", got)
+		}
+	}
+}

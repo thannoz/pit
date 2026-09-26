@@ -74,6 +74,28 @@ jobs:
       - name: Build
         run: go build ./...
 
+  # The processes of a project whose tools come from a flake, with nix
+  # itself rather than the stand-in the other jobs use.
+  nix:
+    name: nix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test with nix
+        run: go test -run 'RealFlake' ./internal/sandbox
+        env:
+          PIT_REQUIRE_NIX: "1"
+
   lint:
     name: lint
     runs-on: ubuntu-latest

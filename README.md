@@ -303,9 +303,33 @@ run in the checkout with the same variables; the `compose` shorthand has
 nothing to run in. `pit logs` shows what a process printed, `pit shell` opens a
 shell in the checkout with its variables.
 
+### Tools from Nix or devenv
+
+A project whose tools come from a Nix flake or from devenv can have the
+processes run in its dev shell. A pull request that changes the tools then
+brings them along:
+
+```yaml
+processes:
+  file: Procfile
+  environment: nix        # the flake's default dev shell; nix#api for another, devenv for devenv's
+```
+
+The processes, `setup`, migrations, scenarios, snapshots and `pit shell` all run
+through `nix develop <checkout> --command`, or `devenv shell --`, from the pull
+request's checkout. `pit` enters the dev shell once before `setup`, so that the
+first download and build happen there, not while it waits for the web process.
+`pit init` sets `environment` when it finds a `devenv.nix` or a `flake.nix`, and
+`pit doctor` checks that `nix` or `devenv` is installed. `pit` does not write a
+`flake.lock` into the checkout. Anything a shell hook prints to standard output
+ends up in what the commands print, and in a snapshot taken with a command that
+writes to standard output. Have it print to standard error instead.
+
 Nothing isolates these processes from your machine: they run as you, with
 your files. Use this only for pull requests you would run yourself. A pull
-request whose Procfile runs a command yours does not is asked about first.
+request whose Procfile runs a command yours does not is asked about first, and
+so is one whose dev shell differs from yours in a `.nix` file, `flake.lock`,
+`devenv.yaml` or `devenv.lock`: its shell hook runs before every command.
 It works on macOS and Linux.
 
 ## Kubernetes
@@ -607,6 +631,7 @@ machine, in the sandbox's worktree.
 | `compose.services` | all | The services a review needs. What they depend on comes with them. |
 | `processes.file` | none | A Procfile, in place of `compose.files`. See [Processes without containers](#processes-without-containers). |
 | `processes.setup` | none | Commands run in the checkout before the processes start, each time. |
+| `processes.environment` | none | `nix`, `nix#<dev shell>` or `devenv`: the processes and every command run in that dev shell of the pull request. See [Tools from Nix or devenv](#tools-from-nix-or-devenv). |
 | `devcontainer.file` | none | A `devcontainer.json`, in place of `compose.files`. See [Dev containers](#dev-containers). |
 | `devcontainer.start` | none | The command that starts the app in the dev container, after its lifecycle commands. |
 | `kubernetes.manifests` | none | Manifests, in place of `compose.files`: files, directories of them, or kustomizations. See [Kubernetes](#kubernetes). |
@@ -714,7 +739,8 @@ Commands in `.pit.yaml` that go through the `compose` shorthand run inside the
 sandbox's own containers. A command without it runs on your machine, as you; when
 a pull request adds or changes one, `pit` shows it and asks before running it.
 With [processes](#processes-without-containers), the pull request's code itself
-runs on your machine, and so does every process of its Procfile.
+runs on your machine, and so does every process of its Procfile, and the shell
+hook of its [dev shell](#tools-from-nix-or-devenv) if it has one.
 
 ## Status
 

@@ -25,6 +25,9 @@ type Plan struct {
 	Port int    `json:"port"`
 	// Env is set for every process, over this machine's environment.
 	Env map[string]string `json:"env,omitempty"`
+	// Wrap is put in front of every process and command: `nix develop
+	// <worktree> --command`, whose tools are the pull request's.
+	Wrap []string `json:"wrap,omitempty"`
 }
 
 // PortStep is how far apart the ports of a sandbox's processes are:

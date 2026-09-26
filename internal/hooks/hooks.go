@@ -31,6 +31,10 @@ type Sandbox struct {
 	// Kubernetes: a line that starts with kubectl is given them, as
 	// one that starts with compose is given the project.
 	Kubectl []string
+	// Wrap is put in front of a command that is run as written: `nix
+	// develop <worktree> --command`, whose tools are the pull
+	// request's.
+	Wrap []string
 }
 
 // Expand turns one configured line into a command.
@@ -50,6 +54,9 @@ func Expand(line string, s Sandbox) (proc.Command, error) {
 		return proc.Command{Name: "kubectl", Args: append(slices.Clone(s.Kubectl), args[1:]...), Dir: s.Dir, Env: s.Env}, nil
 	}
 	if args[0] != Shorthand {
+		if len(s.Wrap) > 0 {
+			args = append(slices.Clone(s.Wrap), args...)
+		}
 		return proc.Command{Name: args[0], Args: args[1:], Dir: s.Dir, Env: s.Env}, nil
 	}
 

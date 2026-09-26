@@ -18,6 +18,8 @@ type InitOptions struct {
 	// what prepares them.
 	Processes string
 	Setup     []string
+	// Environment is the dev shell they run in: nix or devenv.
+	Environment string
 	// Devcontainer is the devcontainer.json the services come from,
 	// instead of ComposeFiles, and Start what starts the app in it.
 	Devcontainer string
@@ -148,6 +150,14 @@ processes:
 {{- else }}
   # setup:
   #   - "npm ci"
+{{- end }}
+{{- if .Environment }}
+  # The processes and every command run in the dev shell of the pull
+  # request's own {{ if eq .Environment "devenv" }}devenv.nix{{ else }}flake.nix{{ end }}, so that its tools come with it.
+  environment: {{ .Environment }}
+{{- else }}
+  # Run them in the dev shell of the pull request's flake.nix, or devenv.
+  # environment: nix
 {{- end }}
 
 # The process a reviewer opens. It has to listen on PORT.
@@ -298,6 +308,9 @@ data:
 // Summary describes what Render produced, for pit init to print.
 func (o InitOptions) Summary() string {
 	if o.Processes != "" {
+		if o.Environment != "" {
+			return fmt.Sprintf("%s, from %s, in %s's dev shell", o.WebService, o.Processes, o.Environment)
+		}
 		return fmt.Sprintf("%s, from %s", o.WebService, o.Processes)
 	}
 	if o.Devcontainer != "" {

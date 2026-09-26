@@ -54,6 +54,7 @@ func Default(env Environment) []Check {
 		env.buildCache(),
 		env.configuration(),
 		env.kubernetes(),
+		env.devShell(),
 		env.strayProjects(),
 		env.browser(),
 	}
@@ -336,6 +337,31 @@ func (env Environment) kubernetes() Check {
 		}
 		return Finding{Name: name, Result: Fail, Detail: "neither kind nor k3d found on PATH",
 			Fix: "install kind (https://kind.sigs.k8s.io) or k3d (https://k3d.io); pit makes its own cluster with one"}
+	}
+}
+
+// devShell checks the tool whose dev shell a project's processes run
+// in, nix or devenv, where they run in one.
+func (env Environment) devShell() Check {
+	return func(ctx context.Context) Finding {
+		const name = "dev shell"
+		path, err := config.Find(env.WorkDir)
+		if err != nil {
+			return Finding{Name: name, Result: OK, Detail: "not used here"}
+		}
+		c, err := config.Load(path)
+		if err != nil || c.Processes.Environment == "" {
+			return Finding{Name: name, Result: OK, Detail: "not used here"}
+		}
+		tool, fix := "devenv", "install devenv: https://devenv.sh/getting-started/"
+		if _, ok := c.Processes.Nix(); ok {
+			tool, fix = "nix", "install Nix: https://nixos.org/download/"
+		}
+		out, err := env.Runner.Output(ctx, proc.Command{Name: tool, Args: []string{"--version"}})
+		if err != nil {
+			return Finding{Name: name, Result: Fail, Detail: tool + " not found on PATH", Fix: fix}
+		}
+		return Finding{Name: name, Result: OK, Detail: strings.TrimSpace(string(out))}
 	}
 }
 

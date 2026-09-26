@@ -459,3 +459,32 @@ func TestKubernetesToolsAreCheckedWhereTheyAreUsed(t *testing.T) {
 		t.Errorf("k3d: %+v", f)
 	}
 }
+
+// The tool of a dev shell is asked about only where the processes run
+// in one.
+func TestTheDevShellsToolIsChecked(t *testing.T) {
+	r := healthyRunner()
+	r.missing["nix"], r.missing["devenv"] = true, true
+	e := env(t, r)
+	writeFile(t, filepath.Join(e.WorkDir, ".git"), "")
+	writeFile(t, filepath.Join(e.WorkDir, "Procfile"), "web: node index.js\n")
+	writeFile(t, filepath.Join(e.WorkDir, "flake.nix"), "{ }\n")
+	writeFile(t, filepath.Join(e.WorkDir, "devenv.nix"), "{ }\n")
+	writeFile(t, filepath.Join(e.WorkDir, ".pit.yaml"), "processes: {file: Procfile}\nweb: {service: web}\n")
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "dev shell"); f.Result != doctor.OK || f.Detail != "not used here" {
+		t.Errorf("no dev shell: %+v", f)
+	}
+	writeFile(t, filepath.Join(e.WorkDir, ".pit.yaml"), "processes: {file: Procfile, environment: \"nix#api\"}\nweb: {service: web}\n")
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "dev shell"); f.Result != doctor.Fail || f.Detail != "nix not found on PATH" || !strings.Contains(f.Fix, "nixos.org") {
+		t.Errorf("no nix: %+v", f)
+	}
+	writeFile(t, filepath.Join(e.WorkDir, ".pit.yaml"), "processes: {file: Procfile, environment: devenv}\nweb: {service: web}\n")
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "dev shell"); f.Result != doctor.Fail || f.Detail != "devenv not found on PATH" || !strings.Contains(f.Fix, "devenv.sh") {
+		t.Errorf("no devenv: %+v", f)
+	}
+	r.missing["devenv"] = false
+	r.replies["devenv --version"] = "devenv 2.4.0 (aarch64-linux)\n"
+	if f := findingFor(t, doctor.Run(t.Context(), doctor.Default(e)), "dev shell"); f.Result != doctor.OK || f.Detail != "devenv 2.4.0 (aarch64-linux)" {
+		t.Errorf("devenv: %+v", f)
+	}
+}

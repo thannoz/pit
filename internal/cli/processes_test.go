@@ -149,6 +149,53 @@ func TestShellInProcesses(t *testing.T) {
 	}
 }
 
+// In a dev shell, the shell and the command run in it, from the
+// worktree.
+func TestShellInTheDevShell(t *testing.T) {
+	if goruntime.GOOS == "windows" {
+		t.Skip("pit runs processes on macOS and Linux only")
+	}
+	box := processBox(t)
+	if err := local.WritePlan(box.ComposeFiles[1], local.Plan{Project: box.Project, Web: "web", Port: 40007, Wrap: []string{"env", "IN_DEV_SHELL=yes"}}); err != nil {
+		t.Fatal(err)
+	}
+	withManager(t, box)
+	if _, err := runCLI(t, "shell", "7", "--", "sh", "-c", "echo $IN_DEV_SHELL $PORT > shell.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(box.Worktree, "shell.txt")); err != nil || string(got) != "yes 40007\n" {
+		t.Errorf("shell.txt = %q, %v", got, err)
+	}
+	// A shell of the reviewer's, when nothing is named.
+	t.Setenv("SHELL", "/bin/sh")
+	c := &cobra.Command{}
+	c.SetContext(t.Context())
+	os.Stdin = mustOpen(t, "echo $IN_DEV_SHELL > bare.txt\n")
+	if err := shellIn(c, box, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(box.Worktree, "bare.txt")); err != nil || string(got) != "yes\n" {
+		t.Errorf("bare.txt = %q, %v", got, err)
+	}
+}
+
+// mustOpen is a file that reads as text, for a command's standard
+// input, until the test ends.
+func mustOpen(t *testing.T, text string) *os.File {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "stdin")
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path) //nolint:gosec // the test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stdin
+	t.Cleanup(func() { os.Stdin = previous; _ = f.Close() })
+	return f
+}
+
 // pit runs itself, with a hidden command, to keep a sandbox's processes
 // running once it is gone.
 func TestSuperviseRunsWhatItIsGiven(t *testing.T) {

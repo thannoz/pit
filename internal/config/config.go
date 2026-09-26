@@ -3,6 +3,8 @@
 // and validating the file are separate steps.
 package config
 
+import "strings"
+
 // Version is the schema version this build understands. It exists so
 // that a future incompatible change can be rejected with an explanation
 // rather than a parse error.
@@ -78,6 +80,29 @@ type Processes struct {
 	// Setup runs before the processes start, in the worktree, each time
 	// a sandbox is brought up or updated: npm ci, bundle install.
 	Setup []string `yaml:"setup,omitempty"`
+	// Environment gives the processes and every command the pull
+	// request's tools: "nix" runs them in its flake's dev shell,
+	// "nix#name" in another dev shell of it, "devenv" in devenv's.
+	Environment string `yaml:"environment,omitempty"`
+}
+
+// The environments processes can run in.
+const (
+	NixEnvironment    = "nix"
+	DevenvEnvironment = "devenv"
+)
+
+// Nix reports whether the processes run in a flake's dev shell, and
+// which one: "" is the default.
+func (p Processes) Nix() (shell string, ok bool) {
+	if p.Environment == NixEnvironment {
+		return "", true
+	}
+	shell, ok = strings.CutPrefix(p.Environment, NixEnvironment+"#")
+	if !ok || shell == "" {
+		return "", false
+	}
+	return shell, true
 }
 
 // On reports whether the services are processes.

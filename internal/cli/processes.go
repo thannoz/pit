@@ -56,7 +56,8 @@ func processLogs(c *cobra.Command, box state.Sandbox, service string, o *logsOpt
 }
 
 // shellIn runs a command, or a shell, in a sandbox of processes: in its
-// worktree, with what its processes are given.
+// worktree, with what its processes are given, in their dev shell if
+// they have one.
 func shellIn(c *cobra.Command, box state.Sandbox, command []string) error {
 	if len(command) == 0 {
 		sh := os.Getenv("SHELL")
@@ -65,6 +66,7 @@ func shellIn(c *cobra.Command, box state.Sandbox, command []string) error {
 		}
 		command = []string{sh}
 	}
+	command = append(sandbox.CommandWrap(box), command...)
 	run := proc.Command{Name: command[0], Args: command[1:], Dir: box.Worktree, Env: sandbox.CommandEnv(box)}
 	err := ignoreInterrupt(c.Context(), proc.Exec{}.Attach(c.Context(), run))
 	if err != nil {

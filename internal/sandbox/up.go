@@ -201,7 +201,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// Processes run on this machine: new ones are asked about, as the
 	// commands of .pit.yaml are.
 	if req.Config.Processes.On() {
-		if err := m.confirmProcesses(req, mine, wt.Path, rep); err != nil {
+		if err := m.confirmProcesses(ctx, req, mine, wt.Path, rep); err != nil {
 			return state.Sandbox{}, err
 		}
 	}
@@ -382,7 +382,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
 	switch {
 	case procs:
-		h.Env = processEnv(files)
+		h.Env, h.Wrap = processTarget(files)
 	case kubes:
 		h.Kubectl, h.Env = kubeTarget(files)
 	}
@@ -467,7 +467,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 			}
 		}
 		st.begin("data", streaming)
-		target := data.Sandbox{Project: project, Files: files, Dir: wt.Path, Env: h.Env, Kubectl: h.Kubectl}
+		target := data.Sandbox{Project: project, Files: files, Dir: wt.Path, Env: h.Env, Kubectl: h.Kubectl, Wrap: h.Wrap}
 		if err := m.Data.Apply(ctx, target, scenario, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}

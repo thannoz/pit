@@ -266,6 +266,11 @@ func RuntimeSandbox(box state.Sandbox) runtime.Sandbox {
 // given: its port, its name, and what .pit.yaml sets.
 func CommandEnv(box state.Sandbox) []string { return commandsIn(box).Env }
 
+// CommandWrap is what a command run for a sandbox of processes is put
+// behind: the dev shell of the pull request's flake or devenv, if it
+// has one.
+func CommandWrap(box state.Sandbox) []string { return commandsIn(box).Wrap }
+
 // commandsIn is where a sandbox's configured commands run: through its
 // compose project, or, for a sandbox of processes, in its worktree with
 // what its processes are given.
@@ -273,7 +278,7 @@ func commandsIn(box state.Sandbox) hooks.Sandbox {
 	h := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
 	switch {
 	case box.Processes:
-		h.Env = processEnv(box.ComposeFiles)
+		h.Env, h.Wrap = processTarget(box.ComposeFiles)
 	case box.Kubernetes:
 		h.Kubectl, h.Env = kubeTarget(box.ComposeFiles)
 	}

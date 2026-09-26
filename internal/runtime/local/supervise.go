@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -39,6 +40,7 @@ type runProcess struct {
 	Command string   `json:"command"`
 	Port    int      `json:"port"`
 	Env     []string `json:"env"`
+	Wrap    []string `json:"wrap,omitempty"`
 }
 
 // state is what the supervisor says about each process.
@@ -146,7 +148,8 @@ func (s *supervisor) start(dir string, p runProcess) (*exec.Cmd, error) {
 		return nil, err
 	}
 	w := &lineWriter{out: log}
-	cmd := exec.Command("/bin/sh", "-c", p.Command) //nolint:gosec,noctx // the Procfile's command, which is the point; it outlives any context
+	argv := append(slices.Clone(p.Wrap), "/bin/sh", "-c", p.Command)
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec,noctx // the Procfile's command, which is the point; it outlives any context
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), p.Env...)
 	cmd.Stdout, cmd.Stderr = w, w

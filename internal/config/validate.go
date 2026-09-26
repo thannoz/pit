@@ -177,6 +177,7 @@ func (c *Config) checkCompose(node *yaml.Node, dir string) []Problem {
 			})
 		}
 	}
+	p = append(p, checkEnvironment(node, dir, c.Processes)...)
 	if len(c.Processes.Setup) > 0 && !c.Processes.On() {
 		p = append(p, Problem{
 			Line: lineOf(node, "processes", "setup"),
@@ -613,4 +614,31 @@ func checkSnapshotParts(node *yaml.Node, parts []SnapshotPart) []Problem {
 		}
 	}
 	return p
+}
+
+// checkEnvironment checks what the processes run in: a flake, or
+// devenv, which pit finds at the repository root.
+func checkEnvironment(node *yaml.Node, dir string, p Processes) []Problem {
+	if p.Environment == "" {
+		return nil
+	}
+	problem := func(msg, hint string) []Problem {
+		return []Problem{{Line: lineOf(node, "processes", "environment"), Path: "processes.environment", Msg: msg, Hint: hint}}
+	}
+	if !p.On() {
+		return problem("is set without processes.file; it is what the processes of a Procfile run in", "")
+	}
+	var want string
+	if _, ok := p.Nix(); ok {
+		want = "flake.nix"
+	} else if p.Environment == DevenvEnvironment {
+		want = "devenv.nix"
+	} else {
+		return problem(fmt.Sprintf("is %q; it is nix, nix#<dev shell> or devenv", p.Environment), "")
+	}
+	if info, err := os.Stat(filepath.Join(dir, want)); err != nil || info.IsDir() {
+		return problem(fmt.Sprintf("is %s, and there is no %s beside %s", p.Environment, want, FileName),
+			"pit runs the processes in the dev shell of the repository's own "+want)
+	}
+	return nil
 }

@@ -587,6 +587,36 @@ func TestInitReadsAProcfile(t *testing.T) {
 	}
 }
 
+// A project with devenv.nix or a flake runs its processes in that dev
+// shell; devenv's first, whose projects often have a flake besides.
+func TestInitFindsTheDevShell(t *testing.T) {
+	for files, want := range map[[2]string]string{
+		{"flake.nix", ""}:             "nix",
+		{"devenv.nix", "flake.nix"}:   "devenv",
+		{"shell.nix", ""}:             "",
+		{"devenv.nix/x", "flake.nix"}: "nix",
+	} {
+		project := map[string]string{"Procfile": "web: node index.js\n"}
+		for _, f := range files {
+			if f != "" {
+				project[f] = "{ }\n"
+			}
+		}
+		dir := devProject(t, project)
+		out, err := runInitCmd(t, "")
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", files, err, out)
+		}
+		c, err := config.Load(filepath.Join(dir, config.FileName))
+		if err != nil || c.Processes.Environment != want {
+			t.Errorf("%v: %+v, %v", files, c.Processes, err)
+		}
+		if want != "" && !strings.Contains(out, "in "+want+"'s dev shell") {
+			t.Errorf("%v: out = %s", files, out)
+		}
+	}
+}
+
 func TestInitPrefersTheProcfileForDevelopment(t *testing.T) {
 	dir := devProject(t, map[string]string{
 		"Procfile":     "web: bundle exec puma -C config/puma.rb\n",

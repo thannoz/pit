@@ -386,6 +386,20 @@ func findProcfile(dir string) (string, bool) {
 	return "", false
 }
 
+// devShellOf is the dev shell a project's processes run in: devenv's,
+// if it has one, which is also a flake of sorts, or its flake's.
+func devShellOf(dir string) string {
+	for _, f := range []struct{ file, environment string }{
+		{"devenv.nix", config.DevenvEnvironment},
+		{"flake.nix", config.NixEnvironment},
+	} {
+		if info, err := os.Stat(filepath.Join(dir, f.file)); err == nil && !info.IsDir() {
+			return f.environment
+		}
+	}
+	return ""
+}
+
 // initProcesses writes a .pit.yaml for a project whose services are the
 // processes of a Procfile.
 func initProcesses(c *cobra.Command, o *initOptions, out *ui.Printer, dir, target, procfile string) error {
@@ -412,10 +426,11 @@ func initProcesses(c *cobra.Command, o *initOptions, out *ui.Printer, dir, targe
 		}
 	}
 	opts := config.InitOptions{
-		Processes:  procfile,
-		Setup:      setupOf(dir),
-		WebService: service,
-		Services:   names(services),
+		Processes:   procfile,
+		Setup:       setupOf(dir),
+		Environment: devShellOf(dir),
+		WebService:  service,
+		Services:    names(services),
 	}
 	data, err := config.Render(opts)
 	if err != nil {
