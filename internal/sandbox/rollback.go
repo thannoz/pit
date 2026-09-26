@@ -49,7 +49,7 @@ func (m *Manager) rollBack(ctx context.Context, box state.Sandbox, lines []strin
 	for i, l := range lines {
 		expanded[i] = strings.ReplaceAll(l, "{migrations}", strconv.Itoa(n))
 	}
-	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	target := commandsIn(box)
 	var stderr bytes.Buffer
 	started := time.Now()
 	err := hooks.Run(ctx, m.Proc, hooks.List{Path: "data.rollback", Lines: expanded}, target, &bytes.Buffer{}, &stderr)

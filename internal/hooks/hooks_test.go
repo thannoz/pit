@@ -207,3 +207,16 @@ func TestExecService(t *testing.T) {
 		}
 	}
 }
+
+func TestExpandGivesTheEnvironment(t *testing.T) {
+	env := []string{"PORT=40007"}
+	for _, line := range []string{"npm run migrate", "compose exec -T web npm run migrate"} {
+		c, err := Expand(line, Sandbox{Project: "p", Dir: "/wt", Env: env})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Env) != 1 || c.Env[0] != "PORT=40007" || c.Dir != "/wt" {
+			t.Errorf("%s: %+v", line, c)
+		}
+	}
+}

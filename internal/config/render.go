@@ -14,6 +14,10 @@ type InitOptions struct {
 	// ComposeFiles are the compose files, relative to the repository
 	// root.
 	ComposeFiles []string
+	// Processes is the Procfile the services come from, and Setup
+	// what prepares them.
+	Processes string
+	Setup     []string
 	// Devcontainer is the devcontainer.json the services come from,
 	// instead of ComposeFiles, and Start what starts the app in it.
 	Devcontainer string
@@ -40,10 +44,10 @@ func Render(o InitOptions) ([]byte, error) {
 	if o.WebService == "" {
 		return nil, errs.New("no web service was chosen")
 	}
-	if o.WebPort <= 0 || o.WebPort > 65535 {
+	if o.Processes == "" && (o.WebPort <= 0 || o.WebPort > 65535) {
 		return nil, errs.New("%d is not a usable port", o.WebPort)
 	}
-	if len(o.ComposeFiles) == 0 && o.Devcontainer == "" {
+	if len(o.ComposeFiles) == 0 && o.Devcontainer == "" && o.Processes == "" {
 		o.ComposeFiles = []string{DefaultComposeFile}
 	}
 
@@ -128,7 +132,29 @@ var initTemplate = template.Must(template.New("pit.yaml").Parse(
 
 version: {{ .Version }}
 
-{{ if .Devcontainer -}}
+{{ if .Processes -}}
+# The services are the processes of a Procfile, run on this machine.
+# Nothing isolates them from it: review this way only what you would
+# run yourself. Each sandbox gets a port of its own, given to its
+# processes as PORT, and PIT_PROJECT, a name of its own.
+processes:
+  file: {{ .Processes }}
+  # Run in the worktree before the processes start, each time.
+{{- if .Setup }}
+  setup:
+{{- range .Setup }}
+    - {{ printf "%q" . }}
+{{- end }}
+{{- else }}
+  # setup:
+  #   - "npm ci"
+{{- end }}
+
+# The process a reviewer opens. It has to listen on PORT.
+web:
+  service: {{ .WebService }}
+{{- else }}
+{{- if .Devcontainer -}}
 # The services come from the project's devcontainer.json: pit runs the
 # container it describes, and its lifecycle commands in it.
 devcontainer:
@@ -166,6 +192,7 @@ compose:
 web:
   service: {{ .WebService }}
   port: {{ .WebPort }}
+{{- end }}
 
 # How pit knows the sandbox is ready. Without this it would hand over a
 # URL that answers with a connection refused.
@@ -270,6 +297,9 @@ data:
 
 // Summary describes what Render produced, for pit init to print.
 func (o InitOptions) Summary() string {
+	if o.Processes != "" {
+		return fmt.Sprintf("%s, from %s", o.WebService, o.Processes)
+	}
 	if o.Devcontainer != "" {
 		return fmt.Sprintf("%s on port %d, from %s", o.WebService, o.WebPort, o.Devcontainer)
 	}

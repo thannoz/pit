@@ -16,6 +16,7 @@ import (
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/glob"
 	"github.com/thannoz/pit/internal/hooks"
+	"github.com/thannoz/pit/internal/runtime/local"
 )
 
 // parseStrict decodes the file and rejects anything it does not
@@ -99,7 +100,8 @@ func (c *Config) checkWeb(node *yaml.Node) []Problem {
 			Hint: "name one of the services from your compose file",
 		})
 	}
-	if c.Web.Port <= 0 || c.Web.Port > 65535 {
+	// Processes are given their port; web.port is a container's.
+	if !c.Processes.On() && (c.Web.Port <= 0 || c.Web.Port > 65535) {
 		p = append(p, Problem{
 			Line: lineOf(node, "web", "port"),
 			Path: "web.port",
@@ -150,6 +152,36 @@ func (c *Config) checkCompose(node *yaml.Node, dir string) []Problem {
 				Hint: "name the devcontainer.json in it",
 			})
 		}
+	}
+	if f := c.Processes.File; f != "" {
+		if len(c.Compose.Files) > 0 || c.Devcontainer.File != "" {
+			p = append(p, Problem{
+				Line: lineOf(node, "processes", "file"),
+				Path: "processes.file",
+				Msg:  "is set together with compose.files or devcontainer.file; the services come from one of them",
+			})
+		}
+		msg := ""
+		if data, err := os.ReadFile(filepath.Join(dir, f)); err != nil {
+			msg = fmt.Sprintf("names %q, which does not exist", f)
+		} else if _, err := local.ParseProcfile(data); err != nil {
+			msg = fmt.Sprintf("names %q, which pit cannot read: %v", f, err)
+		}
+		if msg != "" {
+			p = append(p, Problem{
+				Line: lineOf(node, "processes", "file"),
+				Path: "processes.file",
+				Msg:  msg,
+				Hint: "a Procfile's lines read `name: command`; paths are relative to " + FileName,
+			})
+		}
+	}
+	if len(c.Processes.Setup) > 0 && !c.Processes.On() {
+		p = append(p, Problem{
+			Line: lineOf(node, "processes", "setup"),
+			Path: "processes.setup",
+			Msg:  "is set without processes.file; it prepares the processes of a Procfile",
+		})
 	}
 	if c.Devcontainer.Start != "" && c.Devcontainer.File == "" {
 		p = append(p, Problem{
@@ -433,6 +465,14 @@ func (c *Config) checkCommands(node *yaml.Node) []Problem {
 	for _, cmd := range c.commands() {
 		if problem, bad := commandProblem(cmd.Line, cmd.Path, cmd.at(node)); bad {
 			p = append(p, problem)
+			continue
+		}
+		if c.Processes.On() && !onHost(cmd.Line) {
+			p = append(p, Problem{
+				Line: cmd.at(node), Path: cmd.Path,
+				Msg:  "runs through compose, and the services are processes, not a compose project",
+				Hint: "write the command as it runs in the worktree; PORT and PIT_PROJECT are set",
+			})
 		}
 	}
 	return p

@@ -220,6 +220,7 @@ func (m *Manager) Down(ctx context.Context, box state.Sandbox, stdout, stderr io
 	for _, generated := range []string{
 		runtime.OverridePathIn(m.RepoDir(box), box.PR, box.Slot()),
 		runtime.DevcontainerPathIn(m.RepoDir(box), box.PR, box.Slot()),
+		PlanPathIn(m.RepoDir(box), box.PR, box.Slot()),
 	} {
 		if err := os.Remove(generated); err != nil && !os.IsNotExist(err) {
 			failures = append(failures, errs.Wrap(err, "cannot remove %s", generated))
@@ -251,10 +252,26 @@ func (m *Manager) RepoDir(box state.Sandbox) string {
 // brought up, even if someone has edited .pit.yaml since.
 func RuntimeSandbox(box state.Sandbox) runtime.Sandbox {
 	return runtime.Sandbox{
-		Project: box.Project,
-		Dir:     box.Worktree,
-		Files:   box.ComposeFiles,
+		Project:   box.Project,
+		Dir:       box.Worktree,
+		Files:     box.ComposeFiles,
+		Processes: box.Processes,
 	}
+}
+
+// CommandEnv is what a command run for a sandbox of processes is
+// given: its port, its name, and what .pit.yaml sets.
+func CommandEnv(box state.Sandbox) []string { return commandsIn(box).Env }
+
+// commandsIn is where a sandbox's configured commands run: through its
+// compose project, or, for a sandbox of processes, in its worktree with
+// what its processes are given.
+func commandsIn(box state.Sandbox) hooks.Sandbox {
+	h := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	if box.Processes {
+		h.Env = processEnv(box.ComposeFiles)
+	}
+	return h
 }
 
 // Gone reports whether the record describes something that no longer

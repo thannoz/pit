@@ -563,3 +563,82 @@ func TestStartOf(t *testing.T) {
 		t.Errorf("without a package.json: %q", got)
 	}
 }
+
+func TestInitReadsAProcfile(t *testing.T) {
+	dir := devProject(t, map[string]string{
+		"Procfile":          "worker: node jobs.js\nweb: node index.js\n",
+		"package.json":      `{"scripts": {"start": "node index.js"}}`,
+		"package-lock.json": "{}",
+	})
+	out, err := runInitCmd(t, "")
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	// The web process, without asking.
+	if !strings.Contains(out, "Wrote .pit.yaml: web, from Procfile") || !strings.Contains(out, "not in containers") || strings.Contains(out, "Which service") {
+		t.Errorf("out = %s", out)
+	}
+	c, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Processes.File != "Procfile" || !reflect.DeepEqual(c.Processes.Setup, []string{"npm ci"}) || c.Web.Service != "web" {
+		t.Errorf("config = %+v", c)
+	}
+}
+
+func TestInitPrefersTheProcfileForDevelopment(t *testing.T) {
+	dir := devProject(t, map[string]string{
+		"Procfile":     "web: bundle exec puma -C config/puma.rb\n",
+		"Procfile.dev": "css: bin/rails tailwindcss:watch\napp: bin/rails server\n",
+		"Gemfile":      "source 'https://rubygems.org'\n",
+		"yarn.lock":    "",
+	})
+	// No web process: which one it is, is asked.
+	if out, err := runInitCmd(t, "2\n"); err != nil || !strings.Contains(out, "Which service does a reviewer open") {
+		t.Errorf("err = %v\n%s", err, out)
+	}
+	if c, err := config.Load(filepath.Join(dir, config.FileName)); err != nil || c.Web.Service != "app" {
+		t.Errorf("%+v, %v", c, err)
+	}
+	if _, err := runInitCmd(t, "", "--service", "mailer", "--force"); err == nil || !strings.Contains(err.Error(), `"mailer" is not a process in Procfile.dev`) {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := runInitCmd(t, "", "--service", "app", "--force"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Processes.File != "Procfile.dev" || c.Web.Service != "app" ||
+		!reflect.DeepEqual(c.Processes.Setup, []string{"yarn install --frozen-lockfile", "bundle install"}) {
+		t.Errorf("config = %+v", c)
+	}
+}
+
+func TestSetupOf(t *testing.T) {
+	for files, want := range map[string][]string{
+		"pnpm-lock.yaml,package.json": {"pnpm install --frozen-lockfile"},
+		"package.json":                {"npm install"},
+		"go.mod":                      nil,
+	} {
+		dir := t.TempDir()
+		for _, f := range strings.Split(files, ",") {
+			if err := os.WriteFile(filepath.Join(dir, f), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := setupOf(dir); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %q, want %q", files, got, want)
+		}
+	}
+}
+
+func TestInitWithNothingToRun(t *testing.T) {
+	devProject(t, map[string]string{"README.md": "hello"})
+	_, err := runInitCmd(t, "")
+	if err == nil || !strings.Contains(err.Error(), "no devcontainer.json and no Procfile") || !strings.Contains(errs.Hint(err), "Procfile.dev, Procfile") {
+		t.Errorf("err = %v, hint %q", err, errs.Hint(err))
+	}
+}

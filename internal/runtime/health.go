@@ -48,8 +48,27 @@ func ExpandURL(template, host string, port int) string {
 // The first attempt happens immediately. A service that is already up
 // should not cost the reviewer an interval of waiting for no reason.
 func (c Compose) WaitReady(ctx context.Context, s Sandbox, service string, p Probe) error {
+	attempts, err := Poll(ctx, p, nil)
+	var late TimedOut
+	if errors.As(err, &late) {
+		return c.notReady(ctx, s, service, p, attempts, late.Last)
+	}
+	return err
+}
+
+// TimedOut is what Poll returns when the timeout passed: Last is why
+// the last attempt failed.
+type TimedOut struct{ Last error }
+
+func (t TimedOut) Error() string { return "timed out: " + DescribeAttempt(t.Last) }
+
+// Poll asks the probe's URL until it answers as expected, and returns
+// how many times it asked. It stops early when ctx ends, and when
+// gone, asked between attempts, says the service will not answer any
+// more.
+func Poll(ctx context.Context, p Probe, gone func() error) (int, error) {
 	if p.Interval <= 0 {
-		return errs.New("the healthcheck interval must be positive")
+		return 0, errs.New("the healthcheck interval must be positive")
 	}
 
 	client := p.Client
@@ -63,28 +82,31 @@ func (c Compose) WaitReady(ctx context.Context, s Sandbox, service string, p Pro
 	ticker := time.NewTicker(p.Interval)
 	defer ticker.Stop()
 
-	var lastErr error
 	attempts := 0
-
 	for {
 		attempts++
-		lastErr = c.attempt(ctx, client, p)
-		if lastErr == nil {
-			return nil
+		last := attempt(ctx, client, p)
+		if last == nil {
+			return attempts, nil
 		}
 
 		// Cancellation is the user pressing Ctrl+C. It is not a
 		// failure of the service and must not be reported as one.
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return attempts, ctx.Err()
+		}
+		if gone != nil {
+			if err := gone(); err != nil {
+				return attempts, err
+			}
 		}
 		if time.Now().After(deadline) {
-			return c.notReady(ctx, s, service, p, attempts, lastErr)
+			return attempts, TimedOut{Last: last}
 		}
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return attempts, ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -92,7 +114,7 @@ func (c Compose) WaitReady(ctx context.Context, s Sandbox, service string, p Pro
 
 // attempt performs one request and reports whether it answered as the
 // probe expects.
-func (c Compose) attempt(ctx context.Context, client *http.Client, p Probe) error {
+func attempt(ctx context.Context, client *http.Client, p Probe) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
 	if err != nil {
 		return err
@@ -113,12 +135,11 @@ func (c Compose) attempt(ctx context.Context, client *http.Client, p Probe) erro
 // notReady builds the failure a reviewer sees. On its own "timed out"
 // says nothing, so the service's own last words come with it.
 func (c Compose) notReady(ctx context.Context, s Sandbox, service string, p Probe, attempts int, lastErr error) error {
-	msg := fmt.Sprintf("%s did not become ready within %v (%s after %s)",
-		service, p.Timeout, describeAttempt(lastErr), plural(attempts, "attempt"))
+	msg := NotReady(service, p, attempts, lastErr)
 
 	if logs, err := c.Logs(ctx, s, service, logTailOnFailure); err == nil {
 		if tail := strings.TrimSpace(string(logs)); tail != "" {
-			msg += "\n\nthe last output from " + service + ":\n" + indentLines(tail)
+			msg += "\n\nthe last output from " + service + ":\n" + IndentLines(tail)
 		}
 	}
 
@@ -126,9 +147,16 @@ func (c Compose) notReady(ctx context.Context, s Sandbox, service string, p Prob
 		WithHint("look at %s, or run `docker compose -p %s logs -f %s`", p.URL, s.Project, service)
 }
 
-// describeAttempt turns the last failure into a phrase that fits into
+// NotReady says that a service did not become ready, and how the last
+// attempt went.
+func NotReady(service string, p Probe, attempts int, last error) string {
+	return fmt.Sprintf("%s did not become ready within %v (%s after %s)",
+		service, p.Timeout, DescribeAttempt(last), plural(attempts, "attempt"))
+}
+
+// DescribeAttempt turns the last failure into a phrase that fits into
 // a sentence.
-func describeAttempt(err error) string {
+func DescribeAttempt(err error) string {
 	var target interface{ Timeout() bool }
 	switch {
 	case err == nil:
@@ -147,7 +175,8 @@ func describeAttempt(err error) string {
 	}
 }
 
-func indentLines(s string) string {
+// IndentLines indents each line, for output quoted in a message.
+func IndentLines(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		lines[i] = "    " + l

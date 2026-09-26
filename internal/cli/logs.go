@@ -58,6 +58,9 @@ func runLogs(c *cobra.Command, o *logsOptions, args []string) error {
 	ui.New(c.OutOrStdout(), c.ErrOrStderr()).Notef("%s", box.Describe())
 
 	service := serviceArg(args, box)
+	if box.Processes {
+		return ignoreInterrupt(c.Context(), processLogs(c, box, service, o))
+	}
 
 	cmdArgs := []string{"logs", "--no-color", "--tail", strconv.Itoa(o.tail)}
 	if o.follow {

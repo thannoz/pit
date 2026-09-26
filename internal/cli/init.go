@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/thannoz/pit/internal/devcontainer"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/runtime/local"
 	"github.com/thannoz/pit/internal/suggest"
 	"github.com/thannoz/pit/internal/ui"
 )
@@ -77,9 +79,13 @@ func runInit(c *cobra.Command, o *initOptions) error {
 		} else if dev, ok, err = findDevcontainer(dir); err != nil {
 			return err
 		} else if !ok {
-			return errs.New("there is no compose file in %s, and no devcontainer.json", dir).
-				WithHint("pit looks for %s and %s; --compose-file names another",
-					strings.Join(config.ComposeNames, ", "), strings.Join(devcontainer.Places, ", "))
+			procfile, found := findProcfile(dir)
+			if !found {
+				return errs.New("there is no compose file in %s, no devcontainer.json and no Procfile", dir).
+					WithHint("pit looks for %s, %s and %s; --compose-file names another",
+						strings.Join(config.ComposeNames, ", "), strings.Join(devcontainer.Places, ", "), strings.Join(procfiles, ", "))
+			}
+			return initProcesses(c, o, out, dir, target, procfile)
 		}
 	}
 
@@ -365,4 +371,88 @@ func startOf(dir string) string {
 		return "npm run dev"
 	}
 	return ""
+}
+
+// procfiles are the Procfiles pit init looks for: the one for
+// development first, where a project has both.
+var procfiles = []string{"Procfile.dev", "Procfile"}
+
+func findProcfile(dir string) (string, bool) {
+	for _, name := range procfiles {
+		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// initProcesses writes a .pit.yaml for a project whose services are the
+// processes of a Procfile.
+func initProcesses(c *cobra.Command, o *initOptions, out *ui.Printer, dir, target, procfile string) error {
+	procs, err := local.ReadProcfile(filepath.Join(dir, procfile))
+	if err != nil {
+		return err
+	}
+	var services []runtime.Service
+	for _, p := range procs {
+		services = append(services, runtime.Service{Name: p.Name})
+	}
+	service := o.service
+	switch {
+	case service != "":
+		if _, ok := find(services, service); !ok {
+			return errs.New("%q is not a process in %s", service, procfile).
+				WithHint("it names: %s", strings.Join(names(services), ", "))
+		}
+	case slices.ContainsFunc(procs, func(p local.Process) bool { return p.Name == "web" }):
+		service = "web"
+	default:
+		if service, err = askService(c, out, services); err != nil {
+			return err
+		}
+	}
+	opts := config.InitOptions{
+		Processes:  procfile,
+		Setup:      setupOf(dir),
+		WebService: service,
+		Services:   names(services),
+	}
+	data, err := config.Render(opts)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(target, data, 0o644); err != nil { //nolint:gosec // a configuration file is meant to be readable
+		return errs.Wrap(err, "cannot write %s", config.FileName)
+	}
+	if _, err := config.Load(target); err != nil {
+		return errs.Wrap(err, "the generated %s does not validate", config.FileName).
+			WithHint("this is a bug in pit; please report it")
+	}
+	out.Printf("Wrote %s: %s\n", config.FileName, opts.Summary())
+	out.Printf("The processes run on this machine, not in containers. Check it in, then run `pit <pull request number>`.\n")
+	return nil
+}
+
+// setupOf is what installs a project's dependencies, where its lock
+// file says plainly how.
+func setupOf(dir string) []string {
+	has := func(name string) bool {
+		_, err := os.Stat(filepath.Join(dir, name))
+		return err == nil
+	}
+	var out []string
+	switch {
+	case has("pnpm-lock.yaml"):
+		out = append(out, "pnpm install --frozen-lockfile")
+	case has("yarn.lock"):
+		out = append(out, "yarn install --frozen-lockfile")
+	case has("package-lock.json"):
+		out = append(out, "npm ci")
+	case has("package.json"):
+		out = append(out, "npm install")
+	}
+	if has("Gemfile") {
+		out = append(out, "bundle install")
+	}
+	return out
 }

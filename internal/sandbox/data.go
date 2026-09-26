@@ -22,7 +22,8 @@ import (
 func (m *Manager) ResetData(ctx context.Context, box state.Sandbox, sc data.Scenario, rep Reporter) error {
 	rep.Begin("data", streaming)
 
-	target := data.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	in := commandsIn(box)
+	target := data.Sandbox{Project: in.Project, Files: in.Files, Dir: in.Dir, Env: in.Env}
 	if err := m.Data.Apply(ctx, target, sc, rep.Stdout(), rep.Stderr()); err != nil {
 		return err
 	}

@@ -24,6 +24,8 @@ type Sandbox struct {
 	Files []string
 	// Dir is the worktree the commands run in.
 	Dir string
+	// Env is added to the commands' environment.
+	Env []string
 }
 
 // Scenario is a named data state, resolved to the commands that
@@ -132,7 +134,7 @@ var _ Store = Commands{}
 // scenario the command is written under rather than the one that was
 // asked for.
 func (c Commands) Apply(ctx context.Context, s Sandbox, sc Scenario, stdout, stderr io.Writer) error {
-	box := hooks.Sandbox{Project: s.Project, Files: s.Files, Dir: s.Dir}
+	box := hooks.Sandbox{Project: s.Project, Files: s.Files, Dir: s.Dir, Env: s.Env}
 
 	for _, step := range sc.Steps {
 		if len(step.Restores) > 0 {

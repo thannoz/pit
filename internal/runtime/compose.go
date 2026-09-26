@@ -32,6 +32,9 @@ type Sandbox struct {
 	// Files are the compose files to use, relative to Dir. Empty means
 	// Compose looks for its own defaults.
 	Files []string
+	// Processes says the services are processes on this machine, from
+	// a Procfile, and Files are the Procfile and pit's plan for them.
+	Processes bool
 }
 
 // Compose drives `docker compose`.

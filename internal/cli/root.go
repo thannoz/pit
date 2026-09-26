@@ -109,6 +109,7 @@ func newRootCmd() *cobra.Command {
 		newTimingCmd(opts),
 		newWhatCmd(opts),
 		newVersionCmd(opts),
+		newSuperviseCmd(),
 	)
 
 	return cmd

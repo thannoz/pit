@@ -51,7 +51,7 @@ func (m *Manager) countWrites(ctx context.Context, box state.Sandbox) ([]int64, 
 	ctx, cancel := context.WithTimeout(ctx, writesTimeout)
 	defer cancel()
 
-	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	target := commandsIn(box)
 	var counts []int64
 	for i, part := range commands.Each() {
 		if part.Writes == "" {

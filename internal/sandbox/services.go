@@ -8,6 +8,7 @@ import (
 	"github.com/thannoz/pit/internal/config"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/runtime/local"
 	"github.com/thannoz/pit/internal/suggest"
 )
 
@@ -121,6 +122,19 @@ func isolation(c *config.Config, worktree string) (renamed, unpublished []string
 // readProject reads every service of every configured compose file.
 func readProject(c *config.Config, worktree string) (project, error) {
 	p := project{byName: map[string]runtime.Service{}}
+
+	// A Procfile's processes depend on nothing pit can see.
+	if c.Processes.On() {
+		procs, err := local.ReadProcfile(inWorktree(worktree, c.Processes.File))
+		if err != nil {
+			return project{}, err
+		}
+		for _, pr := range procs {
+			p.names = append(p.names, pr.Name)
+			p.byName[pr.Name] = runtime.Service{Name: pr.Name}
+		}
+		return p, nil
+	}
 
 	for _, file := range c.Compose.Files {
 		declared, err := runtime.ReadServices(inWorktree(worktree, file))

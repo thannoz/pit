@@ -21,6 +21,8 @@ type Call struct {
 	Commands []string
 	// Steps keeps the layering for the tests that are about it.
 	Steps []data.Step
+	// Env is what the commands would have been given.
+	Env []string
 }
 
 // Fake is an in-memory Store.
@@ -50,6 +52,7 @@ func (f *Fake) Apply(_ context.Context, s data.Sandbox, sc data.Scenario, stdout
 		Scenario: sc.Name,
 		Commands: sc.Commands(),
 		Steps:    append([]data.Step(nil), sc.Steps...),
+		Env:      s.Env,
 	})
 	f.mu.Unlock()
 

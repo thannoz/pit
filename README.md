@@ -57,6 +57,7 @@ builds and starts the services; those lines are left out here.
 - [Try it on the demo](#try-it-on-the-demo)
 - [Use it on your project](#use-it-on-your-project)
 - [Dev containers](#dev-containers)
+- [Processes without containers](#processes-without-containers)
 - [Commands](#commands)
 - [What to look at: `pit what`](#what-to-look-at-pit-what)
 - [Data scenarios](#data-scenarios)
@@ -78,7 +79,8 @@ builds and starts the services; those lines are left out here.
   repositories on GitHub. Not needed for anything else — see
   [Where pull requests come from](#where-pull-requests-come-from).
 
-The project you review needs a working compose file, or a `devcontainer.json`.
+The project you review needs a working compose file, a `devcontainer.json`, or
+a Procfile.
 If `docker compose up` brings it up on your machine, `pit` can bring up its
 pull requests.
 
@@ -270,6 +272,35 @@ else, write the command yourself. What it prints is in `pit logs`.
 
 `pit` leaves out features, which it cannot install, and `initializeCommand`,
 which would run on your machine; it says so when a file has them.
+
+## Processes without containers
+
+A project without containers runs from its Procfile. `pit init` writes, for a
+`Procfile` or a `Procfile.dev`:
+
+```yaml
+processes:
+  file: Procfile
+  setup:
+    - "npm ci"
+web:
+  service: web
+```
+
+`pit` runs `setup` in the pull request's checkout, then the processes, and
+keeps them running after it exits. Each sandbox gets a port of its own: the web
+process is given it as `PORT` and has to listen on it; the others get one 100
+further each. `PIT_PROJECT` names the sandbox, for a database of its own:
+`DATABASE_URL: "postgres://localhost/shop_{project}"` under `env.set`, where
+`{project}` and `{port}` are filled in. Migrations, scenarios and snapshots
+run in the checkout with the same variables; the `compose` shorthand has
+nothing to run in. `pit logs` shows what a process printed, `pit shell` opens a
+shell in the checkout with its variables.
+
+Nothing isolates these processes from your machine: they run as you, with
+your files. Use this only for pull requests you would run yourself. A pull
+request whose Procfile runs a command yours does not is asked about first.
+It works on macOS and Linux.
 
 ## Commands
 
@@ -529,10 +560,12 @@ machine, in the sandbox's worktree.
 | `version` | `1` | Schema version. |
 | `compose.files` | the one Compose finds | Compose files, relative to the repository root, in merge order. |
 | `compose.services` | all | The services a review needs. What they depend on comes with them. |
+| `processes.file` | none | A Procfile, in place of `compose.files`. See [Processes without containers](#processes-without-containers). |
+| `processes.setup` | none | Commands run in the checkout before the processes start, each time. |
 | `devcontainer.file` | none | A `devcontainer.json`, in place of `compose.files`. See [Dev containers](#dev-containers). |
 | `devcontainer.start` | none | The command that starts the app in the dev container, after its lifecycle commands. |
 | `web.service` | *required* | The service a reviewer opens in a browser. |
-| `web.port` | *required* | The port it listens on **inside** its container. `pit` picks the published port itself, one per sandbox, from 40000–49999. |
+| `web.port` | *required* | The port it listens on **inside** its container. `pit` picks the published port itself, one per sandbox, from 40000–49999. Not needed for processes, which are given `PORT`. |
 | `healthcheck.url` | `http://{host}:{port}/` | Polled until it answers. `{host}` becomes `localhost`, `{port}` the sandbox's published port. |
 | `healthcheck.expect_status` | `200` | The status that means ready. Redirects are followed, so `/` sending you to `/login` counts as the login page's status. |
 | `healthcheck.timeout` | `120s` | How long to keep trying. |
@@ -601,6 +634,8 @@ review.
 Commands in `.pit.yaml` that go through the `compose` shorthand run inside the
 sandbox's own containers. A command without it runs on your machine, as you; when
 a pull request adds or changes one, `pit` shows it and asks before running it.
+With [processes](#processes-without-containers), the pull request's code itself
+runs on your machine, and so does every process of its Procfile.
 
 ## Status
 

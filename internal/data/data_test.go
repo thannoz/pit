@@ -386,3 +386,22 @@ func TestSelectDoesNotGuessWildly(t *testing.T) {
 		t.Errorf("hint = %q, want no guess", errs.Hint(err))
 	}
 }
+
+// A sandbox of processes has no containers to keep its settings: its
+// commands are given them.
+func TestCommandsGetTheSandboxEnvironment(t *testing.T) {
+	r := &recordingRunner{}
+	c := parse(t, configured)
+	scenario, err := data.Select(c, "standard")
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	box := sandbox()
+	box.Env = []string{"PORT=40007", "PIT_PROJECT=pit-shop-7"}
+	if err := (data.Commands{Runner: r}).Apply(t.Context(), box, scenario, io.Discard, io.Discard); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(r.calls) != 1 || !slices.Equal(r.calls[0].Env, box.Env) {
+		t.Errorf("calls = %+v", r.calls)
+	}
+}

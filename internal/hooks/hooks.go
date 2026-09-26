@@ -22,6 +22,10 @@ type Sandbox struct {
 	Files []string
 	// Dir is the worktree the command runs in.
 	Dir string
+	// Env is added to the environment of every command: a sandbox of
+	// processes has no containers to keep its settings, so the
+	// commands are given them.
+	Env []string
 }
 
 // Expand turns one configured line into a command.
@@ -38,7 +42,7 @@ func Expand(line string, s Sandbox) (proc.Command, error) {
 	}
 
 	if args[0] != Shorthand {
-		return proc.Command{Name: args[0], Args: args[1:], Dir: s.Dir}, nil
+		return proc.Command{Name: args[0], Args: args[1:], Dir: s.Dir, Env: s.Env}, nil
 	}
 
 	full := []string{"compose", "--project-name", s.Project}
@@ -47,7 +51,7 @@ func Expand(line string, s Sandbox) (proc.Command, error) {
 	}
 	full = append(full, args[1:]...)
 
-	return proc.Command{Name: "docker", Args: full, Dir: s.Dir}, nil
+	return proc.Command{Name: "docker", Args: full, Dir: s.Dir, Env: s.Env}, nil
 }
 
 // Check reports whether a configured line can be run at all.

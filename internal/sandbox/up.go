@@ -198,6 +198,14 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	mine := req.Config
 	req.Config = adopted
 
+	// Processes run on this machine: new ones are asked about, as the
+	// commands of .pit.yaml are.
+	if req.Config.Processes.On() {
+		if err := m.confirmProcesses(req, mine, wt.Path, rep); err != nil {
+			return state.Sandbox{}, err
+		}
+	}
+
 	// The scenario is selected against the adopted file, not the
 	// reviewer's: a pull request that adds the scenario someone asked
 	// for is exactly the case the reviewer's file cannot answer. Still
@@ -245,8 +253,14 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 			undo.push(func(context.Context) { _ = removeFile(generated) })
 		}
 	}
-	files := append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
-	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files}
+	procs := req.Config.Processes.On()
+	var files []string
+	if procs {
+		files = []string{inWorktree(wt.Path, req.Config.Processes.File), PlanPathIn(repoDir, pr, slot)}
+	} else {
+		files = append(absoluteFiles(wt.Path, req.Config.Compose.Files), overridePath)
+	}
+	box := runtime.Sandbox{Project: project, Dir: wt.Path, Files: files, Processes: procs}
 
 	// Which services this review needs at all. Everything below is
 	// about them only: building an image for a service nobody starts
@@ -275,10 +289,24 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	// deliberately leaving alone. For a new one there is no file yet,
 	// and every compose command below is given it -- including the
 	// ones for a project that builds nothing at all.
-	if updating && work.nothing() {
+	switch {
+	case procs:
+		// Nothing is built; what the processes need is set up in the
+		// worktree, each time, because nothing says what a commit
+		// changed about it.
+		st.begin("setup", streaming)
+		said, err := m.setUpProcesses(ctx, req.Config, files, project, port, wt.Path, rep)
+		if !updating {
+			undo.push(func(context.Context) { _ = removeFile(files[1]) })
+		}
+		if err != nil {
+			return state.Sandbox{}, err
+		}
+		st.done(ctx, "%s", said)
+	case updating && work.nothing():
 		st.begin("build", quiet)
 		st.done(ctx, "nothing to rebuild")
-	} else {
+	default:
 		st.begin("build", streaming)
 		ready, err := m.prepare(ctx, req, box, work, wt.Path, sha, rep)
 		if err != nil {
@@ -330,6 +358,9 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 	}
 
 	h := hooks.Sandbox{Project: project, Files: files, Dir: wt.Path}
+	if procs {
+		h.Env = processEnv(files)
+	}
 
 	// Whether the data a sandbox keeps across an update was written to,
 	// asked before the new commit's hooks and migrations write to it
@@ -375,7 +406,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		}
 		snap := *req.Snapshot
 		st.begin("data", streaming)
-		into := state.Sandbox{PR: pr, Base: req.Base, Check: req.Check, RepoRef: id.Ref(), RepoRoot: req.Repo.Root, Project: project, ComposeFiles: files, Worktree: wt.Path, SHA: sha}
+		into := state.Sandbox{PR: pr, Base: req.Base, Check: req.Check, RepoRef: id.Ref(), RepoRoot: req.Repo.Root, Project: project, ComposeFiles: files, Processes: procs, Worktree: wt.Path, SHA: sha}
 		if err := m.restoreParts(ctx, into, snap, rep); err != nil {
 			return state.Sandbox{}, err
 		}
@@ -411,7 +442,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 			}
 		}
 		st.begin("data", streaming)
-		target := data.Sandbox{Project: project, Files: files, Dir: wt.Path}
+		target := data.Sandbox{Project: project, Files: files, Dir: wt.Path, Env: h.Env}
 		if err := m.Data.Apply(ctx, target, scenario, rep.Stdout(), rep.Stderr()); err != nil {
 			return state.Sandbox{}, err
 		}
@@ -444,6 +475,7 @@ func (m *Manager) Up(ctx context.Context, req UpRequest, rep Reporter) (state.Sa
 		Project:      project,
 		WebService:   req.Config.Web.Service,
 		ComposeFiles: files,
+		Processes:    procs,
 		Worktree:     wt.Path,
 		Port:         port,
 		URL:          url,

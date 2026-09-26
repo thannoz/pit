@@ -55,6 +55,9 @@ func runShell(c *cobra.Command, args []string) error {
 	service := serviceArg(passed, box)
 
 	command := args[len(passed):]
+	if box.Processes {
+		return shellIn(c, box, command)
+	}
 	if len(command) > 0 {
 		return execIn(c, box, service, command)
 	}

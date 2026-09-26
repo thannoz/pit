@@ -90,7 +90,7 @@ func (m *Manager) shapeOf(ctx context.Context, box state.Sandbox, c config.Check
 // fields runs a check command and splits what it printed: one line per
 // thing, fields separated by "|" or a tab.
 func (m *Manager) fields(ctx context.Context, box state.Sandbox, path, line string) ([][]string, error) {
-	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	target := commandsIn(box)
 	var out, stderr bytes.Buffer
 	if err := hooks.Run(ctx, m.Proc, hooks.List{Path: path, Lines: []string{line}}, target, &out, &stderr); err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {

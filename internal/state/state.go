@@ -54,6 +54,9 @@ type Sandbox struct {
 	// recorded because taking it down needs the same set and the
 	// configuration may have changed since.
 	ComposeFiles []string `json:"composeFiles"`
+	// Processes says the services are processes on this machine, and
+	// ComposeFiles are then the Procfile and pit's plan for them.
+	Processes bool `json:"processes,omitempty"`
 	// Worktree is where the pull request is checked out.
 	Worktree string `json:"worktree"`
 	// WebService is the compose service a reviewer opens. It is

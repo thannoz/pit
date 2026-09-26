@@ -56,7 +56,7 @@ func (m *Manager) SaveSnapshot(ctx context.Context, box state.Sandbox, name stri
 	db, _ := config.FindDatabase(cfg.Data.Service, composeDatabases(box.ComposeFiles))
 	parts := commands.Each()
 
-	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	target := commandsIn(box)
 	var dumps []snapshot.Dump
 	for i, part := range parts {
 		path := "data.snapshot.save"
@@ -202,7 +202,7 @@ func (m *Manager) RestoreSnapshot(ctx context.Context, box state.Sandbox, snap s
 	}
 	rep.Done("%s", snap.Label())
 
-	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	target := commandsIn(box)
 	if snap.SHA != box.SHA {
 		cfg, err := ownConfig(box)
 		if err != nil {
@@ -253,7 +253,7 @@ func (m *Manager) restoreParts(ctx context.Context, box state.Sandbox, snap snap
 	if err != nil {
 		return err
 	}
-	target := hooks.Sandbox{Project: box.Project, Files: box.ComposeFiles, Dir: box.Worktree}
+	target := commandsIn(box)
 	for _, pair := range pairs {
 		if err := m.restorePart(ctx, box, snap, pair, target, rep); err != nil {
 			return errs.Wrap(err, "restoring %s into #%d failed", snap.Label(), box.PR).

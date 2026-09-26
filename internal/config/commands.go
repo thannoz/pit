@@ -30,6 +30,14 @@ type command struct {
 func (c *Config) commands() []command {
 	var out []command
 
+	for i, line := range c.Processes.Setup {
+		out = append(out, command{
+			Path: fmt.Sprintf("processes.setup[%d]", i),
+			Line: line,
+			at:   func(n *yaml.Node) int { return lineOfIndex(n, i, "processes", "setup") },
+		})
+	}
+
 	for i, line := range c.Hooks.AfterUp {
 		out = append(out, command{
 			Path: fmt.Sprintf("hooks.after_up[%d]", i),

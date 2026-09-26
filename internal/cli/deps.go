@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 
 	"github.com/thannoz/pit/internal/data"
 	"github.com/thannoz/pit/internal/errs"
 	"github.com/thannoz/pit/internal/proc"
 	"github.com/thannoz/pit/internal/runtime"
+	"github.com/thannoz/pit/internal/runtime/local"
 	"github.com/thannoz/pit/internal/sandbox"
 	"github.com/thannoz/pit/internal/state"
 	"github.com/thannoz/pit/internal/workspace"
@@ -46,10 +49,17 @@ func realManager() (*sandbox.Manager, error) {
 		return nil, err
 	}
 
+	self, err := os.Executable()
+	if err != nil {
+		return nil, errs.Wrap(err, "cannot tell where pit is")
+	}
 	x := proc.Exec{}
 	return &sandbox.Manager{
-		Store:    store,
-		Runtime:  runtime.Compose{Runner: x},
+		Store: store,
+		Runtime: runtime.Either{
+			Compose:   runtime.Compose{Runner: x},
+			Processes: local.Runner{Root: filepath.Join(dir, "processes"), Supervisor: []string{self, superviseCommand}},
+		},
 		Git:      x,
 		Proc:     x,
 		Data:     data.Commands{Runner: x},

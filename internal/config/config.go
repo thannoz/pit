@@ -19,13 +19,16 @@ type Config struct {
 	// Devcontainer takes the services from a devcontainer.json instead
 	// of compose files.
 	Devcontainer Devcontainer `yaml:"devcontainer,omitempty"`
-	Web          Web          `yaml:"web"`
-	Healthcheck  Healthcheck  `yaml:"healthcheck"`
-	Hooks        Hooks        `yaml:"hooks"`
-	Build        Build        `yaml:"build"`
-	Data         Data         `yaml:"data"`
-	Review       Review       `yaml:"review"`
-	Env          Env          `yaml:"env"`
+	// Processes runs the services as processes on this machine, from a
+	// Procfile, instead of in containers.
+	Processes   Processes   `yaml:"processes,omitempty"`
+	Web         Web         `yaml:"web"`
+	Healthcheck Healthcheck `yaml:"healthcheck"`
+	Hooks       Hooks       `yaml:"hooks"`
+	Build       Build       `yaml:"build"`
+	Data        Data        `yaml:"data"`
+	Review      Review      `yaml:"review"`
+	Env         Env         `yaml:"env"`
 
 	// Dir is the directory the file was read from. The paths a scenario
 	// loads are relative to it, and it is not the same directory for
@@ -61,6 +64,21 @@ type Devcontainer struct {
 	// nothing in it starts the app on its own.
 	Start string `yaml:"start,omitempty"`
 }
+
+// Processes says the services are the processes of a Procfile, run on
+// this machine: for a project that has no containers. Nothing isolates
+// them from the reviewer's machine; each sandbox gets a port of its own,
+// given to its processes as PORT, and its own directory.
+type Processes struct {
+	// File is the Procfile, relative to the repository root.
+	File string `yaml:"file,omitempty"`
+	// Setup runs before the processes start, in the worktree, each time
+	// a sandbox is brought up or updated: npm ci, bundle install.
+	Setup []string `yaml:"setup,omitempty"`
+}
+
+// On reports whether the services are processes.
+func (p Processes) On() bool { return p.File != "" }
 
 // Web identifies the service a reviewer opens in a browser.
 type Web struct {
